@@ -139,7 +139,7 @@ public:
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
 	SecuritySnapshot &operator=(const SecuritySnapshot &) = delete;
 
-	DUCKDB_API static shared_ptr<const SecuritySnapshot> Build(Catalog &cluster, CatalogTransaction transaction);
+	DUCKDB_API static shared_ptr<const SecuritySnapshot> Build(Catalog &catalog, CatalogTransaction transaction);
 	shared_ptr<const SecuritySnapshot> ForDatabase(const Identifier &database) const;
 
 	optional_ptr<const RoleAccess> Access(idx_t role) const;

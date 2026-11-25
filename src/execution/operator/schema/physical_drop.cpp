@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/schema/physical_drop.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/privileges.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/execution/operator/helper/physical_reset.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -93,22 +94,17 @@ static Catalog &DropCatalog(ClientContext &context, const DropInfo &target) {
 }
 
 static optional_ptr<CatalogEntry> DropTarget(ClientContext &context, const DropInfo &target) {
-	switch (target.type) {
-	case CatalogType::SCHEMA_ENTRY: {
+	if (target.type == CatalogType::SCHEMA_ENTRY) {
 		auto &path = target.GetQualifiedName().Path();
 		return Catalog::GetSchema(context, path.front(), vector<Identifier>(path.begin() + 1, path.end()),
 		                          OnEntryNotFound::RETURN_NULL)
 		    .get();
 	}
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::TABLESPACE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
+	if (IsCatalogLevel(target.type)) {
 		return nullptr;
-	default:
-		return Catalog::GetEntry(context, EntryLookupInfo(target.type, target.GetQualifiedName()),
-		                         OnEntryNotFound::RETURN_NULL);
 	}
+	return Catalog::GetEntry(context, EntryLookupInfo(target.type, target.GetQualifiedName()),
+	                         OnEntryNotFound::RETURN_NULL);
 }
 
 static void DropTogether(ClientContext &context, const vector<reference<DropInfo>> &infos) {

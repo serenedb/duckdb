@@ -165,6 +165,11 @@ constexpr const ObjectKind &ObjectKindOf(CatalogType type) {
 	return OBJECT_KINDS[static_cast<std::underlying_type_t<CatalogType>>(type)];
 }
 
+constexpr bool IsCatalogLevel(CatalogType type) {
+	const auto container = ObjectKindOf(type).container;
+	return type != CatalogType::SCHEMA_ENTRY && (container == ObjectContainer::CLUSTER || container == ObjectContainer::DATABASE);
+}
+
 constexpr std::string_view ObjectNoun(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:

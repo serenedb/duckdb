@@ -152,13 +152,10 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		                                                       schema.GetParentSchemaPath(), schema.name));
 		return schema;
 	}
-	const auto container = ObjectKindOf(info.entry_catalog_type).container;
-	if (container == ObjectContainer::DATABASE) {
-		return binder.ResolveDatabaseEntry(info.entry_catalog_type, info, AclMode::NoRights);
-	}
-	if (container == ObjectContainer::CLUSTER) {
-		return *ClusterEntry(context, binder.CheckAs(), info.entry_catalog_type, name.Name(), AclMode::NoRights,
-		                     OnEntryNotFound::THROW_EXCEPTION);
+	if (IsCatalogLevel(info.entry_catalog_type)) {
+		auto &entry = *binder.EntryRetriever().GetEntry(EntryLookupInfo(info.entry_catalog_type, name));
+		info.SetQualifiedName(entry.ParentCatalog().GetName(), Identifier(), entry.name);
+		return entry;
 	}
 	optional_ptr<CatalogEntry> entry;
 	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
@@ -246,14 +243,13 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			Catalog::AutoloadExtensionByConfigName(context, setting);
 		}
 		const auto &name = setting.GetIdentifierName();
-		auto &system = Catalog::GetSystemCatalog(context);
-		if (system.IsDuckCatalog()) {
+		if (Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 			throw NotImplementedException("parameter privileges are not supported by this catalog");
 		}
 		const auto owner = DBConfig::GetConfig(context).bootstrap_role;
 		std::span<const AclItem> acl;
-		if (auto parameter = system.LookupTopLevelEntry(system.GetCatalogTransaction(context),
-		                                                CatalogType::PARAMETER_ENTRY, setting)) {
+		if (auto parameter = binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::PARAMETER_ENTRY, setting),
+		                                                      OnEntryNotFound::RETURN_NULL)) {
 			acl = parameter->permissions.acl;
 		}
 		RequireGrantableAcl(context, info, role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
@@ -302,10 +298,17 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 			throw PermissionException("permission denied to change owner of database");
 		}
 	} else if (entry.type == CatalogType::FOREIGN_SERVER_ENTRY) {
-		RequireForeignDataWrapperUsage(context, context.AccessOf(info.new_owner_id), entry.ParentCatalog(),
-		                               entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name);
+		auto &wrapper =
+		    Catalog::GetEntry(context, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+		                      QualifiedName(entry.ParentCatalog().GetName(), Identifier(),
+		                                    Identifier(entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name)));
+		Require(context, context.AccessOf(info.new_owner_id), wrapper, AclMode::Usage);
 	} else if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
-		RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
+		if (auto database = Catalog::GetEntry(
+		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, entry.ParentCatalog().GetName()),
+		        OnEntryNotFound::RETURN_NULL)) {
+			Require(context, role, *database, AclMode::Create);
+		}
 	} else if (entry.type != CatalogType::TABLESPACE_ENTRY) {
 		auto &schema = entry.ParentSchema(context);
 		if (!Allowed(context.AccessOf(info.new_owner_id), schema, AclMode::Create)) {
@@ -329,7 +332,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 		                                    OnEntryNotFound::THROW_EXCEPTION)
 		                         ->oid;
 	}
-	ClusterDatabase(context, database);
+	binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, database));
 	info.SetQualifiedName(Identifier(), Identifier(), database);
 }
 
@@ -384,10 +387,9 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	};
 	if (!role.Has(RoleOption::CreateDb)) {
 		bool database = false;
-		auto &cluster = Catalog::GetSystemCatalog(context);
-		cluster.ScanTopLevelEntries(
-		    cluster.GetCatalogTransaction(context), CatalogType::DATABASE_ENTRY,
-		    [&](CatalogEntry &entry) { database = database || owned(entry.permissions.owner); });
+		auto &system = Catalog::GetSystemCatalog(context);
+		system.Scan(system.GetCatalogTransaction(context), CatalogType::DATABASE_ENTRY,
+		            [&](CatalogEntry &entry) { database = database || owned(entry.permissions.owner); });
 		if (database) {
 			throw PermissionException("permission denied to change owner of database");
 		}
@@ -431,10 +433,7 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	for (auto &object : objects) {
 		auto &entry = object.entry.get();
 		if (entry.type == CatalogType::SCHEMA_ENTRY) {
-			auto &database = ClusterDatabase(context, catalog.GetName());
-			if (!Allowed(role, database, AclMode::Create)) {
-				ThrowPermissionDenied(database);
-			}
+			entry_retriever.GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, catalog.GetName(), AclMode::Create));
 			given.insert(entry.oid);
 			continue;
 		}
@@ -465,10 +464,6 @@ void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementPropertie
 		ResolveDefaultPrivileges(*this, info);
 	} else {
 		ResolveGrant(*this, info);
-	}
-	const auto target_type = info.GetCatalogType();
-	if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {
-		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 	}
 }
 

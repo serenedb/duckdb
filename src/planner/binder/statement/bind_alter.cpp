@@ -281,21 +281,6 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 	return result;
 }
 
-CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use) {
-	optional_ptr<Catalog> catalog;
-	if (type == CatalogType::SUBSCRIPTION_ENTRY) {
-		catalog = SubscriptionCatalog(Identifier());
-	} else {
-		const auto database = DatabaseManager::GetDefaultDatabase(context);
-		ClusterDatabase(context, database);
-		catalog = Catalog::GetCatalog(context, database);
-	}
-	auto &entry = *TopLevelEntry(context, CheckAs(), *catalog, type, info.GetQualifiedName().Name(), use,
-	                             OnEntryNotFound::THROW_EXCEPTION);
-	info.SetQualifiedName(entry.ParentCatalog().GetName(), Identifier(), entry.name);
-	return entry;
-}
-
 static void ExpandAllInSchema(Binder &binder, unique_ptr<AlterInfo> info, vector<unique_ptr<AlterInfo>> &objects) {
 	auto &grant = info->Cast<AlterPermissionsInfo>();
 	const auto name = Binder::ResolveCatalog(binder.EntryRetriever(), grant.GetQualifiedName());
@@ -403,22 +388,23 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 			throw NotImplementedException("Adding comments to %ss is not implemented",
 			                              type == CatalogType::DATABASE_ENTRY ? "database" : "role");
 		}
-		auto &name = info->GetQualifiedName().Name();
-		if (!ClusterEntry(context, CheckAs(), type, name, AclMode::Own,
-		                  type == CatalogType::DATABASE_ENTRY ? OnEntryNotFound::RETURN_NULL
-		                                                      : OnEntryNotFound::THROW_EXCEPTION)) {
-			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
+		auto &name = info->GetQualifiedName();
+		if (!entry_retriever.GetEntry(EntryLookupInfo(type, name, AclMode::Own),
+		                              type == CatalogType::DATABASE_ENTRY ? OnEntryNotFound::RETURN_NULL
+		                                                                  : OnEntryNotFound::THROW_EXCEPTION)) {
+			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.Name().GetIdentifierName()));
 			info->if_not_found = OnEntryNotFound::RETURN_NULL;
 		}
-		info->SetQualifiedName(ClusterName(context, info->GetQualifiedName()));
 		return nullptr;
 	}
 
 	if (info->type == AlterType::ALTER_SUBSCRIPTION) {
-		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *info, AclMode::Own);
-		subscription.ParentCatalog().RequireSubscription(context, CheckAs(), subscription,
-		                                                 info->Cast<AlterSubscriptionInfo>());
-		properties.RegisterDBModify(subscription.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
+		auto &subscription = *entry_retriever.GetEntry(
+		    EntryLookupInfo(CatalogType::SUBSCRIPTION_ENTRY, info->GetQualifiedName(), AclMode::Own));
+		auto &catalog = subscription.ParentCatalog();
+		info->SetQualifiedName(catalog.GetName(), Identifier(), subscription.name);
+		catalog.RequireSubscription(context, CheckAs(), subscription, info->Cast<AlterSubscriptionInfo>());
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 		return nullptr;
 	}
 
@@ -432,8 +418,9 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_TABLESPACE) {
-		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName().Name(),
-		             AclMode::Rename, OnEntryNotFound::RETURN_NULL);
+		entry_retriever.GetEntry(
+		    EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName(), AclMode::Rename),
+		    OnEntryNotFound::RETURN_NULL);
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_ROLE) {

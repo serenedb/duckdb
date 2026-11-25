@@ -488,10 +488,8 @@ public:
 	void CheckColumnRead(Binding &binding, const Identifier &column);
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
-	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
 	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
 	                         bool named_by_statement = false);
-	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(DropInfo &info);

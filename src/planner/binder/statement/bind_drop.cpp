@@ -120,33 +120,20 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 	case CatalogType::ROLE_ENTRY:
 		BindDropRole(info);
 		break;
-	case CatalogType::TABLESPACE_ENTRY:
-		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info.GetQualifiedName().Name(), AclMode::Drop,
-		             OnEntryNotFound::RETURN_NULL);
-		break;
-	case CatalogType::DATABASE_ENTRY:
-		ClusterEntry(context, CheckAs(), CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), AclMode::Drop,
-		             OnEntryNotFound::RETURN_NULL);
-		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
-		break;
-	case CatalogType::FOREIGN_SERVER_ENTRY: {
-		auto catalog = BindCatalog(info.GetQualifiedName().Catalog());
-		info.SetQualifiedName(QualifiedName(catalog, Identifier(), info.GetQualifiedName().Name()));
-		auto &server_catalog = Catalog::GetCatalog(context, catalog);
-		properties.RegisterDBModify(server_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		TopLevelEntry(context, CheckAs(), server_catalog, CatalogType::FOREIGN_SERVER_ENTRY,
-		              info.GetQualifiedName().Name(), AclMode::Drop, OnEntryNotFound::RETURN_NULL);
-		break;
-	}
+	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY: {
-		auto &subscription_catalog = SubscriptionCatalog(info.GetQualifiedName().Catalog());
-		auto name = info.GetQualifiedName().Name();
-		info.SetQualifiedName(QualifiedName(subscription_catalog.GetName(), Identifier(), name));
-		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		TopLevelEntry(context, CheckAs(), subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, name, AclMode::Drop,
-		              info.if_not_found);
+		auto &catalog = Catalog::GetCatalog(context, BindCatalog(info.GetQualifiedName().Catalog()));
+		info.SetQualifiedName(QualifiedName(catalog.GetName(), Identifier(), info.GetQualifiedName().Name()));
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
+		entry_retriever.GetEntry(EntryLookupInfo(info.type, info.GetQualifiedName(), AclMode::Drop),
+		                         OnEntryNotFound::RETURN_NULL);
 		break;
 	}
+	case CatalogType::TABLESPACE_ENTRY:
+	case CatalogType::DATABASE_ENTRY:
+		entry_retriever.GetEntry(EntryLookupInfo(info.type, info.GetQualifiedName(), AclMode::Drop),
+		                         OnEntryNotFound::RETURN_NULL);
+		break;
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(info.type));
 	}

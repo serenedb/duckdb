@@ -55,16 +55,13 @@ static bool MayCall(const RoleAccess &role, RoleCapability capability) {
 	return capability == RoleCapability::None || role.Has(capability) || role.owns_builtins;
 }
 
-static optional_ptr<Catalog> RoleCatalog(ClientContext &context) {
+static optional_ptr<CatalogEntry> SystemEntry(ClientContext &context, CatalogType type, const Identifier &name) {
 	auto &system = Catalog::GetSystemCatalog(context);
-	if (system.IsDuckCatalog()) {
-		return nullptr;
-	}
-	return &system;
+	return system.LookupEntry(system.GetCatalogTransaction(context), type, name);
 }
 
 static optional_ptr<CatalogEntry> ClusterDatabaseOf(ClientContext &context, AttachedDatabase &database) {
-	return database.IsReadOnly() ? nullptr : ClusterEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
+	return database.IsReadOnly() ? nullptr : SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
 }
 
 static optional_ptr<CatalogEntry> ServerOf(ClientContext &context, AttachedDatabase &database) {
@@ -77,8 +74,8 @@ static optional_ptr<CatalogEntry> ServerOf(ClientContext &context, AttachedDatab
 			continue;
 		}
 		auto &catalog = db->GetCatalog();
-		auto server = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
-		                                          CatalogType::FOREIGN_SERVER_ENTRY, database.GetName());
+		auto server = catalog.LookupEntry(catalog.GetCatalogTransaction(context), CatalogType::FOREIGN_SERVER_ENTRY,
+		                                  database.GetName());
 		if (server && server->oid == server_oid.GetIndex()) {
 			return server;
 		}
@@ -126,7 +123,7 @@ static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, Catal
 
 bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
-		return CanConnect(context, role, entry.name, ClusterEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
+		return CanConnect(context, role, entry.name, SystemEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
 	}
 	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
 	    !Allowed(role, entry, AclMode::Execute)) {
@@ -479,7 +476,7 @@ static void RequireOwnership(const RoleAccess &role, CatalogEntry &entry, option
 static void RequireCreateIn(ClientContext &context, const RoleAccess &role, CatalogEntry &container) {
 	if (container.ParentCatalog().GetAttached().IsTemporary()) {
 		auto &database = ClientData::Get(context).default_database;
-		auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
+		auto entry = SystemEntry(context, CatalogType::DATABASE_ENTRY, database);
 		if (entry && !Allowed(role, *entry, AclMode::CreateTemp)) {
 			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
 			                          database.GetIdentifierName());
@@ -510,7 +507,9 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	if (Uses(use, AclMode::Rename)) {
 		const auto container = ObjectKindOf(entry.type).container;
 		if (container == ObjectContainer::DATABASE) {
-			RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
+			if (auto database = SystemEntry(context, CatalogType::DATABASE_ENTRY, entry.ParentCatalog().GetName())) {
+				Require(context, role, *database, AclMode::Create);
+			}
 		} else if (container != ObjectContainer::CLUSTER) {
 			RequireCreateIn(context, role, entry.ParentSchema(context));
 		}
@@ -531,57 +530,12 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	}
 }
 
-optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name) {
-	auto cluster = RoleCatalog(context);
-	if (!cluster) {
-		return nullptr;
-	}
-	return cluster->LookupTopLevelEntry(cluster->GetCatalogTransaction(context), type, name);
-}
-
-optional_ptr<CatalogEntry> TopLevelEntry(ClientContext &context, const RoleAccess &role, Catalog &catalog,
-                                         CatalogType type, const Identifier &name, AclMode use,
-                                         OnEntryNotFound if_not_found) {
-	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context), type, name);
-	if (!entry || !LookupVisible(context, role, *entry)) {
-		if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingObject(type, name);
-		}
-		return nullptr;
-	}
-	Require(context, role, *entry, use);
-	return entry;
-}
-
-optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, const RoleAccess &role, CatalogType type,
-                                        const Identifier &name, AclMode use, OnEntryNotFound if_not_found) {
-	auto cluster = RoleCatalog(context);
-	if (cluster) {
-		return TopLevelEntry(context, role, *cluster, type, name, use, if_not_found);
-	}
-	if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-		throw CatalogException::MissingObject(type, name);
-	}
-	return nullptr;
-}
-
-CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name) {
-	return *ClusterEntry(context, RoleAccess::System(), CatalogType::DATABASE_ENTRY, name, AclMode::NoRights,
-	                     OnEntryNotFound::THROW_EXCEPTION);
-}
-
-QualifiedName ClusterName(ClientContext &context, const QualifiedName &name) {
-	auto cluster = RoleCatalog(context);
-	if (!cluster) {
-		return name;
-	}
-	return QualifiedName(cluster->GetName(), Identifier(), name.Name());
-}
-
 idx_t RoleId(ClientContext &context, const Identifier &name) {
-	return ClusterEntry(context, RoleAccess::System(), CatalogType::ROLE_ENTRY, name, AclMode::NoRights,
-	                    OnEntryNotFound::THROW_EXCEPTION)
-	    ->oid;
+	auto entry = SystemEntry(context, CatalogType::ROLE_ENTRY, name);
+	if (!entry) {
+		throw CatalogException::MissingObject(CatalogType::ROLE_ENTRY, name);
+	}
+	return entry->oid;
 }
 
 static idx_t KeywordRole(ClientContext &context, RoleSpecType type) {
@@ -593,15 +547,10 @@ idx_t RoleSpecId(ClientContext &context, const RoleSpec &role) {
 }
 
 optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role, OnEntryNotFound if_not_found) {
-	if (role.type == RoleSpecType::NAME) {
-		auto entry = ClusterEntry(context, RoleAccess::System(), CatalogType::ROLE_ENTRY, role.name, AclMode::NoRights,
-		                          if_not_found);
-		return entry ? &entry->Cast<RoleEntry>() : nullptr;
-	}
-	optional_ptr<CatalogEntry> entry;
-	if (auto cluster = RoleCatalog(context)) {
-		entry = cluster->LookupOwner(cluster->GetCatalogTransaction(context), KeywordRole(context, role.type));
-	}
+	auto &system = Catalog::GetSystemCatalog(context);
+	auto entry = role.type == RoleSpecType::NAME
+	                 ? system.LookupEntry(system.GetCatalogTransaction(context), CatalogType::ROLE_ENTRY, role.name)
+	                 : system.LookupOwner(system.GetCatalogTransaction(context), KeywordRole(context, role.type));
 	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
 		return &entry->Cast<RoleEntry>();
 	}
@@ -612,11 +561,8 @@ optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &ro
 }
 
 string RoleName(ClientContext &context, idx_t role) {
-	auto cluster = RoleCatalog(context);
-	if (!cluster) {
-		return string();
-	}
-	auto entry = cluster->LookupOwner(cluster->GetCatalogTransaction(context), role);
+	auto &system = Catalog::GetSystemCatalog(context);
+	auto entry = system.LookupOwner(system.GetCatalogTransaction(context), role);
 	return entry && entry->type == CatalogType::ROLE_ENTRY ? entry->name.GetIdentifierName() : string();
 }
 
@@ -634,30 +580,10 @@ void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &cata
 	if (!StoresPermissions(catalog)) {
 		return;
 	}
-	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, catalog.GetName());
+	auto database = SystemEntry(context, CatalogType::DATABASE_ENTRY, catalog.GetName());
 	permissions.AssignOwner(owner, objtype,
 	                        database ? database->Cast<DatabaseEntry>().DefaultAcls() : std::span<const DefaultAcl>(),
 	                        schema ? optional_idx(schema->oid) : optional_idx());
-}
-
-void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
-                              AclMode need) {
-	if (role.is_superuser) {
-		return;
-	}
-	if (auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database)) {
-		Require(context, role, *entry, need);
-	}
-}
-
-void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, Catalog &catalog,
-                                    std::string_view wrapper) {
-	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
-	                                         CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(wrapper));
-	if (!entry) {
-		throw CatalogException::MissingObject(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(wrapper));
-	}
-	Require(context, role, *entry, AclMode::Usage);
 }
 
 void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {

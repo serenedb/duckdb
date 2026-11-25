@@ -67,23 +67,11 @@ DUCKDB_API void Require(ClientContext &context, const RoleAccess &role, CatalogE
                         optional_ptr<const MacroFunction> overload = nullptr,
                         optional_ptr<const StatementNaming> naming = nullptr);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
-DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
-                                         AclMode need);
-DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, Catalog &catalog,
-                                               std::string_view wrapper);
 DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
-DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name);
-DUCKDB_API optional_ptr<CatalogEntry> TopLevelEntry(ClientContext &context, const RoleAccess &role, Catalog &catalog,
-                                                    CatalogType type, const Identifier &name, AclMode use,
-                                                    OnEntryNotFound if_not_found);
-DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, const RoleAccess &role, CatalogType type,
-                                                   const Identifier &name, AclMode use, OnEntryNotFound if_not_found);
-DUCKDB_API CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name);
-DUCKDB_API QualifiedName ClusterName(ClientContext &context, const QualifiedName &name);
 DUCKDB_API idx_t RoleId(ClientContext &context, const Identifier &name);
 DUCKDB_API idx_t RoleSpecId(ClientContext &context, const RoleSpec &role);
 DUCKDB_API optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role,

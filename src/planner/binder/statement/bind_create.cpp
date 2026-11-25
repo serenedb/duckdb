@@ -1249,7 +1249,11 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		BindCreateSchema(info);
 		auto &role = CheckAs();
 		const auto owner = authorization && !role.IsSystem() ? authorization->oid : role.role;
-		RequireDatabasePrivilege(context, role, info.SchemaCatalog(), AclMode::Create);
+		if (auto database =
+		        Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.SchemaCatalog()),
+		                          OnEntryNotFound::RETURN_NULL)) {
+			Require(context, role, *database, AclMode::Create);
+		}
 		if (!role.IsSystem()) {
 			if (!role.CanSet(owner)) {
 				throw PermissionException("must be able to SET ROLE \"%s\"",
@@ -1606,7 +1610,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			info.permissions.owner = role.role;
 		}
 		if (!info.tablespace.empty()) {
-			auto tablespace = ClusterEntry(context, CatalogType::TABLESPACE_ENTRY, info.tablespace);
+			auto tablespace = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info.tablespace),
+			                                           OnEntryNotFound::RETURN_NULL);
 			if (tablespace && !tablespace->internal) {
 				Require(context, role, *tablespace, AclMode::Create);
 			}
@@ -1615,24 +1620,27 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
-		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
-		if (auto &role = CheckAs(); !role.IsSystem() && ClusterEntry(context, CatalogType::DATABASE_ENTRY, catalog)) {
-			auto &server_catalog = Catalog::GetCatalog(context, catalog);
-			RequireForeignDataWrapperUsage(context, role, server_catalog,
-			                               stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
-			AssignOwner(context, stmt.info->permissions, server_catalog, CatalogType::FOREIGN_SERVER_ENTRY, nullptr,
+		auto &catalog = Catalog::GetCatalog(context, BindCatalog(stmt.info->GetQualifiedName().Catalog()));
+		auto database = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, catalog.GetName()),
+		                                  OnEntryNotFound::RETURN_NULL);
+		if (auto &role = CheckAs(); !role.IsSystem() && database) {
+			entry_retriever.GetEntry(
+			    EntryLookupInfo(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+			                    QualifiedName(catalog.GetName(), Identifier(),
+			                                  Identifier(stmt.info->Cast<CreateForeignServerInfo>().fdw_name)),
+			                    AclMode::Usage));
+			AssignOwner(context, stmt.info->permissions, catalog, CatalogType::FOREIGN_SERVER_ENTRY, nullptr,
 			            role.role);
 		}
-		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
-		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER, std::move(stmt.info));
 		break;
 	}
 	case CatalogType::SUBSCRIPTION_ENTRY: {
-		auto &subscription_catalog = SubscriptionCatalog(stmt.info->GetQualifiedName().Catalog());
-		auto &catalog = subscription_catalog.GetName();
-		stmt.info->SetQualifiedName(QualifiedName(catalog, Identifier(), stmt.info->GetQualifiedName().Name()));
+		auto &catalog = Catalog::GetCatalog(context, BindCatalog(stmt.info->GetQualifiedName().Catalog()));
+		stmt.info->SetQualifiedName(
+		    QualifiedName(catalog.GetName(), Identifier(), stmt.info->GetQualifiedName().Name()));
 		if (auto &role = CheckAs(); !role.IsSystem()) {
 			if (!role.Has(RoleCapability::CreateSubscription)) {
 				throw PermissionException(
@@ -1641,12 +1649,15 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 				                                    "\"pg_create_subscription\" role may create subscriptions."}},
 				    "permission denied to create subscription");
 			}
-			RequireDatabasePrivilege(context, role, catalog, AclMode::Create);
-			AssignOwner(context, stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
-			            role.role);
-			subscription_catalog.RequireSubscription(context, role, stmt.info->Cast<CreateSubscriptionInfo>());
+			if (auto database =
+			        Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, catalog.GetName()),
+			                          OnEntryNotFound::RETURN_NULL)) {
+				Require(context, role, *database, AclMode::Create);
+			}
+			AssignOwner(context, stmt.info->permissions, catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr, role.role);
+			catalog.RequireSubscription(context, role, stmt.info->Cast<CreateSubscriptionInfo>());
 		}
-		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION, std::move(stmt.info));
 		break;
 	}

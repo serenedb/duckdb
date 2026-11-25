@@ -162,7 +162,8 @@ void Settings::CheckValue(ClientContext &context, const Identifier &name, const 
 }
 
 static AclMode HeldParameterPrivileges(ClientContext &context, const RoleAccess &role, const Identifier &name) {
-	auto parameter = ClusterEntry(context, CatalogType::PARAMETER_ENTRY, name);
+	auto parameter =
+	    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::PARAMETER_ENTRY, name), OnEntryNotFound::RETURN_NULL);
 	if (!parameter) {
 		return AclMode::NoRights;
 	}

@@ -9,6 +9,7 @@
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
+#include "duckdb/catalog/privileges.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -437,16 +438,6 @@ bool Binder::ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, On
 		                       OnEntryNotFound::RETURN_NULL)
 		            .get();
 		break;
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::TABLESPACE_ENTRY:
-		entry = ClusterEntry(context, type, name.Name());
-		break;
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-		if (auto catalog = Catalog::GetCatalogEntry(context, name.Catalog())) {
-			entry = catalog->LookupTopLevelEntry(catalog->GetCatalogTransaction(context), type, name.Name());
-		}
-		break;
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::SEQUENCE_ENTRY:
@@ -469,7 +460,15 @@ bool Binder::ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, On
 		}
 		break;
 	default:
-		return true;
+		if (!IsCatalogLevel(type) ||
+		    entry_retriever.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL) ||
+		    !internal.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL)) {
+			return true;
+		}
+		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+			return false;
+		}
+		throw CatalogException::MissingObject(type, name.Name());
 	}
 	if (!entry || LookupVisible(context, role, *entry)) {
 		return true;
@@ -482,11 +481,6 @@ bool Binder::ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, On
 		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::NoRights,
 		                          OnEntryNotFound::THROW_EXCEPTION);
 		break;
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::TABLESPACE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-		throw CatalogException::MissingObject(type, name.Name());
 	default:
 		entry_retriever.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::THROW_EXCEPTION);
 		break;
@@ -644,15 +638,6 @@ void Binder::AdoptPrivilegeChecks(Binder &other) {
 	source.denied_relation = nullptr;
 	source.denied_function = nullptr;
 	source.denied_overload = nullptr;
-}
-
-Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
-	auto &catalog = Catalog::GetCatalog(context, BindCatalog(catalog_name));
-	if (!catalog.SupportsSubscriptions()) {
-		throw NotImplementedException("subscriptions are not supported by database \"%s\"",
-		                              catalog.GetName().GetIdentifierName());
-	}
-	return catalog;
 }
 
 void Binder::CheckPrivileges() {

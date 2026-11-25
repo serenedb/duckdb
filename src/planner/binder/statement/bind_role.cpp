@@ -268,7 +268,6 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 			}
 		}
 	}
-	info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 }
 
 void Binder::BindAlterRole(AlterRoleInfo &info) {
@@ -292,7 +291,6 @@ void Binder::BindAlterRole(AlterRoleInfo &info) {
 		                  role->GetInfo()->Cast<CreateRoleInfo>().config);
 	}
 	Settings::ResolveCurrentValues(context, info.set_config);
-	info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 }
 
 static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &caller, optional_ptr<RoleEntry> role,
@@ -324,9 +322,8 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 	}
 	auto &system = Catalog::GetSystemCatalog(context);
 	vector<string> current;
-	if (auto setting =
-	        system.LookupTopLevelEntry(system.GetCatalogTransaction(context), CatalogType::DB_ROLE_SETTING_ENTRY,
-	                                   CreateDbRoleSettingInfo::NameOf(info.database_id, info.role_id))) {
+	if (auto setting = system.LookupEntry(system.GetCatalogTransaction(context), CatalogType::DB_ROLE_SETTING_ENTRY,
+	                                      CreateDbRoleSettingInfo::NameOf(info.database_id, info.role_id))) {
 		current = setting->GetInfo()->Cast<CreateDbRoleSettingInfo>().config;
 	}
 	CheckConfigChange(context, caller, info.set_config, info.reset_config, info.reset_all_config, current);
@@ -341,8 +338,7 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 	}
 	optional_ptr<CatalogEntry> database;
 	if (!info.GetQualifiedName().Name().empty()) {
-		database = ClusterEntry(context, caller, CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(),
-		                        AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
+		database = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.GetQualifiedName()));
 		info.database_id = database->oid;
 	} else if (!caller.is_superuser) {
 		throw PermissionException({{"detail", "Only roles with the SUPERUSER attribute may alter settings globally."}},
@@ -352,7 +348,6 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 		CheckDatabaseSettings(context, caller, role, database, info);
 	}
 	Settings::ResolveCurrentValues(context, info.set_config);
-	info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 }
 
 void Binder::BindDropRole(DropInfo &info) {
@@ -382,7 +377,6 @@ void Binder::BindDropRole(DropInfo &info) {
 		throw DependencyException("cannot drop role %s because it is required by the database system",
 		                          role->name.GetIdentifierName());
 	}
-	info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 }
 
 } // namespace duckdb

@@ -271,9 +271,9 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 SecuritySnapshot::~SecuritySnapshot() {
 }
 
-shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, CatalogTransaction transaction) {
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &catalog, CatalogTransaction transaction) {
 	unordered_map<idx_t, Node> nodes;
-	cluster.ScanTopLevelEntries(transaction, CatalogType::ROLE_ENTRY, [&](CatalogEntry &entry) {
+	catalog.Scan(transaction, CatalogType::ROLE_ENTRY, [&](CatalogEntry &entry) {
 		auto &role = entry.Cast<RoleEntry>();
 		auto member_of = role.MemberOf();
 		std::sort(member_of.begin(), member_of.end(), [](const Membership &left, const Membership &right) {
@@ -283,10 +283,10 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 		    Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), std::move(member_of)};
 	});
 	unordered_map<string, idx_t> database_owners;
-	cluster.ScanTopLevelEntries(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
+	catalog.Scan(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
 	});
-	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
+	auto &config = DBConfig::GetConfig(catalog.GetDatabase());
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
 	                                               config.database_owner_role, config.bootstrap_role);
 }

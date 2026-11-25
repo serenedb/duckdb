@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/privileges.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -86,35 +87,23 @@ DependencyManager::DependencyManager(DuckCatalog &catalog) : catalog(catalog), s
 }
 
 vector<Identifier> DependencyManager::GetSchemaPath(const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::SCHEMA_ENTRY:
+	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.Cast<SchemaCatalogEntry>().GetParentSchemaPath();
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::TABLESPACE_ENTRY:
-		return vector<Identifier>();
-	default:
-		return entry.ParentSchemaPath();
 	}
+	if (IsCatalogLevel(entry.type) || entry.type == CatalogType::REPLICATION_ORIGIN_ENTRY) {
+		return vector<Identifier>();
+	}
+	return entry.ParentSchemaPath();
 }
 
 vector<Identifier> DependencyManager::GetSchemaPath(CatalogTransaction transaction, const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::SCHEMA_ENTRY:
+	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.Cast<SchemaCatalogEntry>().GetParentSchemaPath(transaction);
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::TABLESPACE_ENTRY:
-		return vector<Identifier>();
-	default:
-		return entry.ParentSchemaPath(transaction);
 	}
+	if (IsCatalogLevel(entry.type) || entry.type == CatalogType::REPLICATION_ORIGIN_ENTRY) {
+		return vector<Identifier>();
+	}
+	return entry.ParentSchemaPath(transaction);
 }
 
 MangledEntryName DependencyManager::MangleName(const CatalogEntryInfo &info) {

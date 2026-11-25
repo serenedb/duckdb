@@ -143,9 +143,7 @@ Catalog &Catalog::GetCatalog(ClientContext &context, const Identifier &catalog_n
 
 Catalog &Catalog::GetDDLCatalog(ClientContext &context, CatalogType type, const Identifier &catalog_name) {
 	auto &system = GetSystemCatalog(context);
-	if (type == CatalogType::ROLE_ENTRY || type == CatalogType::DATABASE_ENTRY ||
-	    type == CatalogType::TABLESPACE_ENTRY || type == CatalogType::PARAMETER_ENTRY ||
-	    catalog_name == system.GetName()) {
+	if (ObjectKindOf(type).container == ObjectContainer::CLUSTER || catalog_name == system.GetName()) {
 		return system;
 	}
 	return GetCatalog(context, catalog_name);
@@ -457,16 +455,16 @@ void Catalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP DATABASE is not supported by a %s catalog", GetCatalogType());
 }
 
-void Catalog::ScanTopLevelEntries(CatalogTransaction transaction, CatalogType type,
-                                  const std::function<void(CatalogEntry &)> &callback) {
+void Catalog::Scan(CatalogTransaction transaction, CatalogType type,
+                   const std::function<void(CatalogEntry &)> &callback) {
 }
 
 optional_ptr<CatalogEntry> Catalog::LookupOwner(CatalogTransaction transaction, idx_t oid) {
 	return nullptr;
 }
 
-optional_ptr<CatalogEntry> Catalog::LookupTopLevelEntry(CatalogTransaction transaction, CatalogType type,
-                                                        const Identifier &name) {
+optional_ptr<CatalogEntry> Catalog::LookupEntry(CatalogTransaction transaction, CatalogType type,
+                                                const Identifier &name) {
 	return nullptr;
 }
 
@@ -1697,6 +1695,23 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 
 optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
                                              OnEntryNotFound if_not_found) {
+	const auto type = lookup_info.GetCatalogType();
+	if (IsCatalogLevel(type)) {
+		auto &context = retriever.GetContext();
+		auto catalog = ObjectKindOf(type).container == ObjectContainer::CLUSTER
+		                   ? &GetSystemCatalog(context)
+		                   : VisibleCatalog(retriever, lookup_info.GetCatalog());
+		auto entry = catalog ? catalog->LookupEntry(catalog->GetCatalogTransaction(context), type,
+		                                            lookup_info.GetEntryIdentifier())
+		                     : nullptr;
+		if (entry && !LookupVisible(context, retriever.CheckAs(), *entry)) {
+			entry = nullptr;
+		}
+		if (!entry && if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingObject(type, lookup_info.GetEntryIdentifier());
+		}
+		return entry;
+	}
 	auto result = TryLookupEntryAcrossCatalogs(retriever, lookup_info, if_not_found);
 
 	// Try autoloading extension to resolve lookup
