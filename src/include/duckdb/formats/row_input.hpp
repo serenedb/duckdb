@@ -34,8 +34,13 @@ public:
 
 class RowInput {
 public:
+	static constexpr idx_t HOST_STREAM_BYTES = 1 << 21;
+
 	RowInput(ClientContext &context, CSVBufferManager &manager, const string &path, bool utf8,
 	         optional_ptr<atomic<idx_t>> bytes_read);
+
+	static shared_ptr<RowSource> HostStream(ClientContext &context, const CSVFileHandle &handle, const string &path,
+	                                        bool utf8);
 
 	RowSource &Rows() const {
 		return host_stream ? *host_stream : *file;
