@@ -315,8 +315,8 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 		                                   role->name.GetIdentifierName())}},
 		    "permission denied to alter role");
 	}
-	if (!role && !caller.is_superuser && !caller.MemberOf(database->permissions.owner)) {
-		throw PermissionException("must be owner of database %s", database->name.GetIdentifierName());
+	if (!role && database) {
+		Require(context, caller, *database, AclMode::Own);
 	}
 	CheckConfig(context, info.set_config, info.reset_config);
 	if (caller.is_superuser) {

@@ -566,8 +566,8 @@ idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 		} else if (!replace) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
-		} else if (!Allowed(CheckAs(), *existing, AclMode::Own, overload.get())) {
-			throw PermissionException("must be owner of function %s", existing->name.GetIdentifierName());
+		} else {
+			Require(context, CheckAs(), *existing, AclMode::Own, overload.get());
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;

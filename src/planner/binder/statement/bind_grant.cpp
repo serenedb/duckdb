@@ -290,11 +290,9 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	if (!enforce) {
 		return;
 	}
-	if (!relation && !info.overload_oid) {
-		Require(context, role, entry, AclMode::Own);
-	} else if (!relation && !Allowed(role, entry, AclMode::Own,
-	                                 entry.Cast<MacroCatalogEntry>().FindOverload(info.overload_oid).get())) {
-		throw PermissionException("must be owner of function %s", entry.name.GetIdentifierName());
+	if (!relation) {
+		Require(context, role, entry, AclMode::Own,
+		        info.overload_oid ? entry.Cast<MacroCatalogEntry>().FindOverload(info.overload_oid).get() : nullptr);
 	}
 	if (!role.CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
