@@ -138,6 +138,7 @@ public:
 	JSONFormat format = JSONFormat::AUTO_DETECT;
 	bool features_prefix = false;
 	bool parallel_values = false;
+	idx_t stream_bytes = 0;
 	unique_ptr<RowRanges> ranges;
 	JSONReadFlags read_flags;
 	bool validate_only = false;

@@ -766,8 +766,9 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 	}
 	idx_t range_bytes = DConstants::INVALID_INDEX;
 	const bool split_values = (format == JSONFormat::ARRAY && !features_prefix) || format == JSONFormat::UNSTRUCTURED;
+	stream_bytes = source->HostStream() ? RowInput::HOST_STREAM_BYTES : JSON_STREAM_BYTES;
 	if (format == JSONFormat::NEWLINE_DELIMITED && parallel && source->Stream()) {
-		range_bytes = JSON_STREAM_BYTES;
+		range_bytes = stream_bytes;
 	} else if ((format == JSONFormat::NEWLINE_DELIMITED || split_values) && parallel && !source->Stream()) {
 		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 		range_bytes = MinValue(JSON_MAX_RANGE_BYTES, MaxValue(JSON_MIN_RANGE_BYTES, source->Size() / threads));
@@ -1076,8 +1077,8 @@ void JsonScan::Load() {
 			}
 		};
 		window.StartAhead(from);
-		while (window.read_to - from < JSON_STREAM_BYTES && !Last()) {
-			window.Read(window.bytes->offset, JSON_STREAM_BYTES - (window.read_to - from));
+		while (window.read_to - from < global.stream_bytes && !Last()) {
+			window.Read(window.bytes->offset, global.stream_bytes - (window.read_to - from));
 		}
 		ranges.PassRead(window.read_to);
 		RowClaim claim;
