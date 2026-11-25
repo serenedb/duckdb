@@ -1241,7 +1241,17 @@
     "class": "LogicalDrop",
     "base": "LogicalOperator",
     "enum": "LOGICAL_DROP",
-    "custom_implementation": true
+    "members": [
+      {
+        "id": 200,
+        "name": "info",
+        "type": "DropInfo*",
+        "base": "ParseInfo"
+      }
+    ],
+    "constructor": [
+      "info"
+    ]
   },
   {
     "class": "LogicalDetach",

@@ -54,6 +54,10 @@ struct ObjectReference {
 	QualifiedName name;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
+	CatalogType type = CatalogType::INVALID;
+
+	void Serialize(Serializer &serializer) const;
+	static ObjectReference Deserialize(Deserializer &deserializer);
 };
 
 struct ParseInfo {

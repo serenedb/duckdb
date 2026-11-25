@@ -707,6 +707,36 @@
     "pointer_type": "none"
   },
   {
+    "class": "ObjectReference",
+    "includes": [
+      "duckdb/parser/parsed_data/parse_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "name",
+        "type": "QualifiedName"
+      },
+      {
+        "id": 101,
+        "name": "func_parameters",
+        "type": "vector<LogicalType>"
+      },
+      {
+        "id": 102,
+        "name": "has_func_args",
+        "type": "bool"
+      },
+      {
+        "id": 103,
+        "name": "type",
+        "type": "CatalogType",
+        "default": "CatalogType::INVALID"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
     "class": "ColumnPrivilege",
     "includes": [
       "duckdb/catalog/acl.hpp"

@@ -32,20 +32,16 @@ void Binder::BindDropTrigger(DropInfo &info, StatementProperties &properties) {
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
 
-void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
+void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties) {
+	object.type = info.type;
 	switch (info.type) {
-	case CatalogType::PREPARED_STATEMENT:
-		// dropping prepared statements is always possible
-		// it also does not require a valid transaction
-		properties.requires_valid_transaction = false;
-		break;
 	case CatalogType::SCHEMA_ENTRY: {
 		// resolve the leading component of the dotted path into a catalog, leaving the path as
 		// [catalog, parent schemas..., schema] (mirrors CREATE SCHEMA - see Binder::BindCreateSchema)
-		info.SetQualifiedName(ResolveCatalog(entry_retriever, info.GetQualifiedName()));
+		object.name = ResolveCatalog(entry_retriever, object.name);
 		// dropping a schema is never read-only because there are no temporary schemas. The catalog is the leading
 		// component of the resolved path ([catalog, parent schemas..., schema])
-		auto &path = info.GetQualifiedName().Path();
+		auto &path = object.name.Path();
 		auto &catalog = Catalog::GetCatalog(context, path.front());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::Drop,
@@ -64,8 +60,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		// Resolve the catalog + (possibly nested) schema path. A leading component is the catalog when it names an
 		// attached database, and otherwise the outermost schema of a nested schema path. The entry lookup below
 		// navigates whatever qualification comes out of this.
-		info.SetQualifiedName(BindTableName(info.GetQualifiedName()));
-		auto catalog = Catalog::GetCatalogEntry(context, info.GetQualifiedName().Catalog());
+		object.name = BindTableName(object.name);
+		auto catalog = Catalog::GetCatalogEntry(context, object.name.Catalog());
 		if (catalog) {
 			// mark catalog as accessed
 			properties.RegisterDBRead(*catalog, context);
@@ -73,17 +69,17 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		optional_ptr<CatalogEntry> entry;
 		if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
-			entry = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args,
+			entry = BindRoutine({object.name, object.func_parameters, object.has_func_args,
 			                     info.is_routine || !info.is_procedure, info.is_routine || info.is_procedure, info.type,
-			                     info.is_macro && !info.has_func_args},
+			                     info.is_macro && !object.has_func_args},
 			                    AclMode::Drop, info.if_not_found, true)
 			            .entry;
 			if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 				// Change type to table macro so future lookups get the correct one
-				info.type = CatalogType::TABLE_MACRO_ENTRY;
+				object.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
-			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName(), AclMode::Drop);
+			EntryLookupInfo entry_lookup(info.type, object.name, AclMode::Drop);
 			auto if_not_found = info.if_not_found;
 			if (catalog && catalog->Compatibility() == SqlCompatibility::POSTGRES &&
 			    Catalog::InRelationNamespace(info.type)) {
@@ -98,41 +94,29 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
-		info.SetQualifiedName(QualifiedName::FromCatalogSchema(
+		object.name = QualifiedName::FromCatalogSchema(
 		    entry->ParentCatalog().GetName(),
-		    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)),
-		    info.GetQualifiedName().Name()));
+		    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)), object.name.Name());
 		if (!entry->temporary) {
 			// we can only drop temporary schema entries in read-only mode
 			properties.RegisterDBModify(entry->ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 		}
 		break;
 	}
-	case CatalogType::SECRET_ENTRY: {
-		RequireSuperuser(CheckAs());
-		//! Secrets are stored in the secret manager; they can always be dropped
-		properties.requires_valid_transaction = false;
-		break;
-	}
-	case CatalogType::TRIGGER_ENTRY:
-		BindDropTrigger(info, properties);
-		break;
 	case CatalogType::ROLE_ENTRY:
-		BindDropRole(info);
+		BindDropRole(object.name.Name());
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY: {
-		auto &catalog = Catalog::GetCatalog(context, BindCatalog(info.GetQualifiedName().Catalog()));
-		info.SetQualifiedName(QualifiedName(catalog.GetName(), Identifier(), info.GetQualifiedName().Name()));
+		auto &catalog = Catalog::GetCatalog(context, BindCatalog(object.name.Catalog()));
+		object.name = QualifiedName(catalog.GetName(), Identifier(), object.name.Name());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		entry_retriever.GetEntry(EntryLookupInfo(info.type, info.GetQualifiedName(), AclMode::Drop),
-		                         OnEntryNotFound::RETURN_NULL);
+		entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
 		break;
 	}
 	case CatalogType::TABLESPACE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
-		entry_retriever.GetEntry(EntryLookupInfo(info.type, info.GetQualifiedName(), AclMode::Drop),
-		                         OnEntryNotFound::RETURN_NULL);
+		entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
 		break;
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(info.type));
@@ -143,18 +127,34 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	BoundStatement result;
 
 	auto &properties = GetStatementProperties();
-	auto infos = stmt.info->SplitObjects();
-	if (infos.empty()) {
-		infos.push_back(std::move(stmt.info));
-	}
-	vector<unique_ptr<DropInfo>> dropped;
-	for (auto &info : infos) {
-		BindDrop(*info, properties);
-		if (ActsOnVisibleTarget(info->type, info->GetQualifiedName(), info->if_not_found)) {
-			dropped.push_back(std::move(info));
+	auto &info = *stmt.info;
+	switch (info.type) {
+	case CatalogType::PREPARED_STATEMENT:
+		// dropping prepared statements is always possible
+		// it also does not require a valid transaction
+		properties.requires_valid_transaction = false;
+		break;
+	case CatalogType::SECRET_ENTRY:
+		RequireSuperuser(CheckAs());
+		//! Secrets are stored in the secret manager; they can always be dropped
+		properties.requires_valid_transaction = false;
+		break;
+	case CatalogType::TRIGGER_ENTRY:
+		BindDropTrigger(info, properties);
+		break;
+	default: {
+		vector<ObjectReference> visible;
+		for (auto &object : info.objects) {
+			BindDrop(info, object, properties);
+			if (ActsOnVisibleTarget(info.type, object.name, info.if_not_found)) {
+				visible.push_back(std::move(object));
+			}
 		}
+		info.objects = std::move(visible);
+		break;
 	}
-	result.plan = make_uniq<LogicalDrop>(std::move(dropped));
+	}
+	result.plan = make_uniq<LogicalDrop>(std::move(stmt.info));
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 

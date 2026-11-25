@@ -109,14 +109,12 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropSubscriptionStateme
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto info = make_uniq<DropInfo>();
 	info->type = CatalogType::SUBSCRIPTION_ENTRY;
-	info->SetName(Identifier(transformer.Transform<string>(list_pr.GetChild(3))));
 	if (list_pr.Child<OptionalParseResult>(2).HasResult()) {
 		info->if_not_found = OnEntryNotFound::RETURN_NULL;
 	}
 	transformer.TransformOptional<bool>(list_pr, 4, info->cascade);
-	auto result = make_uniq<DropStatement>();
-	result->info = std::move(info);
-	return std::move(result);
+	return MakeDropStatement(std::move(info),
+	                         {QualifiedName(Identifier(transformer.Transform<string>(list_pr.GetChild(3))))});
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterSubscriptionStatement(PEGTransformer &transformer,

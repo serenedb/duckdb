@@ -19,12 +19,12 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::DROP;
 
 public:
-	explicit PhysicalDrop(PhysicalPlan &physical_plan, vector<unique_ptr<DropInfo>> infos, idx_t estimated_cardinality)
+	explicit PhysicalDrop(PhysicalPlan &physical_plan, unique_ptr<DropInfo> info, idx_t estimated_cardinality)
 	    : PhysicalOperator(physical_plan, PhysicalOperatorType::DROP, {LogicalType::BOOLEAN}, estimated_cardinality),
-	      infos(std::move(infos)) {
+	      info(std::move(info)) {
 	}
 
-	vector<unique_ptr<DropInfo>> infos;
+	unique_ptr<DropInfo> info;
 
 public:
 	// Source interface

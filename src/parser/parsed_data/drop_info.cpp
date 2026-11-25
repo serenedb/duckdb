@@ -23,20 +23,6 @@ unique_ptr<DropInfo> DropInfo::Copy() const {
 	return make_uniq<DropInfo>(*this);
 }
 
-vector<unique_ptr<DropInfo>> DropInfo::SplitObjects() {
-	auto listed = std::move(objects);
-	objects.clear();
-	vector<unique_ptr<DropInfo>> result;
-	for (auto &object : listed) {
-		auto info = Copy();
-		info->SetQualifiedName(std::move(object.name));
-		info->func_parameters = std::move(object.func_parameters);
-		info->has_func_args = object.has_func_args;
-		result.push_back(std::move(info));
-	}
-	return result;
-}
-
 static string ObjectToSQL(const QualifiedName &name, const vector<LogicalType> &func_parameters, bool has_func_args) {
 	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (has_func_args) {

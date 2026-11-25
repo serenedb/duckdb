@@ -75,7 +75,6 @@ public:
 
 public:
 	virtual unique_ptr<DropInfo> Copy() const;
-	vector<unique_ptr<DropInfo>> SplitObjects();
 	string ToString() const;
 
 	void Serialize(Serializer &serializer) const override;

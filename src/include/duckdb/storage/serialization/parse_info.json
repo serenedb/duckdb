@@ -1529,6 +1529,12 @@
         "serialize_condition": "qualified_name.Path().size() > 3",
         "deserialize_default": "QualifiedName()",
         "deserialize_skip_assign": true
+      },
+      {
+        "id": 16593,
+        "name": "objects",
+        "type": "vector<ObjectReference>",
+        "version": "sdb_v1"
       }
     ],
     "methods": {

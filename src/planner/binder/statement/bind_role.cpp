@@ -370,7 +370,7 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 	Settings::ResolveCurrentValues(context, info.set_config);
 }
 
-void Binder::BindDropRole(DropInfo &info) {
+void Binder::BindDropRole(const Identifier &name) {
 	auto &caller = CheckAs();
 	if (!caller.IsSystem() && !caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
 		throw PermissionException({{"detail", "Only roles with the CREATEROLE attribute and the ADMIN option on the "
@@ -379,7 +379,7 @@ void Binder::BindDropRole(DropInfo &info) {
 	}
 	optional_ptr<RoleEntry> role;
 	if (!caller.IsSystem()) {
-		role = BindRole(RoleSpec(info.GetQualifiedName().Name()), OnEntryNotFound::RETURN_NULL);
+		role = BindRole(RoleSpec(name), OnEntryNotFound::RETURN_NULL);
 	}
 	if (role && !caller.is_superuser && role->IsSuperuser()) {
 		throw PermissionException(

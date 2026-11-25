@@ -53,12 +53,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_exists, const Identifier &catalog_name,
     const optional<bool> &drop_database_force, const optional<bool> &drop_behavior) {
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::DATABASE_ENTRY;
-	result->info->SetQualifiedName(Identifier(), Identifier(), catalog_name);
-	result->info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info->cascade = drop_behavior && *drop_behavior;
-	return std::move(result);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::DATABASE_ENTRY;
+	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	info->cascade = drop_behavior && *drop_behavior;
+	return MakeDropStatement(std::move(info), {QualifiedName(catalog_name)});
 }
 
 bool PEGTransformerFactory::TransformDropDatabaseForce(PEGTransformer &transformer) {

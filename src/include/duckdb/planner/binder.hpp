@@ -492,7 +492,7 @@ public:
 	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
-	void BindDropRole(DropInfo &info);
+	void BindDropRole(const Identifier &name);
 	void BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
@@ -680,7 +680,7 @@ private:
 	//! Resolves the base table for DROP TRIGGER, stamps catalog/schema onto stmt.info,
 	//! and registers the catalog modification. IF EXISTS only guards the trigger, not the table.
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
-	void BindDrop(DropInfo &info, StatementProperties &properties);
+	void BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties);
 	void BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
 	void ResolveOwned(AlterInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
