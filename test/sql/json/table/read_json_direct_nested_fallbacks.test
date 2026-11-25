@@ -1,0 +1,70 @@
+# name: test/sql/json/table/read_json_direct_nested_fallbacks.test
+# description: read_json's direct STRUCT and LIST decoding hands what it cannot read to the node tree path, which reads or reports it as before
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "s": {"a": 1, "zzz": 2, "name": 7}, "d": "2.5"}'), ('{"id": 2, "s": {"a": 2, "name": "y"}, "d": 3}')) t(line)) TO '{TEST_DIR}/unknown_key.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query III
+SELECT * FROM read_ndjson('{TEST_DIR}/unknown_key.ndjson', columns := {id: 'BIGINT', s: 'STRUCT(a BIGINT, name VARCHAR)', d: 'DOUBLE'}) ORDER BY id;
+----
+1	{'a': 1, 'name': 7}	2.5
+2	{'a': 2, 'name': y}	3.0
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"s": {"a": 1}}'), ('{"s": nul}')) t(line)) TO '{TEST_DIR}/struct_nul.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/struct_nul.ndjson', columns := {s: 'STRUCT(a BIGINT)'});
+----
+at byte 7 in line 2: invalid literal, expected 'null'.
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"s": {"a": 1}}'), ('{"s": nan}')) t(line)) TO '{TEST_DIR}/struct_nan.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/struct_nan.ndjson', columns := {s: 'STRUCT(a BIGINT)'});
+----
+in line 2: Expected OBJECT, but got DOUBLE: NaN
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"l": [1]}'), ('{"l": nul}')) t(line)) TO '{TEST_DIR}/list_nul.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_nul.ndjson', columns := {l: 'BIGINT[]'});
+----
+at byte 7 in line 2: invalid literal, expected 'null'.
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"l": [1]}'), ('{"l": nan}')) t(line)) TO '{TEST_DIR}/list_nan.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_nan.ndjson', columns := {l: 'BIGINT[]'});
+----
+in line 2: Expected ARRAY, but got DOUBLE: NaN
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"l": [1]}'), ('{"l": [1 2]}')) t(line)) TO '{TEST_DIR}/list_element.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_element.ndjson', columns := {l: 'BIGINT[]'});
+----
+at byte 10 in line 2: unexpected character.
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"s": {"j": [1]}}'), ('{"s": {"j": [1,}}}')) t(line)) TO '{TEST_DIR}/json_leaf.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/json_leaf.ndjson', columns := {s: 'STRUCT(j JSON)'});
+----
+at byte 16 in line 2: unexpected character.
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"s": {"m": {"k": 1}}}'), ('{"s": {"m": {"k": "x"}}}')) t(line)) TO '{TEST_DIR}/map_leaf.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/map_leaf.ndjson', columns := {s: 'STRUCT(m MAP(VARCHAR, INTEGER))'});
+----
+in line 2: Failed to cast value to numerical: "x"
