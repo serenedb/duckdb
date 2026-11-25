@@ -267,8 +267,6 @@ public:
 	string ToString() const {
 		return string(buffer.data(), used);
 	}
-	static bool WriteDouble(string &out, double value, JSONWriteFlags flags);
-	static bool WriteString(string &out, std::string_view value, JSONWriteFlags flags);
 	//! Whether a string is ASCII without characters to escape, so that its JSON text is itself between quotes
 	static bool IsVerbatim(std::string_view value);
 	//! The room that WriteDouble(char *) needs: simdjson's to_chars writes in blocks

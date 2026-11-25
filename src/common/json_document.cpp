@@ -1934,16 +1934,6 @@ char *JSONStringWriter::WriteDouble(char *out, double value, JSONWriteFlags flag
 	return std::to_chars(out, out + 8, dot - 1).ptr;
 }
 
-bool JSONStringWriter::WriteDouble(string &out, double value, JSONWriteFlags flags) {
-	char text[MAX_DOUBLE_LENGTH];
-	auto end = WriteDouble(text, value, flags);
-	if (!end) {
-		return false;
-	}
-	out.append(text, NumericCast<idx_t>(end - text));
-	return true;
-}
-
 //! Writes one byte of a string, escaped as JSON needs: \u00XX in uppercase where there is no short escape
 static inline char *EscapeJSONByte(char *out, uint8_t c) {
 	static constexpr char HEX[] = "0123456789ABCDEF";
@@ -2112,17 +2102,6 @@ char *JSONStringWriter::WriteString(char *out, std::string_view value, JSONWrite
 	return out;
 }
 
-bool JSONStringWriter::WriteString(string &out, std::string_view value, JSONWriteFlags flags) {
-	const auto start = out.size();
-	out.resize(start + MaxStringLength(value.size()));
-	auto end = WriteString(&out[start], value, flags);
-	if (!end) {
-		out.resize(start);
-		return false;
-	}
-	out.resize(NumericCast<idx_t>(end - out.data()));
-	return true;
-}
 
 JSONBuilder::JSONBuilder(ArenaAllocator &arena_p) : arena(arena_p) {
 }
