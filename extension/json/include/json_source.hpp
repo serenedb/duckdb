@@ -29,6 +29,9 @@ public:
 	bool Stream() const {
 		return input->stream;
 	}
+	bool HostStream() const {
+		return input->host_stream != nullptr;
+	}
 	idx_t Size() const {
 		return input->size;
 	}
