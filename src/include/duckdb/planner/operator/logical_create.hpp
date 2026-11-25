@@ -31,9 +31,6 @@ public:
 	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
 
 	idx_t EstimateCardinality(ClientContext &context) override;
-	bool RequireOptimizer() const override {
-		return !children.empty();
-	}
 
 protected:
 	void ResolveTypes() override;
