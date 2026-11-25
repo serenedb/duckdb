@@ -161,13 +161,10 @@ void Settings::CheckValue(ClientContext &context, const Identifier &name, const 
 	value.CastAs(context, extension_option.type);
 }
 
-static AclMode HeldParameterPrivileges(ClientContext &context, const RoleAccess &role, const Identifier &name) {
+static bool ParameterAllows(ClientContext &context, const RoleAccess &role, const Identifier &name, AclMode use) {
 	auto parameter = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::PARAMETER_ENTRY, QualifiedName(name)),
 	                                   OnEntryNotFound::RETURN_NULL);
-	if (!parameter) {
-		return AclMode::NoRights;
-	}
-	return role.HeldModes(parameter->permissions.acl);
+	return parameter && Allowed(role, *parameter, use);
 }
 
 bool Settings::MayChange(ClientContext &context, const RoleAccess &role, const Identifier &name,
@@ -179,10 +176,9 @@ bool Settings::MayChange(ClientContext &context, const RoleAccess &role, const I
 		return true;
 	}
 	if (scope == SetScope::GLOBAL) {
-		return (HeldParameterPrivileges(context, role, name) & AclMode::AlterSystem) != AclMode::NoRights;
+		return ParameterAllows(context, role, name, AclMode::AlterSystem);
 	}
-	return access.context != SettingContext::SUPERUSER ||
-	       (HeldParameterPrivileges(context, role, name) & AclMode::Set) != AclMode::NoRights;
+	return access.context != SettingContext::SUPERUSER || ParameterAllows(context, role, name, AclMode::Set);
 }
 
 void Settings::CheckChange(ClientContext &context, const RoleAccess &role, const Identifier &name,

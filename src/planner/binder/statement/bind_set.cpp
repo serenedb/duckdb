@@ -1,5 +1,8 @@
 #include "duckdb/parser/statement/set_statement.hpp"
 #include "duckdb/execution/operator/helper/physical_set.hpp"
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/setting_info.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_set.hpp"
 #include "duckdb/planner/operator/logical_reset.hpp"
@@ -10,6 +13,24 @@
 
 namespace duckdb {
 
+static void CheckSetAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
+                           const char *statement) {
+	const auto check = [&](const SettingAccess &access, SetScope variable_scope) {
+		if (!Settings::MayChange(context, role, name, access, variable_scope)) {
+			PhysicalSet::WarnOutsideTransaction(context, scope, statement);
+			Settings::CheckChange(context, role, name, access, variable_scope);
+		}
+	};
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		check(option->access, PhysicalSet::GetSettingScope(*option, scope));
+		return;
+	}
+	ExtensionOption extension_option;
+	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
+		check(extension_option.access, PhysicalSet::GetSettingScope(extension_option, scope));
+	}
+}
+
 BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 	BoundStatement result;
 	result.types = {LogicalType::BOOLEAN};
@@ -19,7 +40,7 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 	Value value;
 	unique_ptr<LogicalOperator> op;
 	if (stmt.scope != SetScope::VARIABLE) {
-		PhysicalSet::CheckAccess(context, CurrentRole(), stmt.name, stmt.scope, "SET LOCAL");
+		CheckSetAccess(context, CurrentRole(), stmt.name, stmt.scope, "SET LOCAL");
 		ConstantBinder default_binder(*this, context, "SET value");
 		auto bound_value = default_binder.Bind(stmt.value);
 		if (bound_value->HasParameter()) {
@@ -52,7 +73,7 @@ BoundStatement Binder::Bind(ResetVariableStatement &stmt) {
 	result.names = {"Success"};
 
 	if (stmt.scope != SetScope::VARIABLE && !stmt.name.empty()) {
-		PhysicalSet::CheckAccess(context, CurrentRole(), stmt.name, stmt.scope, "RESET LOCAL");
+		CheckSetAccess(context, CurrentRole(), stmt.name, stmt.scope, "RESET LOCAL");
 	}
 	auto reset = make_uniq<LogicalReset>(stmt.name, stmt.scope);
 	result.plan = std::move(reset);

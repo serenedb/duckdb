@@ -201,22 +201,4 @@ void PhysicalSet::WarnOutsideTransaction(ClientContext &context, SetScope scope,
 	}
 }
 
-void PhysicalSet::CheckAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
-                              const char *statement) {
-	const auto check = [&](const SettingAccess &access, SetScope variable_scope) {
-		if (!Settings::MayChange(context, role, name, access, variable_scope)) {
-			WarnOutsideTransaction(context, scope, statement);
-			Settings::CheckChange(context, role, name, access, variable_scope);
-		}
-	};
-	if (auto option = DBConfig::GetOptionByName(name)) {
-		check(option->access, GetSettingScope(*option, scope));
-		return;
-	}
-	ExtensionOption extension_option;
-	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
-		check(extension_option.access, GetSettingScope(extension_option, scope));
-	}
-}
-
 } // namespace duckdb

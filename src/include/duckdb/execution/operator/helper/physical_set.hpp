@@ -47,8 +47,6 @@ public:
 
 	static void SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
 	                        bool check_access = true, optional_ptr<const RoleAccess> role = nullptr);
-	static void CheckAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
-	                        const char *statement);
 	static void WarnOutsideTransaction(ClientContext &context, SetScope scope, const char *statement);
 	static void SetCustomVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value);
 	static void SetGenericVariable(ClientContext &context, idx_t setting_index, SetScope scope, Value target_value);

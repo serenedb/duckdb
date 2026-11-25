@@ -51,29 +51,48 @@ static void CheckConfigChange(ClientContext &context, const RoleAccess &caller, 
 	}
 }
 
-static void CheckMembershipAuthorization(ClientContext &context, const RoleAccess &caller, const RoleEntry &granted,
-                                         bool revoke) {
-	auto &name = granted.name.GetIdentifierName();
-	if (!revoke && granted.oid == DBConfig::GetConfig(context).database_owner_role) {
-		throw NotImplementedException("role \"%s\" cannot have explicit members", name);
-	}
+enum class RoleChange : uint8_t { ALTER, RENAME, DROP, MEMBERS, GRANT, REVOKE };
+
+static void RequireAdminOf(const RoleAccess &caller, const RoleEntry &role, RoleChange change) {
 	if (caller.is_superuser) {
 		return;
 	}
-	const string verb = revoke ? "revoke" : "grant";
-	if (granted.IsSuperuser()) {
+	static constexpr const char *VERBS[] = {"alter", "rename", "drop", "alter", "grant", "revoke"};
+	const auto verb = VERBS[static_cast<uint8_t>(change)];
+	auto &name = role.name.GetIdentifierName();
+	const bool grant = change == RoleChange::GRANT || change == RoleChange::REVOKE;
+	const bool membership = grant || change == RoleChange::MEMBERS;
+	const auto message = grant ? StringUtil::Format("permission denied to %s role \"%s\"", verb, name)
+	                           : StringUtil::Format("permission denied to %s role", verb);
+	if (role.IsSuperuser()) {
 		throw PermissionException(
 		    {{"detail",
 		      StringUtil::Format("Only roles with the SUPERUSER attribute may %s roles with the SUPERUSER attribute.",
 		                         verb)}},
-		    StringUtil::Format("permission denied to %s role \"%s\"", verb, name));
+		    message);
 	}
-	if (!caller.AdminOf(granted.oid)) {
-		throw PermissionException(
-		    {{"detail",
-		      StringUtil::Format("Only roles with the ADMIN option on role \"%s\" may %s this role.", name, verb)}},
-		    StringUtil::Format("permission denied to %s role \"%s\"", verb, name));
+	if (caller.AdminOf(role.oid) && (membership || caller.Has(RoleOption::CreateRole))) {
+		return;
 	}
+	string detail;
+	if (change == RoleChange::MEMBERS) {
+		detail = StringUtil::Format("Only roles with the ADMIN option on role \"%s\" may add or drop members.", name);
+	} else if (membership) {
+		detail = StringUtil::Format("Only roles with the ADMIN option on role \"%s\" may %s this role.", name, verb);
+	} else {
+		detail = StringUtil::Format(
+		    "Only roles with the CREATEROLE attribute and the ADMIN option on role \"%s\" may %s this role.", name,
+		    verb);
+	}
+	throw PermissionException({{"detail", detail}}, message);
+}
+
+static void CheckMembershipAuthorization(ClientContext &context, const RoleAccess &caller, const RoleEntry &granted,
+                                         bool revoke) {
+	if (!revoke && granted.oid == DBConfig::GetConfig(context).database_owner_role) {
+		throw NotImplementedException("role \"%s\" cannot have explicit members", granted.name.GetIdentifierName());
+	}
+	RequireAdminOf(caller, granted, revoke ? RoleChange::REVOKE : RoleChange::GRANT);
 }
 
 optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound if_not_found) {
@@ -162,23 +181,12 @@ static void BindMemberships(Binder &binder, const RoleAccess &caller, AlterRoleI
 			spec = RoleSpec(granted->name);
 		}
 		if (info.alter_group) {
-			auto &name = granted->name.GetIdentifierName();
 			if (granted->IsPredefined()) {
 				throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
-				                ExceptionType::INVALID_INPUT, StringUtil::Format("role name \"%s\" is reserved", name));
+				                ExceptionType::INVALID_INPUT,
+				                StringUtil::Format("role name \"%s\" is reserved", granted->name.GetIdentifierName()));
 			}
-			if (!caller.is_superuser && granted->IsSuperuser()) {
-				throw PermissionException(
-				    {{"detail",
-				      "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
-				    "permission denied to alter role");
-			}
-			if (!caller.is_superuser && !caller.AdminOf(granted->oid)) {
-				throw PermissionException(
-				    {{"detail", StringUtil::Format(
-				                    "Only roles with the ADMIN option on role \"%s\" may add or drop members.", name)}},
-				    "permission denied to alter role");
-			}
+			RequireAdminOf(caller, *granted, RoleChange::MEMBERS);
 		} else {
 			CheckMembershipAuthorization(context, caller, *granted, info.revoke);
 		}
@@ -202,25 +210,14 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 		     {"detail", rename ? "Role names starting with \"pg_\" are reserved." : "Cannot alter reserved roles."}},
 		    ExceptionType::INVALID_INPUT, StringUtil::Format("role name \"%s\" is reserved", name));
 	}
+	if (rename) {
+		RequireAdminOf(caller, role, RoleChange::RENAME);
+		return;
+	}
 	if (caller.is_superuser) {
 		return;
 	}
 	const bool admin = caller.Has(RoleOption::CreateRole) && caller.AdminOf(role.oid);
-	if (rename && role.IsSuperuser()) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may rename roles with the SUPERUSER attribute."}},
-		    "permission denied to rename role");
-	}
-	if (rename && !admin) {
-		throw PermissionException(
-		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
-		                                   "\"%s\" may rename this role.",
-		                                   name)}},
-		    "permission denied to rename role");
-	}
-	if (rename) {
-		return;
-	}
 	if (role.IsSuperuser()) {
 		throw PermissionException(
 		    {{"detail", "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
@@ -323,7 +320,7 @@ void Binder::BindAlterRole(AlterRoleInfo &info) {
 	if (settings && !caller.IsSystem()) {
 		CheckConfig(context, info.set_config, info.reset_config);
 	}
-	if (settings && role && !caller.IsSystem() && !caller.is_superuser) {
+	if (settings && role && !caller.is_superuser) {
 		CheckConfigChange(context, caller, info.set_config, info.reset_config, info.reset_all_config,
 		                  role->GetInfo()->Cast<CreateRoleInfo>().config);
 	}
@@ -337,18 +334,8 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 		                ExceptionType::INVALID_INPUT,
 		                StringUtil::Format("role name \"%s\" is reserved", role->name.GetIdentifierName()));
 	}
-	if (role && !caller.is_superuser && role->IsSuperuser()) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
-		    "permission denied to alter role");
-	}
-	if (role && !caller.is_superuser && role->oid != caller.role &&
-	    (!caller.Has(RoleOption::CreateRole) || !caller.AdminOf(role->oid))) {
-		throw PermissionException(
-		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
-		                                   "\"%s\" may alter this role.",
-		                                   role->name.GetIdentifierName())}},
-		    "permission denied to alter role");
+	if (role && role->oid != caller.role) {
+		RequireAdminOf(caller, *role, RoleChange::ALTER);
 	}
 	if (!role && database) {
 		Require(context, caller, *database, AclMode::Own);
@@ -389,7 +376,7 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 
 void Binder::BindDropRole(const Identifier &name) {
 	auto &caller = CheckAs();
-	if (!caller.IsSystem() && !caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
+	if (!caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
 		throw PermissionException({{"detail", "Only roles with the CREATEROLE attribute and the ADMIN option on the "
 		                                      "target roles may drop roles."}},
 		                          "permission denied to drop role");
@@ -398,17 +385,8 @@ void Binder::BindDropRole(const Identifier &name) {
 	if (!caller.IsSystem()) {
 		role = BindRole(RoleSpec(name), OnEntryNotFound::RETURN_NULL);
 	}
-	if (role && !caller.is_superuser && role->IsSuperuser()) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may drop roles with the SUPERUSER attribute."}},
-		    "permission denied to drop role");
-	}
-	if (role && !caller.is_superuser && !caller.AdminOf(role->oid)) {
-		throw PermissionException(
-		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
-		                                   "\"%s\" may drop this role.",
-		                                   role->name.GetIdentifierName())}},
-		    "permission denied to drop role");
+	if (role) {
+		RequireAdminOf(caller, *role, RoleChange::DROP);
 	}
 	if (role && role->IsPredefined()) {
 		throw DependencyException("cannot drop role %s because it is required by the database system",
