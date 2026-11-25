@@ -23,6 +23,23 @@ SELECT json FROM read_json_objects('{TEST_DIR}/detect_array_values.json')
 [2]
 
 statement ok
+COPY (SELECT ('[1] ' || repeat('[2] ', 20000))::BLOB) TO '{TEST_DIR}/detect_array_run.json' (FORMAT BLOB);
+
+query III
+SELECT count(*), min(json), max(json) FROM read_json_objects('{TEST_DIR}/detect_array_run.json')
+----
+20001	[1]	[2]
+
+statement ok
+COPY (SELECT ('"' || repeat('x', 70000) || '" "y"')::BLOB) TO '{TEST_DIR}/detect_long_value.json' (FORMAT BLOB);
+
+query I
+SELECT length(json) FROM read_json_objects('{TEST_DIR}/detect_long_value.json')
+----
+70002
+3
+
+statement ok
 COPY (SELECT ('{"a": "' || repeat('x', 70000) || '"}' || chr(10) || '{"a": "y"}' || chr(10))::BLOB) TO '{TEST_DIR}/detect_long_line.json' (FORMAT BLOB);
 
 query I
@@ -65,3 +82,19 @@ query I
 SELECT a FROM read_json('{TEST_DIR}/detect_leading_space.json')
 ----
 1
+
+statement ok
+COPY (SELECT (chr(10) || repeat(' ', 70000) || chr(10) || '{"a": 1}' || chr(10))::BLOB) TO '{TEST_DIR}/detect_leading_lines.json' (FORMAT BLOB);
+
+query I
+SELECT a FROM read_json('{TEST_DIR}/detect_leading_lines.json')
+----
+1
+
+statement ok
+COPY (SELECT ('{"type": "FeatureCollection", "name": "' || repeat('x', 70000) || '", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]}, "properties": {"name": "a"}}]}')::BLOB) TO '{TEST_DIR}/detect_feature_collection.json' (FORMAT BLOB);
+
+query II
+SELECT ST_AsText(geometry), name FROM read_json('{TEST_DIR}/detect_feature_collection.json', geojson = true)
+----
+POINT (1 2)	a
