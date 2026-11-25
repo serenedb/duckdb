@@ -13,6 +13,7 @@ add_library_unity(
   test_checksum.cpp
   test_column_data_allocator.cpp
   test_compression_type.cpp
+  test_expression_filter_selection.cpp
   test_file_buffer_handle_group.cpp
   test_file_system.cpp
   test_fsst.cpp
