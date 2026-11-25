@@ -243,29 +243,14 @@ public:
 	explicit AlterDatabaseSettingsInfo();
 };
 
-struct ReassignOwnedInfo : public AlterInfo {
-	ReassignOwnedInfo();
+struct AlterOwnedInfo : public AlterInfo {
+	AlterOwnedInfo();
 
 	vector<RoleSpec> roles;
 	RoleSpec new_owner;
-	vector<idx_t> role_ids;
-	idx_t new_owner_id = 0;
-
-public:
-	CatalogType GetCatalogType() const override;
-	unique_ptr<AlterInfo> Copy() const override;
-	string ToString() const override;
-
-	void Serialize(Serializer &serializer) const override;
-	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
-};
-
-struct DropOwnedInfo : public AlterInfo {
-	DropOwnedInfo();
-
-	vector<RoleSpec> roles;
 	bool cascade = false;
 	vector<idx_t> role_ids;
+	idx_t new_owner_id = 0;
 	vector<idx_t> grantors;
 
 public:

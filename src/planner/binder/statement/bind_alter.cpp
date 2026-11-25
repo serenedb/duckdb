@@ -352,8 +352,8 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		return nullptr;
 	}
 
-	if (info->type == AlterType::REASSIGN_OWNED || info->type == AlterType::DROP_OWNED) {
-		ResolveOwned(*info);
+	if (info->type == AlterType::ALTER_OWNED) {
+		ResolveOwned(info->Cast<AlterOwnedInfo>());
 		auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
 		info->SetQualifiedName(catalog.GetName(), Identifier(), Identifier());
 		properties.RegisterDBModify(

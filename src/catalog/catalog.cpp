@@ -2048,12 +2048,12 @@ void Catalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntr
 }
 
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	if (info.type == AlterType::REASSIGN_OWNED || info.type == AlterType::DROP_OWNED) {
+	if (info.type == AlterType::ALTER_OWNED) {
 		auto &system = GetSystemCatalog(transaction.GetContext());
 		if (&system == this) {
-			throw NotImplementedException("%s is not supported by a %s catalog",
-			                              info.type == AlterType::REASSIGN_OWNED ? "REASSIGN OWNED" : "DROP OWNED",
-			                              GetCatalogType());
+			throw NotImplementedException(
+			    "%s is not supported by a %s catalog",
+			    info.Cast<AlterOwnedInfo>().new_owner.empty() ? "DROP OWNED" : "REASSIGN OWNED", GetCatalogType());
 		}
 		system.Alter(system.GetCatalogTransaction(transaction.GetContext()), info);
 		return;

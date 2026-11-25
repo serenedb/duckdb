@@ -761,9 +761,9 @@
     ]
   },
   {
-    "class": "ReassignOwnedInfo",
+    "class": "AlterOwnedInfo",
     "base": "AlterInfo",
-    "enum": "REASSIGN_OWNED",
+    "enum": "ALTER_OWNED",
     "members": [
       {
         "id": 300,
@@ -777,38 +777,21 @@
       },
       {
         "id": 302,
-        "name": "role_ids",
-        "type": "vector<idx_t>"
-      },
-      {
-        "id": 303,
-        "name": "new_owner_id",
-        "type": "idx_t"
-      }
-    ]
-  },
-  {
-    "class": "DropOwnedInfo",
-    "base": "AlterInfo",
-    "enum": "DROP_OWNED",
-    "members": [
-      {
-        "id": 300,
-        "name": "roles",
-        "type": "vector<RoleSpec>"
-      },
-      {
-        "id": 301,
         "name": "cascade",
         "type": "bool"
       },
       {
-        "id": 302,
+        "id": 303,
         "name": "role_ids",
         "type": "vector<idx_t>"
       },
       {
-        "id": 303,
+        "id": 304,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 305,
         "name": "grantors",
         "type": "vector<idx_t>"
       }

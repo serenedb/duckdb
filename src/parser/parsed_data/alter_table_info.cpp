@@ -546,46 +546,30 @@ string AlterDatabaseSettingsInfo::ToString() const {
 	return "ALTER DATABASE " + database + options + ";";
 }
 
-ReassignOwnedInfo::ReassignOwnedInfo() : AlterInfo(AlterType::REASSIGN_OWNED) {
+AlterOwnedInfo::AlterOwnedInfo() : AlterInfo(AlterType::ALTER_OWNED) {
 }
 
-CatalogType ReassignOwnedInfo::GetCatalogType() const {
+CatalogType AlterOwnedInfo::GetCatalogType() const {
 	return CatalogType::INVALID;
 }
 
-unique_ptr<AlterInfo> ReassignOwnedInfo::Copy() const {
-	auto result = make_uniq<ReassignOwnedInfo>();
+unique_ptr<AlterInfo> AlterOwnedInfo::Copy() const {
+	auto result = make_uniq<AlterOwnedInfo>();
 	result->SetQualifiedName(GetQualifiedName());
 	result->roles = roles;
 	result->new_owner = new_owner;
-	result->role_ids = role_ids;
-	result->new_owner_id = new_owner_id;
-	return std::move(result);
-}
-
-string ReassignOwnedInfo::ToString() const {
-	return "REASSIGN OWNED BY " + RoleSpec::ToString(roles) + " TO " + new_owner.ToString() + ";";
-}
-
-DropOwnedInfo::DropOwnedInfo() : AlterInfo(AlterType::DROP_OWNED) {
-}
-
-CatalogType DropOwnedInfo::GetCatalogType() const {
-	return CatalogType::INVALID;
-}
-
-unique_ptr<AlterInfo> DropOwnedInfo::Copy() const {
-	auto result = make_uniq<DropOwnedInfo>();
-	result->SetQualifiedName(GetQualifiedName());
-	result->roles = roles;
 	result->cascade = cascade;
 	result->role_ids = role_ids;
+	result->new_owner_id = new_owner_id;
 	result->grantors = grantors;
 	return std::move(result);
 }
 
-string DropOwnedInfo::ToString() const {
-	return "DROP OWNED BY " + RoleSpec::ToString(roles) + (cascade ? " CASCADE;" : ";");
+string AlterOwnedInfo::ToString() const {
+	if (new_owner.empty()) {
+		return "DROP OWNED BY " + RoleSpec::ToString(roles) + (cascade ? " CASCADE;" : ";");
+	}
+	return "REASSIGN OWNED BY " + RoleSpec::ToString(roles) + " TO " + new_owner.ToString() + ";";
 }
 
 //===--------------------------------------------------------------------===//

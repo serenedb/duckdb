@@ -556,7 +556,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformReassignOwnedStatement(
                                                                                 ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'REASSIGN' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:'TO' 5:OwnerRoleSpec
-	auto info = make_uniq<ReassignOwnedInfo>();
+	auto info = make_uniq<AlterOwnedInfo>();
 	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
 		info->roles.push_back(TransformOwnerRoleSpec(transformer, role.get()));
 	}
@@ -568,7 +568,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropOwnedStatement(PEGT
                                                                             ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'DROP' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:DropBehavior?
-	auto info = make_uniq<DropOwnedInfo>();
+	auto info = make_uniq<AlterOwnedInfo>();
 	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
 		info->roles.push_back(TransformOwnerRoleSpec(transformer, role.get()));
 	}

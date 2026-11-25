@@ -381,22 +381,19 @@ static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, cons
 	}
 }
 
-void Binder::ResolveOwned(AlterInfo &info) {
-	if (info.type == AlterType::DROP_OWNED) {
-		auto &drop = info.Cast<DropOwnedInfo>();
-		drop.role_ids = ResolveOwnedRoles(*this, drop.roles, "drop");
-		drop.grantors = GrantorRoles(context, CheckAs());
-		RefuseBootstrapRole(*this, drop.role_ids, "drop objects");
+void Binder::ResolveOwned(AlterOwnedInfo &info) {
+	const bool drop = info.new_owner.empty();
+	info.role_ids = ResolveOwnedRoles(*this, info.roles, drop ? "drop" : "reassign");
+	if (drop) {
+		info.grantors = GrantorRoles(context, CheckAs());
+		RefuseBootstrapRole(*this, info.role_ids, "drop objects");
 		return;
 	}
-	auto &reassign = info.Cast<ReassignOwnedInfo>();
-	reassign.role_ids = ResolveOwnedRoles(*this, reassign.roles, "reassign");
-	reassign.new_owner_id = BindRole(reassign.new_owner)->oid;
-	auto &role = CheckAs();
-	if (!role.CanSet(reassign.new_owner_id)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(reassign.new_owner_id));
+	info.new_owner_id = BindRole(info.new_owner)->oid;
+	if (!CheckAs().CanSet(info.new_owner_id)) {
+		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(info.new_owner_id));
 	}
-	RefuseBootstrapRole(*this, reassign.role_ids, "reassign ownership of objects");
+	RefuseBootstrapRole(*this, info.role_ids, "reassign ownership of objects");
 }
 
 static void ExpandAllInSchema(Binder &binder, AlterPermissionsInfo &grant) {

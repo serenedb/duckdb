@@ -688,7 +688,7 @@ private:
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
 	void BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties);
 	void BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
-	void ResolveOwned(AlterInfo &info);
+	void ResolveOwned(AlterOwnedInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the
 	//! UPDATE child projection (before rowid). Records the input-chunk offset of the OLD block on the update.
