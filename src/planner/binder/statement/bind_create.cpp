@@ -1631,8 +1631,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			                    QualifiedName(catalog.GetName(), Identifier(),
 			                                  Identifier(stmt.info->Cast<CreateForeignServerInfo>().fdw_name)),
 			                    AclMode::Usage));
-			AssignOwner(context, stmt.info->permissions, catalog, CatalogType::FOREIGN_SERVER_ENTRY, nullptr,
-			            role.role);
+			stmt.info->permissions.owner = role.role;
 		}
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan =
@@ -1656,7 +1655,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			        OnEntryNotFound::RETURN_NULL)) {
 				Require(context, role, *database, AclMode::Create);
 			}
-			AssignOwner(context, stmt.info->permissions, catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr, role.role);
+			stmt.info->permissions.owner = role.role;
 			catalog.RequireSubscription(context, role, stmt.info->Cast<CreateSubscriptionInfo>());
 		}
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
