@@ -2399,9 +2399,6 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		if (direct_found[column] || skips[column] || !vectors[column]) {
 			continue;
 		}
-		if (direct_missing_error && pass != JsonDirectPass::OTHERS) {
-			return FALLBACK;
-		}
 		if (global.column_nodes[column] != DConstants::INVALID_INDEX) {
 			continue;
 		}
@@ -2497,7 +2494,6 @@ bool JsonScan::DecodeDirect(DataChunk &output, idx_t &rows) {
 	}
 	direct_unknown_error = transform_options.error_unknown_key;
 	direct_duplicate_error = transform_options.error_duplicate_key;
-	direct_missing_error = transform_options.error_missing_key;
 	bool late = !columns.filters.empty();
 	for (auto &filter : columns.filters) {
 		late = late && filter.name.IsValid();

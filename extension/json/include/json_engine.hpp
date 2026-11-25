@@ -275,7 +275,6 @@ private:
 	vector<const JSONNode *> node_values;
 	bool direct_unknown_error = false;
 	bool direct_duplicate_error = false;
-	bool direct_missing_error = false;
 };
 
 JSONFormat JsonDetectFormat(const char *data, idx_t size, JSONTreeParser &parser, JSONRecordType &record_type);
