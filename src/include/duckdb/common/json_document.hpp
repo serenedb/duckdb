@@ -54,6 +54,9 @@ constexpr bool HasFlag(JSONReadFlags flags, JSONReadFlags flag) {
 	return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(flag)) != 0;
 }
 
+constexpr JSONReadFlags JSON_TYPE_READ_FLAGS =
+    JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS | JSONReadFlags::BIGNUM_AS_RAW;
+
 enum class JSONWriteFlags : uint32_t {
 	NONE = 0,
 	ALLOW_INVALID_UNICODE = 1 << 0,
