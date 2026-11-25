@@ -40,6 +40,10 @@ public:
 	virtual ~StorageExtension() {
 	}
 
+	virtual string CheckpointRefusal(AttachedDatabase &db) {
+		return string();
+	}
+
 	virtual void OnCheckpointStart(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
 	}
 

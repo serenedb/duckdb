@@ -16,6 +16,7 @@ enum class BlockState : uint8_t { BLOCK_UNLOADED = 0, BLOCK_LOADED = 1 };
 
 // Forward declaration.
 class BufferPool;
+struct TempBufferPoolReservation;
 
 struct BufferPoolReservation {
 	MemoryTag tag;
@@ -33,6 +34,7 @@ struct BufferPoolReservation {
 
 	void Resize(idx_t new_size);
 	void Merge(BufferPoolReservation src);
+	TempBufferPoolReservation Split(idx_t split_size);
 };
 
 struct TempBufferPoolReservation : BufferPoolReservation {

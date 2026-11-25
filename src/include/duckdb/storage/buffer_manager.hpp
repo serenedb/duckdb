@@ -105,6 +105,8 @@ public:
 
 	//! Returns a newly registered block of transient memory.
 	virtual shared_ptr<BlockHandle> RegisterTransientMemory(const idx_t size, BlockManager &block_manager);
+	virtual shared_ptr<BlockHandle> RegisterTransientMemoryFrom(const idx_t size, BlockManager &block_manager,
+	                                                            BufferPoolReservation &source);
 	//! Returns a newly registered block of memory that is smaller than the block size setting.
 	virtual shared_ptr<BlockHandle> RegisterSmallMemory(const idx_t size);
 	//! Returns a newly registered block of memory that is smaller than the block size setting and has a memory tag.
@@ -112,10 +114,10 @@ public:
 
 	//! Get the buffer allocator.
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
-	//! Reserve memory.
-	virtual DUCKDB_API void ReserveMemory(idx_t size);
+	//! Reserve memory allocated outside the buffer pool, evicting blocks to make room; throws when it can't.
+	virtual DUCKDB_API TempBufferPoolReservation ReserveMemory(MemoryTag tag, idx_t size);
 	//! Free reserved memory.
-	virtual DUCKDB_API void FreeReservedMemory(idx_t size);
+	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.
 	virtual vector<MemoryInformation> GetMemoryUsageInfo() const = 0;
 	//! Set a new memory limit.

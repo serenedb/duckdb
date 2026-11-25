@@ -45,6 +45,8 @@ public:
 
 	//! Registers a transient memory buffer.
 	shared_ptr<BlockHandle> RegisterTransientMemory(const idx_t size, BlockManager &block_manager) final;
+	shared_ptr<BlockHandle> RegisterTransientMemoryFrom(const idx_t size, BlockManager &block_manager,
+	                                                    BufferPoolReservation &source) final;
 	//! Registers an in-memory buffer that cannot be unloaded until it is destroyed.
 	//! This buffer can be small (smaller than the block size of the temporary block manager).
 	//! Unpin and Pin are NOPs on this block of memory.
@@ -118,8 +120,8 @@ public:
 	unique_ptr<FileBuffer> ConstructManagedBuffer(idx_t size, idx_t block_header_size, unique_ptr<FileBuffer> &&source,
 	                                              FileBufferType type = FileBufferType::MANAGED_BUFFER) override;
 
-	DUCKDB_API void ReserveMemory(idx_t size) final;
-	DUCKDB_API void FreeReservedMemory(idx_t size) final;
+	DUCKDB_API TempBufferPoolReservation ReserveMemory(MemoryTag tag, idx_t size) final;
+	DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size) final;
 	bool HasTemporaryDirectory() const final;
 	bool HasFilesInTemporaryDirectory() const final;
 
@@ -127,6 +129,11 @@ protected:
 	//! Helper
 	TempBufferPoolReservation EvictBlocksOrThrow(QueryContext context, MemoryTag tag, idx_t memory_delta,
 	                                             unique_ptr<FileBuffer> *buffer, const char *error_message);
+	TempBufferPoolReservation EvictBlocksOrThrow(QueryContext context, MemoryTag tag, idx_t memory_delta,
+	                                             unique_ptr<FileBuffer> *buffer, const char *error_message,
+	                                             optional_ptr<BufferPoolReservation> source);
+	shared_ptr<BlockHandle> RegisterSmallMemoryFrom(MemoryTag tag, const idx_t size,
+	                                                optional_ptr<BufferPoolReservation> source);
 
 	//! Register an in-memory buffer of arbitrary size, as long as it is >= BLOCK_SIZE. can_destroy signifies whether or
 	//! not the buffer can be destroyed instead of evicted,
@@ -136,7 +143,8 @@ protected:
 	//! we can call BlockHandle::SetDestroyBufferUpon
 	//! The resulting buffer will already be allocated, but needs to be pinned in order to be used.
 	shared_ptr<BlockHandle> RegisterMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size, bool can_destroy,
-	                                       QueryContext context = QueryContext());
+	                                       QueryContext context = QueryContext(),
+	                                       optional_ptr<BufferPoolReservation> source = nullptr);
 
 	//! Pins [block], a block RegisterMemory created, before the buffer pool may evict it
 	BufferHandle PinNew(shared_ptr<BlockHandle> &block);
@@ -159,8 +167,6 @@ protected:
 	void DeleteTemporaryFile(BlockMemory &memory) final;
 
 	void RequireTemporaryDirectory();
-
-	const char *InMemoryWarning();
 
 	static data_ptr_t BufferAllocatorAllocate(PrivateAllocatorData *private_data, idx_t size);
 	static void BufferAllocatorFree(PrivateAllocatorData *private_data, data_ptr_t pointer, idx_t size);
