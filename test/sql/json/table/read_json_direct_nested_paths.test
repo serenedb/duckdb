@@ -1,0 +1,53 @@
+# name: test/sql/json/table/read_json_direct_nested_paths.test
+# description: read_json's direct STRUCT and LIST decoding: rows a filter in the walk rejects, tokens of other types in nested leaves, escaped keys and string leaves over several chunks
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"f": {"name": "x"}, "g": {"k": 1, "l": [1, 2], "j": {"x": 1}}}'),
+  ('{"f": {"name": "y"}, "g": {"k": 1, "l": [3], "j": [2]}}'),
+  ('{"f": {"name": "x"}, "g": {"k": 2, "l": null, "j": null}}'),
+  ('{"f": {"name": "x"}, "g": {"k": 1, "l": null, "j": null}}')
+) t(line)) TO '{TEST_DIR}/walk_nested.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT f.name, g FROM read_ndjson('{TEST_DIR}/walk_nested.ndjson', columns := {f: 'STRUCT(name VARCHAR)', g: 'STRUCT(k HUGEINT, l BIGINT[], j JSON)'}) WHERE f.name = 'x' AND g.k = 1 ORDER BY g.l NULLS LAST;
+----
+x	{'k': 1, 'l': [1, 2], 'j': '{"x":1}'}
+x	{'k': 1, 'l': NULL, 'j': NULL}
+
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"s": {"a": 5, "name": 123, "d": [-0, -0.0, 0, 1.5, -2]}}'),
+  ('{"s": {"a": 6, "name": "x", "d": []}}'),
+  ('{"s": {"a": 7, "name": true, "d": null}}')
+) t(line)) TO '{TEST_DIR}/nested_tokens.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT s FROM read_ndjson('{TEST_DIR}/nested_tokens.ndjson', columns := {s: 'STRUCT(a BIGINT, name VARCHAR, d DOUBLE[])'}) ORDER BY s.a;
+----
+{'a': 5, 'name': 123, 'd': [0, -0, 0, 1.5, -2]}
+{'a': 6, 'name': x, 'd': []}
+{'a': 7, 'name': true, 'd': NULL}
+
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"s": {"\u0061": 5, "name": "y"}}'),
+  ('{"s": {"a": 6, "n\u0061me": "x"}}')
+) t(line)) TO '{TEST_DIR}/nested_escaped.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT s FROM read_ndjson('{TEST_DIR}/nested_escaped.ndjson', columns := {s: 'STRUCT(a BIGINT, name VARCHAR)'}) ORDER BY s.a;
+----
+{'a': 5, 'name': y}
+{'a': 6, 'name': x}
+
+statement ok
+COPY (SELECT '{"s": {"t": "2024-01-02 03:04:' || lpad((i % 60)::VARCHAR, 2, '0') || '"}}' FROM range(5000) t(i)) TO '{TEST_DIR}/nested_strings.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query III
+SELECT count(*), max(s.t), min(s.t) FROM read_ndjson('{TEST_DIR}/nested_strings.ndjson', columns := {s: 'STRUCT(t TIMESTAMP)'});
+----
+5000	2024-01-02 03:04:59	2024-01-02 03:04:00

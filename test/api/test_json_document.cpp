@@ -64,6 +64,8 @@ TEST_CASE("A JSON string writer refuses NaN, infinity and invalid UTF-8 unless i
 	REQUIRE_THROWS_AS(strict.Double(std::numeric_limits<double>::quiet_NaN()), SerializationException);
 	REQUIRE_THROWS_AS(strict.Double(-std::numeric_limits<double>::infinity()), SerializationException);
 	REQUIRE_THROWS_AS(strict.String(invalid), SerializationException);
+	const string long_invalid = string(70, 'b') + invalid;
+	REQUIRE_THROWS_AS(strict.String(long_invalid), SerializationException);
 	strict.StartObject();
 	REQUIRE_THROWS_AS(strict.Key(invalid), SerializationException);
 
@@ -74,7 +76,8 @@ TEST_CASE("A JSON string writer refuses NaN, infinity and invalid UTF-8 unless i
 	lenient.Double(std::numeric_limits<double>::quiet_NaN());
 	lenient.Double(-std::numeric_limits<double>::infinity());
 	lenient.String(invalid);
+	lenient.String(long_invalid);
 	lenient.EndArray();
 	lenient.EndObject();
-	REQUIRE(lenient.ToString() == "{\"a\xFF\":[NaN,-Infinity,\"a\xFF\"]}");
+	REQUIRE(lenient.ToString() == "{\"a\xFF\":[NaN,-Infinity,\"a\xFF\",\"" + long_invalid + "\"]}");
 }

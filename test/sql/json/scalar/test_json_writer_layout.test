@@ -1,0 +1,35 @@
+# name: test/sql/json/scalar/test_json_writer_layout.test
+# description: The JSON writer lays out doubles as JavaScript does, writes unsigned integers, escapes control characters and indents documents of any depth
+# group: [scalar]
+
+require json
+
+query I
+SELECT json('[1e15, 1.5e17, 1234567890123456.7, 1e21, 1.5e-5, 1e-7, 0.00001, 18446744073709551615, -0, -0.0, 123.456e-10, 5e-324, 1.7976931348623157e308]')
+----
+[1000000000000000.0,150000000000000000.0,1234567890123456.8,1e21,0.000015,1e-7,0.00001,18446744073709551615,0,-0.0,1.23456e-8,5e-324,1.7976931348623157e308]
+
+query I
+SELECT to_json(chr(8) || chr(12) || chr(13) || chr(1) || chr(31) || '"\')
+----
+"\b\f\r\u0001\u001F\"\\"
+
+query I
+SELECT json('["\b\f\r\u0001"]')
+----
+["\b\f\r\u0001"]
+
+query I
+SELECT to_json(chr(10) || 'é')
+----
+"\né"
+
+query I
+SELECT to_json(repeat('x', 70) || chr(31))
+----
+"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u001F"
+
+query II
+SELECT position(chr(10) || repeat(' ', 68) || '1' || chr(10) IN p) > 0, length(p) - length(replace(p, chr(10), '')) FROM (SELECT json_pretty('[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]') AS p)
+----
+true	34
