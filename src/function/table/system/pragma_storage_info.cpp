@@ -136,7 +136,6 @@ static unique_ptr<FunctionData> PragmaStorageInfoBind(ClientContext &context, Ta
 		}
 	}
 	auto &table_entry = retriever.GetEntry<TableCatalogEntry>(qname);
-	Binder::RegisterEntryRead(input.binder, context, table_entry);
 	auto result = make_uniq<PragmaStorageFunctionData>(table_entry, options);
 	result->index = index;
 	return std::move(result);

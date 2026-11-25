@@ -295,15 +295,6 @@ QualifiedName Binder::BindTableName(const QualifiedName &name) {
 	return BindTableName(entry_retriever, name);
 }
 
-void Binder::RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry) {
-	if (binder) {
-		binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context);
-	}
-	if (!binder || !binder->InViewBody()) {
-		context.CheckEntryReference(binder ? binder->CheckAs() : context.CurrentRole(), entry);
-	}
-}
-
 void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 	if (info.temporary) {
 		// unsupported - otherwise the schema silently lands in (and is persisted to) the default catalog

@@ -302,15 +302,6 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 	bound_views.insert(view);
 }
 
-bool Binder::InViewBody() const {
-	for (auto binder = this; binder; binder = binder->parent.get()) {
-		if (!binder->bound_views.empty()) {
-			return true;
-		}
-	}
-	return false;
-}
-
 const RoleAccess &Binder::CheckAs() const {
 	return acting.privileges ? *acting.privileges : context.CurrentRole();
 }

@@ -53,7 +53,6 @@ static unique_ptr<FunctionData> DuckDBTableSampleBind(ClientContext &context, Ta
 		names.push_back(col.GetName());
 	}
 
-	Binder::RegisterEntryRead(input.binder, context, entry);
 	return make_uniq<DuckDBTableSampleFunctionData>(entry);
 }
 

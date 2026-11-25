@@ -51,7 +51,6 @@ constexpr uint64_t VISIBLE_TO_ALL = ~uint64_t(0);
 DUCKDB_API uint64_t VisibilityBits(const CatalogEntry &entry);
 DUCKDB_API uint64_t ViewerBits(const RoleAccess &role);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
-DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
 DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);

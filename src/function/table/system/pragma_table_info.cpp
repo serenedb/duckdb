@@ -186,7 +186,6 @@ static unique_ptr<FunctionData> PragmaTableInfoBind(ClientContext &context, Tabl
 	auto &entry = relation ? *relation
 	                       : *retriever.GetEntry(EntryLookupInfo(CatalogType::TABLE_ENTRY, qname),
 	                                             OnEntryNotFound::THROW_EXCEPTION);
-	Binder::RegisterEntryRead(input.binder, context, entry);
 	return make_uniq<PragmaTableFunctionData>(entry, IS_PRAGMA_TABLE_INFO);
 }
 

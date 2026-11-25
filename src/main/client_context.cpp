@@ -1062,12 +1062,6 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
-void ClientContext::CheckEntryReference(const RoleAccess &role, CatalogEntry &entry) {
-	if (!role.is_superuser) {
-		CheckReference(*this, role, entry);
-	}
-}
-
 void ClientContext::ResolveCurrentRole() {
 	if (current_role_id == DConstants::INVALID_INDEX) {
 		current_role = &RoleAccess::System();

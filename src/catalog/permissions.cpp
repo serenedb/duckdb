@@ -253,28 +253,6 @@ uint64_t ViewerBits(const RoleAccess &role) {
 	return bits;
 }
 
-void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
-	auto &database = entry.type == CatalogType::DATABASE_ENTRY ? entry.Cast<AttachedDatabase>()
-	                                                           : entry.ParentCatalog().GetAttached();
-	if (!DatabaseVisible(context, role, database)) {
-		auto &name = database.GetName().GetIdentifierName();
-		if (!database.IsReadOnly() && SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName())) {
-			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
-			                          StringUtil::Format("permission denied for database \"%s\"", name));
-		}
-		if (auto server = ServerOf(context, database)) {
-			ThrowPermissionDenied(*server);
-		}
-		throw PermissionException(
-		    {{"detail",
-		      "Only roles with the SUPERUSER attribute may use a database attached without a foreign server."}},
-		    StringUtil::Format("permission denied for database \"%s\"", name));
-	}
-	if (entry.type != CatalogType::DATABASE_ENTRY && !EntryVisible(context, role, entry)) {
-		ThrowPermissionDenied(entry);
-	}
-}
-
 template <class F>
 static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	auto &permissions = entry.permissions;
