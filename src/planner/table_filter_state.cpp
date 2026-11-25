@@ -256,6 +256,59 @@ public:
 	}
 
 private:
+	template <class T>
+	static constexpr bool IS_WIDE = std::is_same_v<T, hugeint_t> || std::is_same_v<T, uhugeint_t>;
+
+	template <class T>
+	static constexpr bool COMPARES_ANY_BITS = std::is_arithmetic_v<T> || IS_WIDE<T>;
+
+	template <class T>
+	static bool EqualsInline(const T &left, const T &right) {
+		if constexpr (IS_WIDE<T>) {
+			return ((left.lower ^ right.lower) | (uint64_t(left.upper) ^ uint64_t(right.upper))) == 0;
+		} else {
+			return (left == right) | ((left != left) & (right != right));
+		}
+	}
+
+	template <class T>
+	static bool GreaterThanInline(const T &left, const T &right) {
+		if constexpr (IS_WIDE<T>) {
+			return (left.upper > right.upper) | ((left.upper == right.upper) & (left.lower > right.lower));
+		} else {
+			return (right == right) & ((left != left) | (left > right));
+		}
+	}
+
+	template <class T>
+	static bool GreaterThanEqualsInline(const T &left, const T &right) {
+		if constexpr (IS_WIDE<T>) {
+			return (left.upper > right.upper) | ((left.upper == right.upper) & (left.lower >= right.lower));
+		} else {
+			return !GreaterThanInline(right, left);
+		}
+	}
+
+	template <class T, class OP>
+	static bool CompareInline(const T &left, const T &right) {
+		if constexpr (!IS_WIDE<T> && !std::is_floating_point_v<T>) {
+			return OP::Operation(left, right);
+		} else if constexpr (std::is_same_v<OP, Equals>) {
+			return EqualsInline(left, right);
+		} else if constexpr (std::is_same_v<OP, NotEquals>) {
+			return !EqualsInline(left, right);
+		} else if constexpr (std::is_same_v<OP, GreaterThan>) {
+			return GreaterThanInline(left, right);
+		} else if constexpr (std::is_same_v<OP, GreaterThanEquals>) {
+			return GreaterThanEqualsInline(left, right);
+		} else if constexpr (std::is_same_v<OP, LessThan>) {
+			return GreaterThanInline(right, left);
+		} else {
+			static_assert(std::is_same_v<OP, LessThanEquals>);
+			return GreaterThanEqualsInline(right, left);
+		}
+	}
+
 	template <class T, class OP>
 	void MaskFlat(const Vector &vector, idx_t count, uint64_t *mask) const {
 		using STORED = std::conditional_t<std::is_same_v<T, bool>, uint8_t, T>;
@@ -266,15 +319,20 @@ private:
 			const auto rows = MinValue<idx_t>(64, count - first);
 			const auto in_rows = rows == 64 ? ~uint64_t(0) : (uint64_t(1) << rows) - 1;
 			const auto valid = validity ? validity[first / 64] & in_rows : in_rows;
+			auto dense = rows == 64;
+			if constexpr (!COMPARES_ANY_BITS<T>) {
+				dense = dense && valid == in_rows;
+			}
 			uint64_t bits = 0;
-			if (valid == in_rows) {
-				for (idx_t j = 0; j < rows; j++) {
-					bits |= uint64_t(OP::Operation(static_cast<T>(data[first + j]), predicate)) << j;
+			if (dense) {
+				for (idx_t j = 0; j < 64; j++) {
+					bits |= uint64_t(CompareInline<T, OP>(static_cast<T>(data[first + j]), predicate)) << j;
 				}
+				bits &= valid;
 			} else {
 				for (auto rest = valid; rest != 0; rest &= rest - 1) {
 					const auto j = std::countr_zero(rest);
-					bits |= uint64_t(OP::Operation(static_cast<T>(data[first + j]), predicate)) << j;
+					bits |= uint64_t(CompareInline<T, OP>(static_cast<T>(data[first + j]), predicate)) << j;
 				}
 			}
 			mask[first / 64] &= bits;
