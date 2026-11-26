@@ -289,9 +289,22 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		throw CatalogException("%s: No catalog + schema named \"%s\" found.", GetSetName(set_type), path.ToString());
 	}
 	if (set_type == CatalogSetPathType::SET_SCHEMA) {
-		if (DatabaseManager::Get(context).IsReservedName(new_paths[0].GetCatalog())) {
+		auto &db_manager = DatabaseManager::Get(context);
+		if (db_manager.IsReservedName(new_paths[0].GetCatalog())) {
 			throw CatalogException("%s cannot be set to internal schema %s", GetSetName(set_type),
 			                       new_paths[0].GetCatalog());
+		}
+		auto has_system_schemas = [&](const Identifier &name) {
+			auto database = db_manager.GetDatabase(context, name);
+			return database && database->GetCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+		};
+		if (!has_system_schemas(new_paths[0].GetCatalog())) {
+			for (auto &home : default_paths) {
+				if (has_system_schemas(home.GetCatalog())) {
+					new_paths.emplace_back(home.GetCatalog(), "pg_catalog");
+					break;
+				}
+			}
 		}
 	}
 	SetPathsInternal(std::move(new_paths));
