@@ -345,7 +345,9 @@ BindResult ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr, idx_t dept
 		}
 	}
 	if (!result.expression && !result.HasError()) {
-		result = BindExpression(expr, depth, root_expression);
+		result = binder.global_binder_state->ignore_expression_errors
+		             ? BindExpressionOrNull(expr, depth, root_expression)
+		             : BindExpression(expr, depth, root_expression);
 	}
 	if (result.HasError()) {
 		return result;
@@ -356,6 +358,18 @@ BindResult ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr, idx_t dept
 		result.expression->SetAlias(alias);
 	}
 	return result;
+}
+
+BindResult ExpressionBinder::BindExpressionOrNull(unique_ptr<ParsedExpression> &expr, idx_t depth,
+                                                  bool root_expression) {
+	try {
+		auto result = BindExpression(expr, depth, root_expression);
+		if (!result.HasError()) {
+			return result;
+		}
+	} catch (const std::exception &) { // NOLINT(bugprone-empty-catch)
+	}
+	return BindResult(make_uniq<BoundConstantExpression>(Value(LogicalType::SQLNULL)));
 }
 
 BindResult ExpressionBinder::BindUnsupportedExpression(ParsedExpression &expr, idx_t depth, const string &message) {

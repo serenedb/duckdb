@@ -265,6 +265,7 @@ struct GlobalBinderState {
 	StatementProperties prop;
 	//! Binding mode
 	BindingMode mode = BindingMode::STANDARD_BINDING;
+	bool ignore_expression_errors = false;
 	//! Table names extracted for BindingMode::EXTRACT_NAMES or BindingMode::EXTRACT_QUALIFIED_NAMES.
 	unordered_set<string> table_names;
 	//! Replacement Scans extracted for BindingMode::EXTRACT_REPLACEMENT_SCANS
