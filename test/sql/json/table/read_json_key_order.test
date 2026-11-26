@@ -1,0 +1,25 @@
+# name: test/sql/json/table/read_json_key_order.test
+# description: Detection finds every key whatever order the records list them in, a key first seen late included, and orders the columns by first appearance
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT ('{"a": 1, "b": "x"}' || chr(10) || '{"b": "y", "a": 2, "c": true}' || chr(10) || '{"c": false, "a": 3}' || chr(10) || '{"a": 4, "d": {"y": 1, "x": "2020-01-02"}}' || chr(10) || '{"d": {"x": "2021-03-04", "y": 2}, "b": "z"}')::BLOB) TO '{TEST_DIR}/key_order.json' (FORMAT BLOB);
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_json('{TEST_DIR}/key_order.json'));
+----
+a	BIGINT
+b	VARCHAR
+c	BOOLEAN
+d	STRUCT(y BIGINT, x DATE)
+
+query IIII
+SELECT * FROM read_json('{TEST_DIR}/key_order.json');
+----
+1	x	NULL	NULL
+2	y	true	NULL
+3	NULL	false	NULL
+4	NULL	NULL	{'y': 1, 'x': 2020-01-02}
+NULL	z	NULL	{'y': 2, 'x': 2021-03-04}

@@ -74,6 +74,8 @@ public:
 
 	JSONStructureNode &GetOrCreateChild();
 	JSONStructureNode &GetOrCreateChild(const char *key_ptr, size_t key_size);
+	idx_t GetOrCreateChildIndex(const char *key_ptr, size_t key_size, idx_t hint);
+	optional_idx FindChild(const char *key_ptr, size_t key_size, idx_t hint) const;
 
 public:
 	//! Type of this description

@@ -223,19 +223,18 @@ void JSONStructureNode::RefineCandidateTypesObject(const JSONNode *vals[], const
 	const auto found_keys =
 	    reinterpret_cast<bool *>(allocator.AllocateAligned(sizeof(bool) * MaxValue<idx_t>(child_count, 1)));
 
-	const auto &key_map = desc.key_map;
 	for (idx_t i = 0; i < val_count; i++) {
 		if (vals[i] && vals[i]->type != JSONValueType::JSON_NULL) {
 			idx_t found_key_count = 0;
 			memset(found_keys, false, child_count);
 
 			D_ASSERT(vals[i]->type == JSONValueType::OBJECT);
+			idx_t next = 0;
 			for (auto &child_key : vals[i]->Keys()) {
-				const auto key_ptr = child_key.str;
-				const auto key_len = child_key.size;
-				auto it = key_map.find({key_ptr, key_len});
-				D_ASSERT(it != key_map.end());
-				const auto child_idx = it->second;
+				const auto found = desc.FindChild(child_key.str, child_key.size, next);
+				D_ASSERT(found.IsValid());
+				const auto child_idx = found.GetIndex();
+				next = child_idx + 1;
 				child_vals[child_idx][i] = &child_key + 1;
 				found_key_count += !found_keys[child_idx];
 				found_keys[child_idx] = true;
@@ -513,19 +512,32 @@ JSONStructureNode &JSONStructureDescription::GetOrCreateChild() {
 }
 
 JSONStructureNode &JSONStructureDescription::GetOrCreateChild(const char *key_ptr, const size_t key_size) {
-	// Check if there is already a child with the same key
-	const JSONKey temp_key {key_ptr, key_size};
-	const auto it = key_map.find(temp_key);
-	if (it != key_map.end()) {
-		return children[it->second]; // Found it
-	}
+	return children[GetOrCreateChildIndex(key_ptr, key_size, children.size())];
+}
 
-	// Didn't find, create a new child
+optional_idx JSONStructureDescription::FindChild(const char *key_ptr, const size_t key_size, const idx_t hint) const {
+	if (hint < children.size()) {
+		const auto &key = *children[hint].key;
+		if (key.size() == key_size && memcmp(key.data(), key_ptr, key_size) == 0) {
+			return hint;
+		}
+	}
+	const auto it = key_map.find(JSONKey {key_ptr, key_size});
+	if (it == key_map.end()) {
+		return optional_idx();
+	}
+	return it->second;
+}
+
+idx_t JSONStructureDescription::GetOrCreateChildIndex(const char *key_ptr, const size_t key_size, const idx_t hint) {
+	const auto found = FindChild(key_ptr, key_size, hint);
+	if (found.IsValid()) {
+		return found.GetIndex();
+	}
 	children.emplace_back(key_ptr, key_size);
 	const auto &persistent_key_string = *children.back().key;
-	JSONKey new_key {persistent_key_string.c_str(), persistent_key_string.length()};
-	key_map.emplace(new_key, children.size() - 1);
-	return children.back();
+	key_map.emplace(JSONKey {persistent_key_string.c_str(), persistent_key_string.length()}, children.size() - 1);
+	return children.size() - 1;
 }
 
 static void ExtractStructureArray(const JSONNode &arr, JSONStructureNode &node, const bool detect_geojson) {
@@ -541,9 +553,12 @@ static void ExtractStructureArray(const JSONNode &arr, JSONStructureNode &node, 
 static void ExtractStructureObject(const JSONNode &obj, JSONStructureNode &node, const bool detect_geojson) {
 	D_ASSERT(obj.type == JSONValueType::OBJECT);
 	auto &description = node.GetOrCreateDescription(LogicalTypeId::STRUCT);
+	idx_t next = 0;
 	for (auto &key : obj.Keys()) {
 		D_ASSERT(key.type == JSONValueType::STRING);
-		JSONStructure::ExtractStructure(*(&key + 1), description.GetOrCreateChild(key.str, key.size), detect_geojson);
+		const auto child = description.GetOrCreateChildIndex(key.str, key.size, next);
+		next = child + 1;
+		JSONStructure::ExtractStructure(*(&key + 1), description.children[child], detect_geojson);
 	}
 }
 
