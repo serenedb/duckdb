@@ -882,49 +882,39 @@ void ConvertDecimalValues(SRC src_ptr, Vector &vector, ValidityMask &val_mask, i
 	}
 }
 
-template <class SRC, class ROWS>
-void ConvertDecimal(SRC src_ptr, Vector &vector, ArrowArray &array, idx_t size, int64_t nested_offset,
-                    uint64_t parent_offset, idx_t chunk_offset, ValidityMask &val_mask, DecimalBitWidth arrow_bit_width,
-                    const ROWS &rows) {
-	switch (vector.GetType().InternalType()) {
-	case PhysicalType::INT16: {
-		ConvertDecimalValues<int16_t>(src_ptr, vector, val_mask, size, rows);
-		break;
+template <class TGT, class SRC, class ROWS>
+void ConvertDecimalTo(const SRC *src_ptr, Vector &vector, ArrowArray &array, idx_t size, int64_t nested_offset,
+                      uint64_t parent_offset, idx_t chunk_offset, ValidityMask &val_mask, const ROWS &rows) {
+	if constexpr (sizeof(SRC) == sizeof(TGT)) {
+		auto data =
+		    ArrowBufferData<data_t>(array, 1) +
+		    sizeof(TGT) * GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
+		SetDirectData(vector, data, size, rows);
+	} else {
+		ConvertDecimalValues<TGT>(src_ptr, vector, val_mask, size, rows);
 	}
-	case PhysicalType::INT32: {
-		if (arrow_bit_width == DecimalBitWidth::DECIMAL_32) {
-			auto data = ArrowBufferData<data_t>(array, 1) +
-			            GetTypeIdSize(vector.GetType().InternalType()) *
-			                GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			SetDirectData(vector, data, size, rows);
-		} else {
-			ConvertDecimalValues<int32_t>(src_ptr, vector, val_mask, size, rows);
-		}
-		break;
-	}
-	case PhysicalType::INT64: {
-		if (arrow_bit_width == DecimalBitWidth::DECIMAL_64) {
-			auto data = ArrowBufferData<data_t>(array, 1) +
-			            GetTypeIdSize(vector.GetType().InternalType()) *
-			                GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			SetDirectData(vector, data, size, rows);
-		} else {
-			ConvertDecimalValues<int64_t>(src_ptr, vector, val_mask, size, rows);
-		}
-		break;
-	}
-	case PhysicalType::INT128: {
-		if (arrow_bit_width == DecimalBitWidth::DECIMAL_128) {
-			auto data = ArrowBufferData<data_t>(array, 1) +
-			            GetTypeIdSize(vector.GetType().InternalType()) *
-			                GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			SetDirectData(vector, data, size, rows);
-		} else {
-			ConvertDecimalValues<hugeint_t>(src_ptr, vector, val_mask, size, rows);
-		}
+}
 
+template <class SRC, class ROWS>
+void ConvertDecimal(const SRC *src_ptr, Vector &vector, ArrowArray &array, idx_t size, int64_t nested_offset,
+                    uint64_t parent_offset, idx_t chunk_offset, ValidityMask &val_mask, const ROWS &rows) {
+	switch (vector.GetType().InternalType()) {
+	case PhysicalType::INT16:
+		ConvertDecimalTo<int16_t>(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
+		                          rows);
 		break;
-	}
+	case PhysicalType::INT32:
+		ConvertDecimalTo<int32_t>(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
+		                          rows);
+		break;
+	case PhysicalType::INT64:
+		ConvertDecimalTo<int64_t>(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
+		                          rows);
+		break;
+	case PhysicalType::INT128:
+		ConvertDecimalTo<hugeint_t>(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
+		                            rows);
+		break;
 	default:
 		throw NotImplementedException("Unsupported physical type for Decimal: %s",
 		                              TypeIdToString(vector.GetType().InternalType()));
@@ -1237,24 +1227,21 @@ static bool ColumnArrowToDuckDBFlat(Vector &vector, ArrowArray &array, idx_t chu
 		case DecimalBitWidth::DECIMAL_32: {
 			auto src_ptr = ArrowBufferData<int32_t>(array, 1) +
 			               GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			ConvertDecimal(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
-			               bit_width, rows);
+			ConvertDecimal(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask, rows);
 			break;
 		}
 
 		case DecimalBitWidth::DECIMAL_64: {
 			auto src_ptr = ArrowBufferData<int64_t>(array, 1) +
 			               GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			ConvertDecimal(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
-			               bit_width, rows);
+			ConvertDecimal(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask, rows);
 			break;
 		}
 
 		case DecimalBitWidth::DECIMAL_128: {
 			auto src_ptr = ArrowBufferData<hugeint_t>(array, 1) +
 			               GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			ConvertDecimal(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask,
-			               bit_width, rows);
+			ConvertDecimal(src_ptr, vector, array, size, nested_offset, parent_offset, chunk_offset, val_mask, rows);
 			break;
 		}
 		default:
