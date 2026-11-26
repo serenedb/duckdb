@@ -36,7 +36,7 @@ shared_ptr<BlockHandle> PinTestBlock(BufferManager &buffers, idx_t block) {
 void LoadTestBlock(BufferManager &buffers, shared_ptr<BlockHandle> &handle, data_t byte) {
 	auto &memory = handle->GetMemory();
 	REQUIRE(memory.TryClaim());
-	auto load = buffers.PrepareLoad(memory, PIN_BLOCK_SIZE);
+	auto load = buffers.PrepareLoad(memory, PIN_BLOCK_SIZE, nullptr);
 	memset(load.buffer->GetDataMutable(), byte, PIN_BLOCK_SIZE);
 	buffers.CompleteLoad(memory, std::move(load));
 	memory.FinishLoad();
