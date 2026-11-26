@@ -423,11 +423,15 @@ public:
 	void Finish(const string &version_tag = string(), timestamp_t last_modified = timestamp_t(0));
 	//! Ends the write of a written file and drops its blocks
 	void Abandon();
+	void FundFrom(BufferPoolReservation &source_p) {
+		source = &source_p;
+	}
 
 private:
 	shared_ptr<InputFile> file;
 	FilePin current;
 	idx_t size = 0;
+	optional_ptr<BufferPoolReservation> source;
 };
 
 struct ExternalFileCacheStatistics {
@@ -554,7 +558,7 @@ private:
 	void PublishWrittenFile(InputFile &file, const CacheValidationInfo &written);
 	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
 	//! before; ExternalFileCacheAppender fills it up to the end of the file
-	FilePin CreateBlock(InputFile &file, idx_t block);
+	FilePin CreateBlock(InputFile &file, idx_t block, optional_ptr<BufferPoolReservation> source);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(InputFile &file, idx_t size);
 

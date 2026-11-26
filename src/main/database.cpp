@@ -558,6 +558,13 @@ public:
 		RemoteFileWriter::Abort();
 	}
 
+	void FundFrom(TempBufferPoolReservation source) override {
+		if (appender) {
+			funding.emplace(std::move(source));
+			appender->FundFrom(*funding);
+		}
+	}
+
 	FileWriteWindow Window() override {
 		if (appender) {
 			try {
@@ -654,6 +661,7 @@ private:
 
 private:
 	unique_ptr<FileHandle> handle;
+	optional<TempBufferPoolReservation> funding;
 	optional<ExternalFileCacheAppender> appender;
 	//! The window of a write that got no block
 	unsafe_unique_array<data_t> buffer;

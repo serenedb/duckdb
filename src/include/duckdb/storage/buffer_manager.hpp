@@ -82,7 +82,8 @@ public:
 	//! Registers an unloaded external file cache block of [block_size] bytes, without a header
 	virtual shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) = 0;
 	virtual BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) = 0;
-	virtual BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) = 0;
+	virtual BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size,
+	                              optional_ptr<BufferPoolReservation> source) = 0;
 	virtual BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) = 0;
 	//! Destroys the buffer of [memory], or once its last pin is gone when it is pinned, and the copy of it a temporary
 	//! file keeps

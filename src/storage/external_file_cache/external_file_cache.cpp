@@ -460,7 +460,7 @@ FileWriteWindow ExternalFileCacheAppender::Window() {
 	const auto &blocks = file->Blocks();
 	const auto offset = blocks.OffsetInBlock(size);
 	if (!current.IsValid()) {
-		current = file->GetCache().CreateBlock(*file, blocks.BlockOf(size));
+		current = file->GetCache().CreateBlock(*file, blocks.BlockOf(size), source);
 	}
 	return {current.GetDataMutable() + offset, blocks.BlockSize() - offset};
 }
@@ -968,7 +968,7 @@ FilePin ExternalFileCache::PinCopy(InputFile &file, idx_t offset, idx_t size) {
 		};
 		auto buffer = buffer_manager.LoadClaimed(QueryContext(), handle);
 		if (!buffer.IsValid()) {
-			auto load = buffer_manager.PrepareLoad(memory, size);
+			auto load = buffer_manager.PrepareLoad(memory, size, nullptr);
 			read(load.buffer->GetDataMutable());
 			if (file.ReuseForbidden()) {
 				// a response that brought the bytes forbade keeping them
@@ -1004,7 +1004,7 @@ void ExternalFileCache::Fetch(InputFile &file, idx_t first_block, std::span<opti
 	vector<optional<BlockLoad>> loads(claimed.size());
 	for (idx_t i = first; i <= last; i++) {
 		if (claimed[i]) {
-			loads[i].emplace(buffer_manager.PrepareLoad(*claimed[i], claimed[i]->GetMemoryUsage()));
+			loads[i].emplace(buffer_manager.PrepareLoad(*claimed[i], claimed[i]->GetMemoryUsage(), nullptr));
 		}
 	}
 	const auto start = blocks.BlockStart(first_block + first);
@@ -1527,7 +1527,7 @@ void ExternalFileCache::ScheduleFetchLocked(shared_ptr<PendingFetch> fetch) {
 	fetch_tasks->ScheduleTask(make_uniq<ExternalFileCacheFetchTask>(*fetch_tasks, std::move(fetch)));
 }
 
-FilePin ExternalFileCache::CreateBlock(InputFile &file, idx_t block) {
+FilePin ExternalFileCache::CreateBlock(InputFile &file, idx_t block, optional_ptr<BufferPoolReservation> source) {
 	D_ASSERT(file.IsUnbacked() || !file.HasSource());
 	auto &slot = file.blocks->Get(block);
 	if (slot.load(std::memory_order_acquire)) {
@@ -1540,7 +1540,7 @@ FilePin ExternalFileCache::CreateBlock(InputFile &file, idx_t block) {
 	absl::Cleanup finish = [&] {
 		memory.FinishLoad();
 	};
-	auto buffer = buffer_manager.CompleteLoad(memory, buffer_manager.PrepareLoad(memory, file.BlockSize()));
+	auto buffer = buffer_manager.CompleteLoad(memory, buffer_manager.PrepareLoad(memory, file.BlockSize(), source));
 	return FilePin(std::move(buffer), file.BlockSize());
 }
 

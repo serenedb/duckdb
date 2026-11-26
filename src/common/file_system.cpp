@@ -806,6 +806,9 @@ shared_ptr<InputFile> FileSystem::OpenInputFile(const string &path, MappedFileAc
 FileWriter::~FileWriter() {
 }
 
+void FileWriter::FundFrom(TempBufferPoolReservation source) {
+}
+
 FileWriteHold::~FileWriteHold() {
 }
 

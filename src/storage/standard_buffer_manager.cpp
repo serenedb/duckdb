@@ -530,10 +530,11 @@ void StandardBufferManager::Unpin(BlockMemory &memory) {
 	}
 }
 
-BlockLoad StandardBufferManager::PrepareLoad(BlockMemory &memory, idx_t block_size) {
+BlockLoad StandardBufferManager::PrepareLoad(BlockMemory &memory, idx_t block_size,
+                                             optional_ptr<BufferPoolReservation> source) {
 	unique_ptr<FileBuffer> reusable_buffer;
 	auto reservation = EvictBlocksOrThrow(QueryContext(), memory.GetMemoryTag(), memory.GetMemoryUsage(),
-	                                      &reusable_buffer, "failed to pin block of size %s%s");
+	                                      &reusable_buffer, "failed to pin block of size %s%s", source);
 	auto buffer = ConstructManagedBuffer(block_size, 0, std::move(reusable_buffer), memory.GetBufferType());
 	D_ASSERT(buffer->AllocSize() == memory.GetMemoryUsage());
 	return {std::move(buffer), std::move(reservation)};

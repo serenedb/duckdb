@@ -26,6 +26,7 @@
 #include "duckdb/common/path.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 
 #include <functional>
 #include <span>
@@ -143,6 +144,7 @@ public:
 	DUCKDB_API virtual void Close() = 0;
 	//! Drops the file and the bytes committed
 	DUCKDB_API virtual void Abort() noexcept = 0;
+	DUCKDB_API virtual void FundFrom(TempBufferPoolReservation source);
 };
 
 class FileWriteHold {

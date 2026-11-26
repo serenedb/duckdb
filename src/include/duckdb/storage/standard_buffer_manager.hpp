@@ -84,7 +84,7 @@ public:
 	void Unpin(BlockMemory &memory) final;
 	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) final;
 	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) final;
-	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) final;
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, optional_ptr<BufferPoolReservation> source) final;
 	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) final;
 	void Discard(BlockMemory &memory) final;
 

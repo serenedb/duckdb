@@ -212,8 +212,8 @@ public:
 	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) override {
 		return buffer_manager.LoadClaimed(context, handle);
 	}
-	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) override {
-		return buffer_manager.PrepareLoad(memory, block_size);
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, optional_ptr<BufferPoolReservation> source) override {
+		return buffer_manager.PrepareLoad(memory, block_size, source);
 	}
 	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) override {
 		return buffer_manager.CompleteLoad(memory, std::move(load));

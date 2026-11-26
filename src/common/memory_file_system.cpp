@@ -89,6 +89,13 @@ public:
 		MemoryFileWriter::Abort();
 	}
 
+	void FundFrom(TempBufferPoolReservation source) override {
+		if (appender) {
+			funding.emplace(std::move(source));
+			appender->FundFrom(*funding);
+		}
+	}
+
 	FileWriteWindow Window() override {
 		if (appender) {
 			return appender->Window();
@@ -153,6 +160,7 @@ private:
 
 	MemoryFileSystem &fs;
 	shared_ptr<MemoryFile> file;
+	optional<TempBufferPoolReservation> funding;
 	//! Writes a file in cache blocks
 	optional<ExternalFileCacheAppender> appender;
 	bool open = true;
