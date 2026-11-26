@@ -126,17 +126,16 @@ void MappedRowSource::Report(idx_t begin, idx_t end) const {
 	}
 }
 
-shared_ptr<PiecedRowSource> PiecedRowSource::Open(ClientContext &context, const CSVFileHandle &handle,
-                                                  const string &path) {
-	if (!handle.compression_type.IsCompressed()) {
+shared_ptr<PiecedRowSource> PiecedRowSource::Open(ClientContext &context, const string &path,
+                                                  const FileCompressionType &compression, bool on_disk, idx_t size) {
+	if (!compression.IsCompressed()) {
 		return nullptr;
 	}
-	auto compressed = FileSystem::GetFileSystem(context).GetCompressedFileSystem(handle.compression_type, path);
+	auto compressed = FileSystem::GetFileSystem(context).GetCompressedFileSystem(compression, path);
 	if (!compressed) {
 		return nullptr;
 	}
-	const idx_t size = handle.FileSize();
-	auto mapping = MapForReading(context, path, handle.OnDiskFile(), size, 0);
+	auto mapping = MapForReading(context, path, on_disk, size, 0);
 	if (!mapping) {
 		return nullptr;
 	}
@@ -279,7 +278,8 @@ RowInput::RowInput(ClientContext &context, CSVBufferManager &manager, const stri
 		return;
 	}
 	if (stream && utf8) {
-		pieced = PiecedRowSource::Open(context, *manager.file_handle, path);
+		const auto &handle = *manager.file_handle;
+		pieced = PiecedRowSource::Open(context, path, handle.compression_type, handle.OnDiskFile(), handle.FileSize());
 		if (pieced) {
 			stream = false;
 			size = pieced->Size();

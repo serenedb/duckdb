@@ -84,7 +84,8 @@ class PiecedRowSource : public RowSource {
 public:
 	static constexpr idx_t PREFETCH_BYTES = idx_t(1) << 22;
 
-	static shared_ptr<PiecedRowSource> Open(ClientContext &context, const CSVFileHandle &handle, const string &path);
+	static shared_ptr<PiecedRowSource> Open(ClientContext &context, const string &path,
+	                                        const FileCompressionType &compression, bool on_disk, idx_t size);
 	PiecedRowSource(shared_ptr<MemoryMappedFile> mapping, CompressedFileSystem &compressed, vector<PieceSpan> pieces);
 
 	idx_t Read(char *data, idx_t count, idx_t offset) const override;
@@ -94,6 +95,9 @@ public:
 	}
 	idx_t Size() const {
 		return size;
+	}
+	const vector<PieceSpan> &Pieces() const {
+		return pieces;
 	}
 
 private:
