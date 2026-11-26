@@ -393,6 +393,11 @@ CopyFunctionExecutionMode WriteCSVExecutionMode(bool preserve_insertion_order, b
 struct WriteCSVBatchData : public PreparedBatchData {
 	explicit WriteCSVBatchData(unique_ptr<CSVWriterState> writer_state) : writer_local_state(std::move(writer_state)) {
 	}
+	~WriteCSVBatchData() override {
+		if (writer_local_state) {
+			writer_local_state->Reset();
+		}
+	}
 
 	//! The thread-local buffer to write data into
 	unique_ptr<CSVWriterState> writer_local_state;
