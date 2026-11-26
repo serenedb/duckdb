@@ -1,0 +1,65 @@
+# name: test/sql/function/timestamp/test_icu_cast_naive_fixed_offset.test
+# description: Casts from TIMESTAMPTZ to naive timestamps under a fixed offset, where statistics let them shift whole vectors, give the values of the zone table, and so do the zones with transitions
+# group: [timestamp]
+
+require icu
+
+statement ok
+SET Calendar = 'gregorian';
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE tz AS SELECT TIMESTAMPTZ '2025-09-23 00:00:00+00' + INTERVAL (i * 7) SECOND + INTERVAL (i % 1000) MICROSECOND AS t, i AS v FROM range(0, 5000) t(i);
+
+statement ok
+CREATE TABLE tzn AS SELECT make_timestamp_ns(epoch_ns(t) + v % 1000)::TIMESTAMPTZ_NS AS t, v FROM tz;
+
+statement ok
+CREATE TABLE epoch AS SELECT make_timestamp_ns(i * 37 - 1110000)::TIMESTAMPTZ_NS AS t, i AS v FROM range(0, 60000) t(i);
+
+statement ok
+CREATE TABLE edge (t TIMESTAMPTZ_NS, v INTEGER);
+
+statement ok
+INSERT INTO edge VALUES ('1969-12-31 23:59:59.9999996+00', 1), ('1969-12-31 23:59:59.9999994+00', 2), ('2025-09-23 00:00:59.9999995+00', 3), ('infinity', 4), ('-infinity', 5), (NULL, 6);
+
+foreach zone Etc/UTC Etc/GMT-3 Asia/Kolkata Europe/Berlin
+
+statement ok
+SET TimeZone = '${zone}';
+
+query I
+SELECT count(*) FROM tz WHERE t::TIMESTAMP IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ::TIMESTAMP OR t::TIMESTAMP_MS IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ::TIMESTAMP_MS OR t::TIMESTAMP_S IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ::TIMESTAMP_S
+----
+0
+
+query I
+SELECT count(*) FROM tzn WHERE t::TIMESTAMP_NS IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP_NS OR t::TIMESTAMP IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP OR t::TIMESTAMP_MS IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP_MS
+----
+0
+
+query I
+SELECT count(*) FROM epoch WHERE t::TIMESTAMP_NS IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP_NS OR t::TIMESTAMP IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP OR t::TIMESTAMP_S IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP_S
+----
+0
+
+query I
+SELECT count(*) FROM edge WHERE t::TIMESTAMP_NS IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP_NS OR t::TIMESTAMP IS DISTINCT FROM t::VARCHAR::TIMESTAMPTZ_NS::TIMESTAMP
+----
+0
+
+endloop
+
+statement ok
+SET TimeZone = 'Etc/GMT-3';
+
+query IIII
+SELECT v, t::TIMESTAMP_NS = n, t::TIMESTAMP = u, t::TIMESTAMP_S = s FROM edge JOIN (VALUES (1, TIMESTAMP_NS '1970-01-01 02:59:59.9999996', TIMESTAMP '1970-01-01 03:00:00', TIMESTAMP_S '1970-01-01 03:00:00'), (2, TIMESTAMP_NS '1970-01-01 02:59:59.9999994', TIMESTAMP '1970-01-01 02:59:59.999999', TIMESTAMP_S '1970-01-01 03:00:00'), (3, TIMESTAMP_NS '2025-09-23 03:00:59.9999995', TIMESTAMP '2025-09-23 03:01:00', TIMESTAMP_S '2025-09-23 03:01:00'), (4, TIMESTAMP_NS 'infinity', TIMESTAMP 'infinity', TIMESTAMP_S 'infinity'), (5, TIMESTAMP_NS '-infinity', TIMESTAMP '-infinity', TIMESTAMP_S '-infinity')) expected(v, n, u, s) USING (v) ORDER BY v
+----
+1	true	true	true
+2	true	true	true
+3	true	true	true
+4	true	true	true
+5	true	true	true

@@ -20,11 +20,14 @@
 
 #pragma once
 
+#include "duckdb/common/limits.hpp"
+#include "duckdb/common/operator/coarsen_timestamp.hpp"
 #include "duckdb/common/operator/date_trunc_operators.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
+#include "duckdb/storage/statistics/numeric_stats.hpp"
 #include "icu-zone-lut.hpp"
 
 namespace duckdb {
@@ -110,6 +113,50 @@ struct ICUZoneCasts {
 	template <class SRC, class DST>
 	static inline bool Try(const ZoneLUT &lut, SRC input, DST &result) {
 		return false;
+	}
+
+	template <class SRC, class DST>
+	static inline DST Shift(int64_t value, int64_t shift) {
+		using NAIVE = timestamp_base_t<SRC::PRECISION, false>;
+		const NAIVE naive(value + shift);
+		if constexpr (std::is_same<NAIVE, DST>::value) {
+			return naive;
+		} else {
+			return CoarsenTimestamp<NAIVE, DST>(naive);
+		}
+	}
+
+	template <class SRC>
+	static inline int64_t FixedShift(const ZoneLUT &lut) {
+		return lut.FixedOffset() * (SRC::PRECISION / Interval::MICROS_PER_SEC);
+	}
+
+	template <class SRC, class DST>
+	static unique_ptr<BaseStatistics> FixedShiftStatistics(const ZoneLUT &lut, const BaseStatistics &stats,
+	                                                       const LogicalType &target) {
+		if (!lut.HasFixedOffset() || stats.GetStatsType() != StatisticsType::NUMERIC_STATS ||
+		    !NumericStats::HasMinMax(stats)) {
+			return nullptr;
+		}
+		const auto shift = FixedShift<SRC>(lut);
+		const auto limit = NumericLimits<int64_t>::Maximum() - 1;
+		const auto min = NumericStats::GetMin<int64_t>(stats);
+		const auto max = NumericStats::GetMax<int64_t>(stats);
+		if (min < -limit - MinValue<int64_t>(shift, 0) || max > limit - MaxValue<int64_t>(shift, 0)) {
+			return nullptr;
+		}
+		auto result = NumericStats::CreateEmpty(target);
+		result.CopyBase(stats);
+		NumericStats::SetMin(result, Value::CreateValue(Shift<SRC, DST>(min, shift)));
+		NumericStats::SetMax(result, Value::CreateValue(Shift<SRC, DST>(max, shift)));
+		return result.ToUnique();
+	}
+
+	template <class SRC, class DST>
+	static void FixedShiftCast(const ZoneLUT &lut, Vector &source, Vector &result, idx_t count) {
+		const auto shift = FixedShift<SRC>(lut);
+		UnaryExecutor::Execute<SRC, DST>(source, result, count,
+		                                 [shift](SRC input) { return Shift<SRC, DST>(input.value, shift); });
 	}
 
 	template <class SRC, class DST, class FALLBACK>

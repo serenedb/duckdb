@@ -43,6 +43,10 @@ void CastStatisticsInput::SetFunction(cast_function_t new_function) {
 	bound_cast.function = new_function;
 }
 
+optional_ptr<BoundCastData> CastStatisticsInput::CastData() const {
+	return bound_cast.GetCastData();
+}
+
 BoundCastInfo::BoundCastInfo(cast_function_t function_p, unique_ptr<BoundCastData> cast_data_p,
                              init_cast_local_state_t init_local_state_p)
     : function(function_p), init_local_state(init_local_state_p), cast_data(std::move(cast_data_p)) {
