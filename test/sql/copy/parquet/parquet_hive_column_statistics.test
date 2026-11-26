@@ -1,0 +1,37 @@
+# name: test/sql/copy/parquet/parquet_hive_column_statistics.test
+# group: [parquet]
+
+require parquet
+
+statement ok
+COPY (SELECT 5 AS a, 0 AS b) TO '{TEST_DIR}/hive_column_statistics' (FORMAT parquet, PARTITION_BY (a))
+
+statement ok
+COPY (SELECT 299999 - i AS a, i AS b FROM range(300000) t(i)) TO '{TEST_DIR}/hive_column_statistics/a=5/data.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000)
+
+query II
+SELECT max(a), min(a) FROM read_parquet('{TEST_DIR}/hive_column_statistics/a=5/data.parquet', hive_partitioning = true)
+----
+5	5
+
+query III
+SELECT max(a), min(a), count(*) FROM read_parquet('{TEST_DIR}/hive_column_statistics/a=5/data.parquet', hive_partitioning = true) WHERE b >= 50000
+----
+5	5	250000
+
+query II
+SELECT a, b FROM read_parquet('{TEST_DIR}/hive_column_statistics/a=5/data.parquet', hive_partitioning = true) ORDER BY a, b LIMIT 3 OFFSET 150000
+----
+5	150000
+5	150001
+5	150002
+
+query II
+SELECT max(b), min(b) FROM read_parquet('{TEST_DIR}/hive_column_statistics/a=5/data.parquet', hive_partitioning = true)
+----
+299999	0
+
+query II
+EXPLAIN SELECT max(b), min(b) FROM read_parquet('{TEST_DIR}/hive_column_statistics/a=5/data.parquet', hive_partitioning = true)
+----
+physical_plan	<!REGEX>:.*READ_PARQUET.*

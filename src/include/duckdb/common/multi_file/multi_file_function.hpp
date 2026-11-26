@@ -705,6 +705,13 @@ public:
 	static optional_idx OrderColumnOf(const MultiFileBindData &bind_data, MultiFileGlobalState &gstate,
 	                                  MultiFileReaderData &reader_data) {
 		auto &order = *bind_data.scan_order;
+		if (bind_data.file_list->GetExpandResult() == FileExpandResult::SINGLE_FILE &&
+		    bind_data.reader_bind.schema.empty()) {
+			if (bind_data.IsHivePartitioningColumn(order.column_idx.GetPrimaryIndex())) {
+				return optional_idx();
+			}
+			return order.column_idx.GetPrimaryIndex();
+		}
 		if (order.column_idx.HasChildren()) {
 			return optional_idx();
 		}
@@ -816,7 +823,8 @@ public:
 		                              : optional_idx();
 		for (auto &partition : result.partitions) {
 			if (order_column.IsValid() && partition.partition_row_group) {
-				const StorageIndex storage_index(order_column.GetIndex());
+				auto storage_index = bind_data.scan_order->column_idx;
+				storage_index.SetIndex(order_column.GetIndex());
 				result.statistics.push_back({partition.partition_row_group->GetColumnStatistics(storage_index),
 				                             partition.partition_row_group->MinMaxIsExact(storage_index)});
 			} else {
