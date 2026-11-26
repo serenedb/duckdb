@@ -16,6 +16,7 @@ namespace {
 
 constexpr idx_t FIELD_SLACK = 8;
 constexpr idx_t ROW_BASE_LIMIT = idx_t(1) << 20;
+constexpr idx_t PREFETCH_BYTES = 1024;
 
 uint64_t ExpectedPattern(idx_t columns, idx_t phase) {
 	uint64_t result = 0;
@@ -313,6 +314,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 	};
 	while (pos + CSV_BLOCK_BYTES <= end) {
 		const char *block = data + (pos - base);
+		__builtin_prefetch(block + PREFETCH_BYTES);
 		const CsvVector vector(block);
 		if (vector.Equal('\r') || (d.comment && vector.Equal(d.comment)) || (escape && vector.Equal(escape))) {
 			break;
@@ -590,6 +592,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			break;
 		}
 		const char *block = data + (c.pos - base);
+		__builtin_prefetch(block + PREFETCH_BYTES);
 		uint64_t valid = ~uint64_t(0);
 		if (size < CSV_BLOCK_BYTES) {
 			memset(padded, 0, sizeof(padded));
