@@ -29,6 +29,7 @@ private:
 	//! Sizes the buffer table and eagerly materializes the first buffer (sniffing and newline detection
 	//! always read it)
 	void Initialize();
+	shared_ptr<CSVBufferHandle> MappedBuffer(idx_t buffer_idx) const;
 };
 
 } // namespace duckdb

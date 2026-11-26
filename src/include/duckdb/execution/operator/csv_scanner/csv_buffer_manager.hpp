@@ -15,6 +15,7 @@
 namespace duckdb {
 class CSVBuffer;
 class CSVStateMachine;
+class MappedRowSource;
 
 //! Residency of a buffer
 enum class CSVBufferResidency : uint8_t {
@@ -58,6 +59,7 @@ public:
 
 	//! unique_ptr to the file handle, gets stolen after sniffing
 	unique_ptr<CSVFileHandle> file_handle;
+	shared_ptr<MappedRowSource> mapped;
 
 	//! Whether buffer byte ranges follow deterministically from the file size
 	bool HasKnownBufferRanges() const;

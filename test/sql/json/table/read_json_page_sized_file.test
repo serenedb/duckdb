@@ -1,0 +1,79 @@
+# name: test/sql/json/table/read_json_page_sized_file.test
+# description: Files whose size is a multiple of the page size, with the last record ending at the end of the file, read whole: one page is read, 2 MiB is mapped
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT ('{"a": "' || repeat('x', 4087) || '"}')::BLOB) TO '{TEST_DIR}/page_record.json' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_json('{TEST_DIR}/page_record.json')
+----
+4087
+
+query I
+SELECT length(json) FROM read_json_objects('{TEST_DIR}/page_record.json')
+----
+4096
+
+statement ok
+COPY (SELECT (repeat('{"a": 12345678}' || chr(10), 4095) || '{"a": 123456789}')::BLOB) TO '{TEST_DIR}/page_lines.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(a) FROM read_json('{TEST_DIR}/page_lines.json')
+----
+4096	50679008199
+
+statement ok
+COPY (SELECT ('[' || repeat('{"a": 1234567890123},', 1950) || '{"a": 1}]')::BLOB) TO '{TEST_DIR}/page_array.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(a) FROM read_json('{TEST_DIR}/page_array.json')
+----
+1951	2407407385739851
+
+statement ok
+COPY (SELECT ('a' || chr(10) || repeat('x', 4094))::BLOB) TO '{TEST_DIR}/page_value.csv' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_csv('{TEST_DIR}/page_value.csv', header = true)
+----
+4094
+
+statement ok
+COPY (SELECT ('{"a": "' || repeat('x', 2097143) || '"}')::BLOB) TO '{TEST_DIR}/mapped_record.json' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_json('{TEST_DIR}/mapped_record.json')
+----
+2097143
+
+query I
+SELECT length(json) FROM read_json_objects('{TEST_DIR}/mapped_record.json')
+----
+2097152
+
+statement ok
+COPY (SELECT (repeat('{"a": 12345678}' || chr(10), 131071) || '{"a": 123456789}')::BLOB) TO '{TEST_DIR}/mapped_lines.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(a) FROM read_json('{TEST_DIR}/mapped_lines.json')
+----
+131072	1618283817927
+
+statement ok
+COPY (SELECT ('[' || repeat('{"a": 12345678901234},', 95324) || '{"a": 100000000000000}]')::BLOB) TO '{TEST_DIR}/mapped_array.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(a) FROM read_json('{TEST_DIR}/mapped_array.json')
+----
+95325	1176939495581229816
+
+statement ok
+COPY (SELECT ('a' || chr(10) || repeat('xxxxxxx' || chr(10), 262143) || 'xxxxxx')::BLOB) TO '{TEST_DIR}/mapped_value.csv' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(length(a)) FROM read_csv('{TEST_DIR}/mapped_value.csv', header = true)
+----
+262144	1835007

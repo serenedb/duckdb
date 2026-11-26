@@ -22,7 +22,11 @@ public:
 	CSVBufferHandle(BufferHandle handle_p, idx_t actual_size_p, idx_t requested_size_p, const bool is_final_buffer_p,
 	                idx_t buffer_index_p)
 	    : handle(std::move(handle_p)), actual_size(actual_size_p), requested_size(requested_size_p),
-	      is_last_buffer(is_final_buffer_p), buffer_idx(buffer_index_p) {};
+	      is_last_buffer(is_final_buffer_p), buffer_idx(buffer_index_p), data(const_char_ptr_cast(handle.Ptr())) {};
+	CSVBufferHandle(shared_ptr<void> keep_p, const char *data_p, idx_t actual_size_p, idx_t requested_size_p,
+	                const bool is_final_buffer_p, idx_t buffer_index_p)
+	    : actual_size(actual_size_p), requested_size(requested_size_p), is_last_buffer(is_final_buffer_p),
+	      buffer_idx(buffer_index_p), keep(std::move(keep_p)), data(data_p) {};
 	CSVBufferHandle() : actual_size(0), requested_size(0), is_last_buffer(false), buffer_idx(0) {};
 	~CSVBufferHandle() {
 	}
@@ -33,8 +37,12 @@ public:
 	const bool is_last_buffer;
 	const idx_t buffer_idx;
 	inline const char *Ptr() const {
-		return const_char_ptr_cast(handle.Ptr());
+		return data;
 	}
+
+private:
+	shared_ptr<void> keep;
+	const char *data = nullptr;
 };
 
 //! CSV Buffers are parts of a decompressed CSV File.

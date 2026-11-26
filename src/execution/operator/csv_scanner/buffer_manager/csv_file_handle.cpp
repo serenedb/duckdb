@@ -126,6 +126,10 @@ void CSVFileHandle::ReadAt(void *buffer, idx_t nr_bytes, idx_t position) {
 	file_handle->Read(context, buffer, nr_bytes, position);
 }
 
+void CSVFileHandle::ReadInPlace(idx_t nr_bytes, idx_t position) const {
+	file_handle->ReadInPlace(context, nr_bytes, position);
+}
+
 string CSVFileHandle::ReadLine() {
 	bool carriage_return = false;
 	string result;
