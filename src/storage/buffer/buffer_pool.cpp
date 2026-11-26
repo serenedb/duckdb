@@ -355,6 +355,33 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 	return {found, std::move(r)};
 }
 
+bool BufferPool::EvictAccount(QueryContext context, MemoryAccount &account, idx_t extra_memory) {
+	const auto fits = [&] {
+		return account.Used() + extra_memory <= account.Limit();
+	};
+	for (auto &queue : queues) {
+		idx_t budget = DConstants::INVALID_INDEX;
+		while (!fits()) {
+			auto victim = queue->NextVictim(budget);
+			if (!victim) {
+				break;
+			}
+			auto lock = victim->GetLock();
+			if (!victim->CanUnload() || victim->GetMemoryCharge(lock).account.get() != &account) {
+				continue;
+			}
+			victim->Unload(lock, context);
+			if (victim->IsUnloaded()) {
+				CountEviction(*victim);
+			}
+		}
+		if (fits()) {
+			return true;
+		}
+	}
+	return fits();
+}
+
 void BufferPool::SetLimit(idx_t limit) {
 	lock_guard<mutex> l_lock(limit_lock);
 	// try to evict until the limit is reached

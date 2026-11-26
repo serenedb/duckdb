@@ -160,6 +160,11 @@ void TemporaryMemoryManager::UpdateState(ClientContext &context, TemporaryMemory
 		} else {
 			new_reservation = remaining_size > memory_limit ? ComputeReservation(temporary_memory_state) : upper_bound;
 		}
+		if (const auto account = context.GetMemoryAccount()) {
+			const auto used = account->Used();
+			const auto room = account->Limit() > used ? account->Limit() - used : 0;
+			new_reservation = MaxValue(lower_bound, MinValue(new_reservation, room));
+		}
 
 		SetReservation(temporary_memory_state, new_reservation);
 	}

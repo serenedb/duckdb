@@ -26,6 +26,7 @@
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/main/table_description.hpp"
 #include "duckdb/planner/expression/bound_parameter_data.hpp"
+#include "duckdb/storage/buffer/memory_account.hpp"
 #include "duckdb/transaction/transaction_context.hpp"
 #include "duckdb/common/query_context.hpp"
 #include "duckdb/logging/logging.hpp"
@@ -152,6 +153,9 @@ public:
 	virtual void OnStatementEnd() {
 	}
 	virtual optional_ptr<CopyOutputGate> GetCopyOutputGate(const string &file_path) {
+		return nullptr;
+	}
+	virtual shared_ptr<MemoryAccount> GetMemoryAccount() {
 		return nullptr;
 	}
 	idx_t BindingGeneration() const {

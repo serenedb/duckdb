@@ -133,12 +133,30 @@ idx_t StandardBufferManager::GetOperatorMemoryLimit() const {
 TempBufferPoolReservation StandardBufferManager::EvictBlocksOrThrow(QueryContext context, MemoryTag tag,
                                                                     idx_t memory_delta, unique_ptr<FileBuffer> *buffer,
                                                                     const char *error_message) {
+	shared_ptr<MemoryAccount> account;
+	if (auto client = context.GetClientContext()) {
+		account = client->GetMemoryAccount();
+	}
+	if (account && !account->TryAttach(memory_delta) &&
+	    !(buffer_pool.EvictAccount(context, *account, memory_delta) && account->TryAttach(memory_delta))) {
+		string extra_text = StringUtil::Format(" (the session's memory limit: %s/%s used)",
+		                                       StringUtil::BytesToHumanReadableString(account->Used()),
+		                                       StringUtil::BytesToHumanReadableString(account->Limit()));
+		throw OutOfMemoryException(error_message, StringUtil::BytesToHumanReadableString(memory_delta), extra_text);
+	}
+	absl::Cleanup detach = [&] {
+		if (account) {
+			account->Detach(memory_delta);
+		}
+	};
 	auto r = buffer_pool.EvictBlocks(context, tag, memory_delta, buffer_pool.maximum_memory, buffer);
 	if (!r.success) {
 		string extra_text = StringUtil::Format(" (%s/%s used)", StringUtil::BytesToHumanReadableString(GetUsedMemory()),
 		                                       StringUtil::BytesToHumanReadableString(GetMaxMemory()));
 		throw OutOfMemoryException(error_message, StringUtil::BytesToHumanReadableString(memory_delta), extra_text);
 	}
+	std::move(detach).Cancel();
+	r.reservation.account = std::move(account);
 	return std::move(r.reservation);
 }
 

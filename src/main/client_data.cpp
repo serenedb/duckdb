@@ -127,12 +127,15 @@ public:
 		return buffer_manager.GetBlockSize();
 	}
 	idx_t GetOperatorMemoryLimit() const override {
-		idx_t global_budget = buffer_manager.GetOperatorMemoryLimit();
+		idx_t budget = buffer_manager.GetOperatorMemoryLimit();
 		const auto &config = ClientConfig::GetConfig(context);
-		if (!config.operator_memory_limit.IsValid()) {
-			return global_budget;
+		if (config.operator_memory_limit.IsValid()) {
+			budget = MinValue(budget, config.operator_memory_limit.GetIndex());
 		}
-		return MinValue(global_budget, config.operator_memory_limit.GetIndex());
+		if (const auto account = context.GetMemoryAccount()) {
+			budget = MinValue(budget, account->Limit());
+		}
+		return budget;
 	}
 
 	shared_ptr<BlockHandle> RegisterTransientMemory(const idx_t size, BlockManager &block_manager) override {
