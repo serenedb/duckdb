@@ -218,6 +218,10 @@ idx_t PiecedRowSource::Read(char *out, idx_t count, idx_t offset) const {
 	return cursor.Read(out, count, offset);
 }
 
+const vector<PieceSpan> &PiecedRowSource::Pieces() const {
+	return pieces;
+}
+
 unique_ptr<RowSourceCursor> PiecedRowSource::Cursor() const {
 	return make_uniq<PiecedRowCursor>(*this);
 }

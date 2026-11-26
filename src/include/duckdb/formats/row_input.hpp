@@ -96,9 +96,7 @@ public:
 	idx_t Size() const {
 		return size;
 	}
-	const vector<PieceSpan> &Pieces() const {
-		return pieces;
-	}
+	const vector<PieceSpan> &Pieces() const;
 
 private:
 	friend class PiecedRowCursor;
