@@ -18,9 +18,19 @@ set threads=1;
 statement ok
 copy (select range i from range(64000000)) to '{TEST_DIR}/prefetch_tracked_big.parquet' (ROW_GROUP_SIZE 64000000);
 
-# prefetch pins the full ~256MB row group span on top of the decode memory, so it OOMs where sync reads fit
 statement ok
 set memory_limit='360mb';
+
+# a local file is scanned in place through a mapping, which takes none of the memory limit
+query II
+select count(*), sum(i) from '{TEST_DIR}/prefetch_tracked_big.parquet';
+----
+64000000	2047999968000000
+
+# read through the external file cache, prefetch pins the full ~256MB row group span on top of the decode memory,
+# so it OOMs where sync reads fit
+statement ok
+set cache_local_files=true;
 
 statement error
 select count(*), sum(i) from '{TEST_DIR}/prefetch_tracked_big.parquet';
@@ -35,6 +45,9 @@ set threads=1;
 
 statement ok
 set memory_limit='360mb';
+
+statement ok
+set cache_local_files=true;
 
 # disabling prefetching reads the file in small synchronous chunks, which fits comfortably in the memory limit
 statement ok

@@ -54,6 +54,7 @@ public:
 public:
 	//! Get shared ownership of the underlying FileHandle
 	DUCKDB_API shared_ptr<FileHandle> GetFileHandle();
+	DUCKDB_API void MapLocalFile();
 	//! Read [nr_bytes] bytes at the requested [location].
 	//! Returns a buffer handle group that keeps the data pinned in memory.
 	DUCKDB_API FileBufferHandleGroup Read(idx_t nr_bytes, idx_t location);
@@ -84,6 +85,7 @@ private:
 	//! The external file cache's view of the file, registered on first use; null when reads must not use the cache
 	shared_ptr<InputFile> GetInputFile();
 	FileBufferHandleGroup ReadUncached(idx_t nr_bytes, idx_t location);
+	FileBufferHandleGroup ReadMapped(idx_t nr_bytes, idx_t location);
 	FileBufferHandleGroup Read(idx_t nr_bytes, idx_t location, bool in_order);
 	//! Asks for the bytes of [file] behind a read of [nr_bytes] at [location] when it starts where the read before
 	//! ended; a read elsewhere starts the window over
@@ -117,6 +119,7 @@ private:
 
 	//! Current position (if non-seeking reads)
 	idx_t position;
+	shared_ptr<MemoryMappedFile> mapping;
 
 	annotated_mutex ahead_lock;
 	//! Where the last read in order ended

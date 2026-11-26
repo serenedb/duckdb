@@ -1859,7 +1859,9 @@ unique_ptr<CachingFileHandle> ParquetReader::OpenScanHandle(ClientContext &conte
 			flags |= FileFlags::FILE_FLAGS_DIRECT_IO;
 		}
 	}
-	return fs.OpenFile(context, file, flags);
+	auto handle = fs.OpenFile(context, file, flags);
+	handle->MapLocalFile();
+	return handle;
 }
 
 void ParquetReader::PrepareReadAhead(ClientContext &context, GlobalTableFunctionState &) {
