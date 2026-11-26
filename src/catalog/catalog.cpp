@@ -2163,6 +2163,9 @@ optional_ptr<CatalogEntry> Catalog::OwnerOf(CatalogTransaction transaction, Cata
 	return nullptr;
 }
 
+void Catalog::ScanOwned(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback) {
+}
+
 catalog_entry_vector_t Catalog::DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries) {
 	auto dependency_manager = GetDependencyManager();
 	return dependency_manager ? dependency_manager->DropOrder(transaction, entries) : entries;

@@ -491,6 +491,15 @@ void Binder::RequireUserSchema(const SchemaCatalogEntry &schema, const Identifie
 	}
 }
 
+void Binder::RefuseSystemTablespace(const CatalogEntry &entry) {
+	if (entry.type == CatalogType::TABLESPACE_ENTRY && entry.internal) {
+		throw NotImplementedException(
+		    unordered_map<string, string> {
+		        {"detail", "A system tablespace cannot be renamed, given to another owner or granted on."}},
+		    StringUtil::Format("tablespace \"%s\" is a system tablespace", entry.name.GetIdentifierName()));
+	}
+}
+
 void Binder::RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info) {
 	auto &role = CheckAs();
 	Require(context, role, relation, AclMode::Own);

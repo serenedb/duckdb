@@ -554,6 +554,7 @@ unique_ptr<AlterInfo> AlterOwnedInfo::Copy() const {
 	result->role_ids = role_ids;
 	result->new_owner_id = new_owner_id;
 	result->grantors = grantors;
+	result->objects = objects;
 	return std::move(result);
 }
 

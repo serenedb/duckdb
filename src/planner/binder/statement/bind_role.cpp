@@ -329,9 +329,6 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 	if (role && role->oid != caller.role) {
 		RequireAdminOf(caller, *role, RoleChange::ALTER);
 	}
-	if (!role) {
-		Require(context, caller, database, AclMode::Own);
-	}
 	CheckConfig(context, info.set_config, info.reset_config);
 	if (caller.is_superuser) {
 		return;
@@ -348,7 +345,8 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 		role = BindRole(info.role);
 		info.role_id = role->oid;
 	}
-	auto database = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.GetQualifiedName()));
+	auto database = entry_retriever.GetEntry(
+	    EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.GetQualifiedName(), role ? AclMode::NoRights : AclMode::Own));
 	if (!caller.IsSystem()) {
 		CheckDatabaseSettings(context, caller, role, database->Cast<DatabaseEntry>(), info);
 	}

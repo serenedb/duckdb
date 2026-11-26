@@ -290,9 +290,11 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_TABLESPACE) {
-		entry_retriever.GetEntry(
-		    EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName(), AclMode::Rename),
-		    OnEntryNotFound::RETURN_NULL);
+		if (auto tablespace = entry_retriever.GetEntry(
+		        EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName(), AclMode::Rename),
+		        OnEntryNotFound::RETURN_NULL)) {
+			RefuseSystemTablespace(*tablespace);
+		}
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_ROLE) {

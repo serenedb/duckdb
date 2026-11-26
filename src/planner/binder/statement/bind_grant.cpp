@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/fault_points.hpp"
@@ -169,15 +170,6 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermiss
 	return *entry;
 }
 
-static void RefuseSystemTablespace(const CatalogEntry &entry) {
-	if (entry.type == CatalogType::TABLESPACE_ENTRY && entry.internal) {
-		throw NotImplementedException(
-		    unordered_map<string, string> {
-		        {"detail", "A system tablespace cannot be renamed, given to another owner or granted on."}},
-		    StringUtil::Format("tablespace \"%s\" is a system tablespace", entry.name.GetIdentifierName()));
-	}
-}
-
 static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) {
 	auto &catalog = sequence.ParentCatalog();
 	auto table = catalog.OwnerOf(catalog.GetCatalogTransaction(context), sequence);
@@ -231,7 +223,7 @@ static const RoleAccess &ResolveGrantors(Binder &binder, AlterPermissionsInfo &i
 static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const RoleAccess &role,
                          ObjectReference &object) {
 	auto &target = ResolvePermissionsTarget(binder, info, object);
-	RefuseSystemTablespace(target);
+	Binder::RefuseSystemTablespace(target);
 	if (target.internal) {
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
 		                          target.name.GetIdentifierName());
@@ -242,7 +234,7 @@ static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectReference &object) {
 	auto &context = binder.context;
 	auto &entry = ResolvePermissionsTarget(binder, info, object);
-	RefuseSystemTablespace(entry);
+	Binder::RefuseSystemTablespace(entry);
 	auto &permissions = TargetPermissions(object.overload_oid, entry);
 	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
 	auto &role = binder.CheckAs();
@@ -346,6 +338,61 @@ static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, cons
 	}
 }
 
+static void ListReassigned(Binder &binder, AlterOwnedInfo &info) {
+	auto &context = binder.context;
+	auto &role = binder.CheckAs();
+	const auto &new_owner = context.AccessOf(info.new_owner_id);
+	const auto reassigned = [&](idx_t owner) {
+		return owner != info.new_owner_id && absl::c_linear_search(info.role_ids, owner);
+	};
+	auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
+	const auto transaction = catalog.GetCatalogTransaction(context);
+	unordered_set<idx_t> given;
+	const auto add = [&](CatalogEntry &entry, idx_t overload) {
+		if (entry.type == CatalogType::SCHEMA_ENTRY) {
+			binder.EntryRetriever().GetEntry(
+			    EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName()), AclMode::Create),
+			    OnEntryNotFound::RETURN_NULL);
+			given.insert(entry.oid);
+		} else if (!role.is_superuser &&
+		           (overload || entry.type == CatalogType::TOKENIZER_ENTRY || entry.type == CatalogType::JOB_ENTRY)) {
+			auto &schema = entry.ParentSchema(transaction);
+			if (!given.count(schema.oid) && !Allowed(new_owner, schema, AclMode::Create)) {
+				ThrowPermissionDenied(schema);
+			}
+		}
+		info.objects.push_back(
+		    {.name = QualifiedName::FromCatalogSchema(catalog.GetName(),
+		                                              DependencyManager::GetSchemaPath(transaction, entry), entry.name),
+		     .type = entry.type,
+		     .overload_oid = overload});
+	};
+	catalog.ScanOwned(transaction, [&](CatalogEntry &entry) {
+		if (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY) {
+			if (reassigned(entry.permissions.owner)) {
+				add(entry, 0);
+			}
+			return;
+		}
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			if (reassigned(macro.OverloadPermissions(*overload).owner)) {
+				add(entry, macro.OverloadOid(*overload));
+			}
+		}
+	});
+	auto &system = Catalog::GetSystemCatalog(context);
+	system.ScanOwned(system.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
+		if (!reassigned(entry.permissions.owner)) {
+			return;
+		}
+		if (entry.type == CatalogType::DATABASE_ENTRY && !role.is_superuser && !role.Has(RoleOption::CreateDb)) {
+			throw PermissionException("permission denied to change owner of database");
+		}
+		info.objects.push_back({.name = QualifiedName(system.GetName(), Identifier(), entry.name), .type = entry.type});
+	});
+}
+
 void Binder::ResolveOwned(AlterOwnedInfo &info) {
 	const bool drop = info.new_owner.empty();
 	info.role_ids = ResolveOwnedRoles(*this, info.roles, drop ? "drop" : "reassign");
@@ -359,6 +406,7 @@ void Binder::ResolveOwned(AlterOwnedInfo &info) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(info.new_owner_id));
 	}
 	RefuseBootstrapRole(*this, info.role_ids, "reassign ownership of objects");
+	ListReassigned(*this, info);
 }
 
 static void ExpandAllInSchema(Binder &binder, AlterPermissionsInfo &grant) {

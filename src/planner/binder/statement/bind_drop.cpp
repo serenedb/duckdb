@@ -2,6 +2,7 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_drop.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -116,9 +117,14 @@ void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 		break;
 	}
 	case CatalogType::TABLESPACE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-		entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
+	case CatalogType::DATABASE_ENTRY: {
+		auto entry = entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop),
+		                                      OnEntryNotFound::RETURN_NULL);
+		if (entry && entry->type == CatalogType::TABLESPACE_ENTRY && entry->internal) {
+			ThrowPermissionDenied(*entry);
+		}
 		break;
+	}
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(info.type));
 	}

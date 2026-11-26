@@ -577,6 +577,7 @@ public:
 	                                 const AlterSubscriptionInfo &info);
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
+	virtual void ScanOwned(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);
 	virtual catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
 	virtual void RefuseDroppingTogether(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
 

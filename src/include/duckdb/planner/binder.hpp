@@ -498,6 +498,7 @@ public:
 	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	string RoleName(idx_t role);
 	static void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
+	static void RefuseSystemTablespace(const CatalogEntry &entry);
 	idx_t CreationOwner(const CreateInfo &info);
 	void RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
 	void RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info);

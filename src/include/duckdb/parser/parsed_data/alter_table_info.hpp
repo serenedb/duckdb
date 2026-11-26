@@ -251,6 +251,7 @@ struct AlterOwnedInfo : public AlterInfo {
 	vector<idx_t> role_ids;
 	idx_t new_owner_id = 0;
 	vector<idx_t> grantors;
+	vector<ObjectReference> objects;
 
 public:
 	CatalogType GetCatalogType() const override;
