@@ -24,7 +24,6 @@ struct JSONStructureNode {
 public:
 	JSONStructureNode();
 	JSONStructureNode(const char *key_ptr, const size_t key_len);
-	JSONStructureNode(const JSONNode &key_p, const JSONNode &val_p, bool ignore_errors, bool detect_geojson);
 
 	//! Disable copy constructors
 	JSONStructureNode(const JSONStructureNode &other) = delete;
@@ -75,8 +74,6 @@ public:
 
 	JSONStructureNode &GetOrCreateChild();
 	JSONStructureNode &GetOrCreateChild(const char *key_ptr, size_t key_size);
-	JSONStructureNode &GetOrCreateChild(const JSONNode &key, const JSONNode &val, bool ignore_errors,
-	                                    bool detect_geojson);
 
 public:
 	//! Type of this description
@@ -98,7 +95,7 @@ public:
 
 struct JSONStructure {
 public:
-	static void ExtractStructure(const JSONNode &val, JSONStructureNode &node, bool ignore_errors, bool detect_geojson);
+	static void ExtractStructure(const JSONNode &val, JSONStructureNode &node, bool detect_geojson);
 	static void MergeNodes(JSONStructureNode &merged, const JSONStructureNode &node);
 	static LogicalType StructureToType(ClientContext &context, const JSONStructureNode &node, idx_t max_depth,
 	                                   double field_appearance_threshold, idx_t map_inference_threshold,
