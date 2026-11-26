@@ -1382,7 +1382,7 @@ void CsvScan::ReportRow(idx_t row_idx, const CsvRow &row, vector<CsvRowError> &e
 			case CSVErrorType::CAST_ERROR:
 				return {3, error.column};
 			default:
-				return {error.sqlstate.empty() || error.line_error || error.line_value ? 1 : 3, error.column};
+				return {1, error.column};
 			}
 		};
 		auto chosen = &errors[0];
