@@ -115,12 +115,27 @@ struct ICUZoneCasts {
 		return false;
 	}
 
+	template <class DST>
+	static constexpr bool IS_TIME = std::is_same<DST, dtime_t>::value || std::is_same<DST, dtime_ns_t>::value;
+
+	static inline int64_t TimeOfDay(int64_t value, int64_t day) {
+		const auto time = value % day;
+		return time < 0 ? time + day : time;
+	}
+
 	template <class SRC, class DST>
 	static inline DST Shift(int64_t value, int64_t shift) {
 		using NAIVE = timestamp_base_t<SRC::PRECISION, false>;
 		const NAIVE naive(value + shift);
-		if constexpr (std::is_same<NAIVE, DST>::value) {
+		if constexpr (std::is_same<DST, dtime_ns_t>::value && std::is_same<NAIVE, timestamp_ns_t>::value) {
+			return DST(TimeOfDay(naive.value, Interval::NANOS_PER_DAY));
+		} else if constexpr (IS_TIME<DST>) {
+			const auto micros = TimeOfDay(Shift<SRC, timestamp_t>(value, shift).value, Interval::MICROS_PER_DAY);
+			return DST(micros * (DST::PRECISION / dtime_t::PRECISION));
+		} else if constexpr (std::is_same<NAIVE, DST>::value) {
 			return naive;
+		} else if constexpr (DST::PRECISION > NAIVE::PRECISION) {
+			return DST(naive.value * (DST::PRECISION / NAIVE::PRECISION));
 		} else {
 			return CoarsenTimestamp<NAIVE, DST>(naive);
 		}
@@ -132,24 +147,36 @@ struct ICUZoneCasts {
 	}
 
 	template <class SRC, class DST>
-	static unique_ptr<BaseStatistics> FixedShiftStatistics(const ZoneLUT &lut, const BaseStatistics &stats,
-	                                                       const LogicalType &target) {
-		if (!lut.HasFixedOffset() || stats.GetStatsType() != StatisticsType::NUMERIC_STATS ||
-		    !NumericStats::HasMinMax(stats)) {
-			return nullptr;
+	static constexpr int64_t Widening() {
+		return !IS_TIME<DST> && DST::PRECISION > SRC::PRECISION ? DST::PRECISION / SRC::PRECISION : 1;
+	}
+
+	template <class SRC>
+	static bool FixedShiftFits(const ZoneLUT &lut, const BaseStatistics &stats, int64_t widening) {
+		if (!lut.HasFixedOffset() || !NumericStats::HasMinMax(stats)) {
+			return false;
 		}
 		const auto shift = FixedShift<SRC>(lut);
-		const auto limit = NumericLimits<int64_t>::Maximum() - 1;
-		const auto min = NumericStats::GetMin<int64_t>(stats);
-		const auto max = NumericStats::GetMax<int64_t>(stats);
-		if (min < -limit - MinValue<int64_t>(shift, 0) || max > limit - MaxValue<int64_t>(shift, 0)) {
+		const auto limit = (NumericLimits<int64_t>::Maximum() - 1) / widening;
+		return NumericStats::GetMin<int64_t>(stats) >= -limit - MinValue<int64_t>(shift, 0) &&
+		       NumericStats::GetMax<int64_t>(stats) <= limit - MaxValue<int64_t>(shift, 0);
+	}
+
+	template <class SRC, class DST>
+	static unique_ptr<BaseStatistics> FixedShiftStatistics(const ZoneLUT &lut, const BaseStatistics &stats,
+	                                                       const LogicalType &target) {
+		if constexpr (IS_TIME<DST>) {
 			return nullptr;
+		} else {
+			const auto shift = FixedShift<SRC>(lut);
+			auto result = NumericStats::CreateEmpty(target);
+			result.CopyBase(stats);
+			NumericStats::SetMin(result,
+			                     Value::CreateValue(Shift<SRC, DST>(NumericStats::GetMin<int64_t>(stats), shift)));
+			NumericStats::SetMax(result,
+			                     Value::CreateValue(Shift<SRC, DST>(NumericStats::GetMax<int64_t>(stats), shift)));
+			return result.ToUnique();
 		}
-		auto result = NumericStats::CreateEmpty(target);
-		result.CopyBase(stats);
-		NumericStats::SetMin(result, Value::CreateValue(Shift<SRC, DST>(min, shift)));
-		NumericStats::SetMax(result, Value::CreateValue(Shift<SRC, DST>(max, shift)));
-		return result.ToUnique();
 	}
 
 	template <class SRC, class DST>

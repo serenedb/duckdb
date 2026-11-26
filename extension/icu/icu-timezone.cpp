@@ -423,14 +423,12 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 	static unique_ptr<BaseStatistics> CastToNaiveStatistics(CastStatisticsInput &input) {
 		input.SetFunction(CastToNaive<SRC, DST>);
 		auto &info = input.CastData()->Cast<CastData>().info->Cast<BindData>();
-		if (!info.lut) {
+		if (!info.lut ||
+		    !ICUZoneCasts::FixedShiftFits<SRC>(*info.lut, input.child_stats, ICUZoneCasts::Widening<SRC, DST>())) {
 			return nullptr;
 		}
-		auto result = ICUZoneCasts::FixedShiftStatistics<SRC, DST>(*info.lut, input.child_stats, input.target_type);
-		if (result) {
-			input.SetFunction(CastToNaiveFixed<SRC, DST>);
-		}
-		return result;
+		input.SetFunction(CastToNaiveFixed<SRC, DST>);
+		return ICUZoneCasts::FixedShiftStatistics<SRC, DST>(*info.lut, input.child_stats, input.target_type);
 	}
 
 	template <class SRC, class DST>
@@ -456,9 +454,9 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		case LogicalTypeId::TIMESTAMP_TZ:
 			switch (target.id()) {
 			case LogicalType::TIME:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, dtime_t>(std::move(cast_data));
 			case LogicalType::TIME_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, dtime_ns_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP:
 				return NaiveCast<timestamp_tz_t, timestamp_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_S:
@@ -466,16 +464,16 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 			case LogicalType::TIMESTAMP_MS:
 				return NaiveCast<timestamp_tz_t, timestamp_ms_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, timestamp_ns_t>(std::move(cast_data));
 			default:
 				throw InternalException("Type %s not handled in BindCastToNaive", LogicalTypeIdToString(target.id()));
 			}
 		case LogicalTypeId::TIMESTAMP_TZ_NS:
 			switch (target.id()) {
 			case LogicalType::TIME:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, dtime_t>(std::move(cast_data));
 			case LogicalType::TIME_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, dtime_ns_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP:
 				return NaiveCast<timestamp_tz_ns_t, timestamp_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_S:
