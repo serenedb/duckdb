@@ -28,6 +28,13 @@ class CatalogEntry;
 
 using catalog_entry_callback_t = std::function<void(CatalogEntry &)>;
 
+struct ActingRoles {
+	optional_ptr<const RoleAccess> lookups;
+	optional_ptr<const RoleAccess> privileges;
+	optional_ptr<const RoleAccess> current_user;
+	bool security_definer = false;
+};
+
 // Wraps the Catalog::GetEntry method
 class CatalogEntryRetriever {
 public:

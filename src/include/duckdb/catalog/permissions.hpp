@@ -20,13 +20,6 @@ class CatalogEntry;
 class ClientContext;
 class MacroFunction;
 
-struct ActingRoles {
-	optional_ptr<const RoleAccess> lookups;
-	optional_ptr<const RoleAccess> privileges;
-	optional_ptr<const RoleAccess> current_user;
-	bool security_definer = false;
-};
-
 struct StatementNaming {
 	std::string_view noun;
 	const QualifiedName &name;
