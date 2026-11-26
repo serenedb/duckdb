@@ -681,8 +681,10 @@ public:
 				}
 			}
 		}
-		scan_chunk.Destroy();
-		scan_chunk.Initialize(BufferAllocator::Get(context), intermediate_chunk_types);
+		if (scan_chunk.ColumnCount() == 0 || scan_chunk.GetTypes() != intermediate_chunk_types) {
+			scan_chunk.Destroy();
+			scan_chunk.Initialize(BufferAllocator::Get(context), intermediate_chunk_types);
+		}
 
 		executor.ClearExpressions();
 		if (!projection_ids.empty()) {
