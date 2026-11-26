@@ -521,7 +521,8 @@ public:
 
 	//! Helper function that try to start opening a next file. Parallel lock should be locked when calling.
 	static bool TryOpenNextFile(ClientContext &context, const MultiFileBindData &bind_data,
-	                            MultiFileGlobalState &global_state, unique_lock<mutex> &parallel_lock) {
+	                            MultiFileGlobalState &global_state, unique_lock<mutex> &parallel_lock,
+	                            idx_t &opened_index) {
 		if (!parallel_lock.owns_lock()) {
 			throw InternalException("parallel_lock is not held in TryOpenNextFile, this should not happen");
 		}
@@ -529,6 +530,9 @@ public:
 		const auto file_lookahead_limit = TaskScheduler::QueryThreads(context);
 
 		idx_t file_index = global_state.file_index;
+		if (!global_state.claims_in_order) {
+			file_index = MaxValue<idx_t>(file_index, global_state.first_unopened);
+		}
 		idx_t i = 0;
 		while (i < file_lookahead_limit) {
 			// Try to get new files to open in this loop too otherwise we will only ever open 1 file ahead
@@ -540,6 +544,7 @@ public:
 
 			auto &current_reader_data = *global_state.readers[current_file_index];
 			if (current_reader_data.file_state == MultiFileFileState::UNOPENED) {
+				global_state.first_unopened = current_file_index + 1;
 				if (TrySkipFileFromFilters(context, bind_data, global_state, current_reader_data, current_file_index)) {
 					//! Intentionally do not increase 'i'
 					continue;
@@ -550,6 +555,7 @@ public:
 					//! Intentionally do not increase 'i'
 					continue;
 				}
+				opened_index = current_file_index;
 				return true;
 			}
 			i++;
@@ -972,14 +978,46 @@ public:
 		return MultiFileClaimResult::EXHAUSTED;
 	}
 
+	static bool TryClaimFile(ClientContext &context, MultiFileGlobalState &gstate,
+	                         ScanReadAheadJobWrapper<MultiFileScanJobState> &job, idx_t file_index,
+	                         unique_lock<mutex> &parallel_lock) {
+		auto &reader_data = *gstate.readers[file_index];
+		if (!reader_data.reader->TryInitializeScan(context, *gstate.global_state, *job.scan_state)) {
+			return false;
+		}
+		job.reader = reader_data.reader;
+		job.reader_data = reader_data;
+		job.batch_index = gstate.batch_index++;
+		job.file_index = file_index;
+		parallel_lock.unlock();
+		job.reader->PrepareScan(context, *gstate.global_state, *job.scan_state);
+		return true;
+	}
+
+	static void CloseFile(ClientContext &context, MultiFileGlobalState &gstate, MultiFileReaderData &reader_data,
+	                      vector<shared_ptr<BaseFileReader>> &retired) {
+		reader_data.file_state = MultiFileFileState::CLOSED;
+		reader_data.reader->FinishFile(context, *gstate.global_state);
+		reader_data.closed_reader = reader_data.reader;
+		retired.push_back(std::move(reader_data.reader));
+	}
+
 	static MultiFileClaimResult ClaimNextJobInternal(ClientContext &context, const MultiFileBindData &bind_data,
 	                                                 MultiFileGlobalState &gstate,
 	                                                 ScanReadAheadJobWrapper<MultiFileScanJobState> &job) {
 		const auto previous = std::move(job.reader);
+		const auto previous_file = job.file_index;
 		vector<shared_ptr<BaseFileReader>> retired;
 		unique_lock<mutex> parallel_lock(gstate.lock);
 		if (gstate.planned) {
 			return ClaimPlannedJob(context, bind_data, gstate, job, parallel_lock, retired);
+		}
+		if (!gstate.claims_in_order && previous &&
+		    gstate.readers[previous_file]->file_state == MultiFileFileState::OPEN) {
+			if (TryClaimFile(context, gstate, job, previous_file, parallel_lock)) {
+				return MultiFileClaimResult::CLAIMED;
+			}
+			CloseFile(context, gstate, *gstate.readers[previous_file], retired);
 		}
 
 		while (true) {
@@ -999,34 +1037,17 @@ public:
 
 			auto &current_reader_data = *gstate.readers[gstate.file_index];
 			if (current_reader_data.file_state == MultiFileFileState::OPEN) {
-				if (current_reader_data.reader->TryInitializeScan(context, *gstate.global_state, *job.scan_state)) {
-					job.reader = current_reader_data.reader;
-					if (!job.reader) {
-						throw InternalException("MultiFileReader was moved");
-					}
-					// The current reader has data left to be scanned
-					job.reader_data = current_reader_data;
-					job.batch_index = gstate.batch_index++;
-					job.file_index = gstate.file_index;
-					parallel_lock.unlock();
-					job.reader->PrepareScan(context, *gstate.global_state, *job.scan_state);
+				if (TryClaimFile(context, gstate, job, gstate.file_index, parallel_lock)) {
 					return MultiFileClaimResult::CLAIMED;
-				} else {
-					// Set state to the next file
-					++gstate.file_index;
-
-					// Close current file
-					current_reader_data.file_state = MultiFileFileState::CLOSED;
-
-					//! Finish processing the file
-					current_reader_data.reader->FinishFile(context, *gstate.global_state);
-					current_reader_data.closed_reader = current_reader_data.reader;
-					retired.push_back(std::move(current_reader_data.reader));
-					continue;
 				}
-			} else if (current_reader_data.file_state == MultiFileFileState::SKIPPED) {
-				//! This file does not need to be opened or closed, the filters have determined that this file can be
-				//! skipped entirely
+				// Set state to the next file
+				++gstate.file_index;
+				CloseFile(context, gstate, current_reader_data, retired);
+				continue;
+			} else if (current_reader_data.file_state == MultiFileFileState::SKIPPED ||
+			           current_reader_data.file_state == MultiFileFileState::CLOSED) {
+				//! This file does not need to be opened or closed: the filters have determined that this file can be
+				//! skipped entirely, or the last thread that scanned it out of order closed it
 				++gstate.file_index;
 				continue;
 			}
@@ -1034,8 +1055,14 @@ public:
 			if (gstate.read_ahead) {
 				// read-ahead: open files on the async pool ahead of decoding, then wait for the front one
 				ScheduleFileOpens(context, bind_data, gstate, parallel_lock);
-			} else if (TryOpenNextFile(context, bind_data, gstate, parallel_lock)) {
-				continue;
+			} else {
+				idx_t opened_index;
+				if (TryOpenNextFile(context, bind_data, gstate, parallel_lock, opened_index)) {
+					if (!gstate.claims_in_order && TryClaimFile(context, gstate, job, opened_index, parallel_lock)) {
+						return MultiFileClaimResult::CLAIMED;
+					}
+					continue;
+				}
 			}
 
 			// Check if the current file is being opened, in that case we need to wait for it.
@@ -1146,6 +1173,7 @@ public:
 		result->op = input.op;
 		result->global_state = bind_data.interface->InitializeGlobalState(context, bind_data, *result);
 		result->max_threads = TaskScheduler::QueryThreads(context);
+		result->claims_in_order = MultiFileGlobalState::ClaimsInOrder(context);
 
 		// Ensure all readers are initialized and FileListScan is sync with readers list
 		for (auto &reader_data : result->readers) {

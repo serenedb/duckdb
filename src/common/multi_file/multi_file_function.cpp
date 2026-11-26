@@ -1,6 +1,7 @@
 #include "duckdb/common/multi_file/multi_file_function.hpp"
 #include "duckdb/common/multi_file/union_by_name.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 
 namespace duckdb {
@@ -17,6 +18,10 @@ MultiFileGlobalState::~MultiFileGlobalState() {
 		// the file opens scheduled on the async pool reference this state - wait for them before it goes away
 		read_ahead->CancelAndDrain();
 	}
+}
+
+bool MultiFileGlobalState::ClaimsInOrder(ClientContext &context) {
+	return Settings::Get<PreserveInsertionOrderSetting>(context);
 }
 
 MultiFileReaderInterface::~MultiFileReaderInterface() {

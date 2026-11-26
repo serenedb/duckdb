@@ -173,6 +173,8 @@ struct MultiFileGlobalState : public GlobalTableFunctionState {
 	explicit MultiFileGlobalState(unique_ptr<MultiFileList> owned_file_list_p);
 	~MultiFileGlobalState() override;
 
+	static bool ClaimsInOrder(ClientContext &context);
+
 	//! The file list to scan
 	MultiFileList &file_list;
 	//! The scan over the file_list
@@ -210,6 +212,8 @@ struct MultiFileGlobalState : public GlobalTableFunctionState {
 	vector<idx_t> planned_claims_left;
 
 	idx_t batch_index = 0;
+	bool claims_in_order = true;
+	idx_t first_unopened = 0;
 
 	idx_t max_threads = 1;
 	vector<idx_t> projection_ids;
