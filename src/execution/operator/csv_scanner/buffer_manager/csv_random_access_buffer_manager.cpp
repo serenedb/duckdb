@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/csv_scanner/csv_random_access_buffer_manager.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
+#include "duckdb/formats/row_input.hpp"
 
 namespace duckdb {
 
@@ -14,7 +15,24 @@ void CSVRandomAccessBufferManager::Initialize() {
 	cached_buffers.resize(KnownBufferCount());
 }
 
+shared_ptr<CSVBufferHandle> CSVRandomAccessBufferManager::MappedBuffer(const idx_t pos) const {
+	const idx_t count = KnownBufferCount();
+	if (pos >= count) {
+		return nullptr;
+	}
+	const idx_t begin = pos * buffer_size;
+	const idx_t size = KnownBufferSize(pos);
+	mapped->Want(begin, begin + size);
+	mapped->ReadInPlace(begin, begin + size);
+	auto memory = mapped->Memory();
+	return make_shared_ptr<CSVBufferHandle>(memory.buffer, memory.data + begin, size, buffer_size, pos + 1 == count,
+	                                        pos);
+}
+
 shared_ptr<CSVBufferHandle> CSVRandomAccessBufferManager::GetBuffer(const idx_t pos) {
+	if (mapped) {
+		return MappedBuffer(pos);
+	}
 	shared_ptr<CSVBuffer> buffer;
 	{
 		lock_guard<mutex> parallel_lock(main_mutex);

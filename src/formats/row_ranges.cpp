@@ -189,12 +189,21 @@ RowRanges::RowRanges(Allocator &allocator_p, const RowLexer &lexer_p, RowSource 
     : allocator(allocator_p), lexer(&lexer_p), source(source_p), start(start_p),
       stream(size_p == NumericLimits<idx_t>::Maximum()), file_start(file_start_p), size(size_p) {
 	Layout(range_bytes_p);
+	ViewMemory();
 }
 
 RowRanges::RowRanges(Allocator &allocator_p, RowSource &source_p, idx_t start_p, idx_t size_p, idx_t range_bytes_p)
     : allocator(allocator_p), source(source_p), start(start_p), stream(size_p == NumericLimits<idx_t>::Maximum()),
       file_start(true), size(size_p) {
 	Layout(range_bytes_p);
+	ViewMemory();
+}
+
+void RowRanges::ViewMemory() {
+	auto memory = source.Memory();
+	if (memory.data) {
+		SetWholeFile(std::move(memory.buffer), memory.data);
+	}
 }
 
 void RowRanges::Reset(idx_t size_p, idx_t range_bytes_p) {
@@ -255,6 +264,10 @@ void RowRanges::ReadInto(RowBytes &bytes, idx_t offset, idx_t count) {
 	const idx_t end = Size();
 	count = offset < end ? MinValue(count, end - offset) : 0;
 	if (whole_data) {
+		if (count > 0) {
+			source.Want(offset, offset + count);
+			source.ReadInPlace(offset, offset + count);
+		}
 		bytes.buffer = whole_buffer;
 		bytes.data = whole_data + offset;
 		bytes.offset = offset;
@@ -279,13 +292,14 @@ void RowRanges::ReadInto(RowBytes &bytes, idx_t offset, idx_t count) {
 	}
 }
 
-void RowRanges::ViewWholeFile(RowBytes &bytes) const {
+void RowRanges::ViewWholeFile(RowBytes &bytes, idx_t from) const {
+	from = MinValue(from, Size());
 	bytes.owned.Reset();
 	bytes.capacity = 0;
 	bytes.buffer = whole_buffer;
-	bytes.data = whole_data;
-	bytes.offset = 0;
-	bytes.size = Size();
+	bytes.data = whole_data + from;
+	bytes.offset = from;
+	bytes.size = 0;
 }
 
 bool RowRanges::Empty(idx_t range, const RowBytes &bytes) const {
@@ -526,6 +540,9 @@ bool RowRanges::Finish(idx_t range) {
 	if (drained) {
 		source.Nudge();
 	}
+	if (whole_data) {
+		source.Done(RangeBegin(range), RangeEnd(range));
+	}
 	return complete;
 }
 
@@ -574,8 +591,9 @@ void RowWindow::Start(idx_t from, bool release_p) {
 		bytes = make_shared_ptr<RowBytes>();
 	}
 	if (ranges.WholeFile()) {
-		ranges.ViewWholeFile(*bytes);
-		read_to = ranges.Size();
+		ranges.ViewWholeFile(*bytes, from);
+		read_to = bytes->offset;
+		wanted_to = read_to;
 		return;
 	}
 	if (bytes->buffer) {
@@ -719,6 +737,19 @@ void RowWindow::Prepend(shared_ptr<RowBytes> carry, idx_t begin, idx_t from) {
 }
 
 void RowWindow::Read(idx_t keep_from, idx_t piece) {
+	if (ranges.WholeFile()) {
+		const idx_t end = ranges.Size();
+		const idx_t before = read_to;
+		read_to = end - read_to > piece ? read_to + piece : end;
+		bytes->size = read_to - bytes->offset;
+		ranges.source.ReadInPlace(before, read_to);
+		const idx_t ahead = end - read_to > PREFETCH_BYTES ? read_to + PREFETCH_BYTES : end;
+		if (ahead >= wanted_to + PREFETCH_STEP || (ahead == end && ahead > wanted_to)) {
+			ranges.source.Want(wanted_to, ahead);
+			wanted_to = ahead;
+		}
+		return;
+	}
 	const idx_t end = ranges.Size();
 	const idx_t want = end > read_to ? MinValue<idx_t>(piece, end - read_to) : 0;
 	Prepare(keep_from, want);

@@ -1,0 +1,21 @@
+# name: test/sql/copy/csv/test_skip_past_end.test
+# description: skipping more rows than a file has runs out of the file: the sniffer finds no rows to detect a dialect from, a read with given columns returns none
+# group: [csv]
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 2), (3, 4)) t(a, b)) TO '{TEMP_DIR}/two_rows.csv' (HEADER);
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/two_rows.csv', skip = 10);
+----
+It was not possible to automatically detect the CSV parsing types
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/two_rows.csv', skip = 10, auto_detect = false, header = false, columns = {'a': 'INTEGER', 'b': 'INTEGER'});
+----
+0
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/two_rows.csv', skip = 2, auto_detect = false, header = false, columns = {'a': 'INTEGER', 'b': 'INTEGER'});
+----
+3	4

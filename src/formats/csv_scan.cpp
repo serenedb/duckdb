@@ -712,7 +712,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	}
 	RowSource *rows = &input->Rows();
 	shared_ptr<CSVBufferHandle> whole_file;
-	if (!stream && size <= manager.GetBufferSize()) {
+	if (!stream && !input->mapped && size <= manager.GetBufferSize()) {
 		auto handle = Buffer(0);
 		if (handle && handle->actual_size >= size) {
 			whole_file = std::move(handle);

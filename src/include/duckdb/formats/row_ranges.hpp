@@ -41,11 +41,25 @@ private:
 	shared_ptr<RowBytes> bytes;
 };
 
+struct RowMemory {
+	shared_ptr<RowBuffer> buffer;
+	const char *data = nullptr;
+};
+
 class RowSource {
 public:
 	virtual ~RowSource() = default;
 
 	virtual idx_t Read(char *data, idx_t count, idx_t offset) const = 0;
+	virtual RowMemory Memory() const {
+		return {};
+	}
+	virtual void Want(idx_t begin, idx_t end) {
+	}
+	virtual void ReadInPlace(idx_t begin, idx_t end) {
+	}
+	virtual void Done(idx_t begin, idx_t end) {
+	}
 	virtual void Release(idx_t position) {
 	}
 	virtual optional_idx End() const {
@@ -147,7 +161,7 @@ public:
 	bool WholeFile() const {
 		return whole_data != nullptr;
 	}
-	void ViewWholeFile(RowBytes &bytes) const;
+	void ViewWholeFile(RowBytes &bytes, idx_t from) const;
 
 public:
 	Allocator &allocator;
@@ -162,6 +176,7 @@ public:
 
 private:
 	void Layout(idx_t range_bytes);
+	void ViewMemory();
 	bool Complete() const;
 
 private:
@@ -194,6 +209,8 @@ class RowWindow {
 public:
 	static constexpr idx_t PADDING = 64;
 	static constexpr idx_t PIECE = 1 << 16;
+	static constexpr idx_t PREFETCH_BYTES = 1 << 22;
+	static constexpr idx_t PREFETCH_STEP = 1 << 20;
 
 	explicit RowWindow(RowRanges &ranges);
 
@@ -215,6 +232,7 @@ private:
 private:
 	shared_ptr<RowBytes> spare;
 	bool release = false;
+	idx_t wanted_to = 0;
 };
 
 class RowLookup {

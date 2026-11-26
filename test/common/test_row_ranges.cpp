@@ -2,6 +2,8 @@
 #include "catch.hpp"
 #include "duckdb.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/formats/row_input.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 #include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/formats/row_stream.hpp"
@@ -9,6 +11,7 @@
 #include "duckdb/storage/buffer_manager.hpp"
 #include "test_helpers.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -155,6 +158,76 @@ private:
 	string data;
 	idx_t released = 0;
 	bool closed = false;
+};
+
+class MemoryRowSource : public RowSource {
+public:
+	explicit MemoryRowSource(const string &data_p) : data(data_p), size(data_p.size()) {
+		data.append(RowWindow::PADDING, '\0');
+	}
+
+	idx_t Read(char *out, idx_t count, idx_t offset) const override {
+		const idx_t available = offset < size ? MinValue(count, size - offset) : 0;
+		memcpy(out, data.data() + offset, available);
+		return available;
+	}
+	RowMemory Memory() const override {
+		return {make_shared_ptr<RowBuffer>(), data.data()};
+	}
+	void Want(idx_t begin, idx_t end) override {
+		wants.emplace_back(begin, end);
+	}
+	void ReadInPlace(idx_t begin, idx_t end) override {
+		reads.emplace_back(begin, end);
+	}
+	void Done(idx_t begin, idx_t end) override {
+		dones.emplace_back(begin, end);
+	}
+	optional_idx End() const override {
+		return size;
+	}
+
+	vector<pair<idx_t, idx_t>> wants;
+	vector<pair<idx_t, idx_t>> reads;
+	vector<pair<idx_t, idx_t>> dones;
+
+private:
+	string data;
+	idx_t size;
+};
+
+class TestMapping : public MemoryMappedFile {
+public:
+	TestMapping(data_ptr_t data_p, idx_t size_p)
+	    : MemoryMappedFile("test", FileFlags::FILE_FLAGS_READ, data_p, size_p) {
+	}
+
+	void Sync() override {
+	}
+	bool Trim(idx_t offset, idx_t length) override {
+		return false;
+	}
+	void Close() override {
+	}
+};
+
+class RecordingMapping : public TestMapping {
+public:
+	using TestMapping::TestMapping;
+
+	void Prefetch(idx_t location, idx_t nr_bytes) override {
+		prefetched.emplace_back(location, nr_bytes);
+	}
+	void Release(idx_t location, idx_t nr_bytes) override {
+		released.emplace_back(location, nr_bytes);
+	}
+	bool IsCached(idx_t location, idx_t nr_bytes) override {
+		return cached;
+	}
+
+	bool cached = false;
+	vector<pair<idx_t, idx_t>> prefetched;
+	vector<pair<idx_t, idx_t>> released;
 };
 
 struct LexedRow {
@@ -980,6 +1053,34 @@ TEST_CASE("read_csv reads the stream the host registers for its path", "[csv]") 
 	REQUIRE(CHECK_COLUMN(result, 0, {1000}));
 }
 
+TEST_CASE("The window that holds a row of a host stream counts against memory_limit", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	string data;
+	for (idx_t row = 0; row < 200000; row++) {
+		data += row == 1000 ? string(20000000, 'x') : "y" + to_string(row);
+		data += "\n";
+	}
+	const auto path = TestCreatePath("host_row_stream_big_row.csv");
+	{
+		std::ofstream out(path, std::ios::binary);
+		out << "y\n";
+	}
+	con.context->registered_state->Insert(RowStreamKey(path),
+	                                      make_shared_ptr<RowStreamState>(make_shared_ptr<PlainRowStream>(data)));
+	const string query = "SELECT max(length(s)) FROM read_csv('" + path +
+	                     "', columns = {'s': 'VARCHAR'}, header = false, auto_detect = false, new_line = '\\n', "
+	                     "max_line_size = 32000000, buffer_size = 32000000)";
+	REQUIRE_NO_FAIL(con.Query("SET threads = 1"));
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit = '10MiB'"));
+	auto result = con.Query(query);
+	REQUIRE(result->HasError());
+	REQUIRE(result->GetErrorType() == ExceptionType::OUT_OF_MEMORY);
+	REQUIRE_NO_FAIL(con.Query("RESET memory_limit"));
+	result = con.Query(query);
+	REQUIRE(CHECK_COLUMN(result, 0, {20000000}));
+}
+
 TEST_CASE("A range waiting on the chain computes the transfers no reader published", "[csv]") {
 	string data;
 	for (idx_t row = 0; row < 40; row++) {
@@ -1382,4 +1483,158 @@ TEST_CASE("A failed intake releases the readers waiting for their turn", "[csv]"
 	REQUIRE(!ranges.ClaimCut(pieces[0], claim));
 	idx_t next = DConstants::INVALID_INDEX;
 	REQUIRE(!ranges.Claim(next));
+}
+
+TEST_CASE("Ranges of a file in memory ask for the bytes ahead of their reader and give back each range they finish",
+          "[csv]") {
+	const string row = "12345,abcdefgh\n";
+	constexpr idx_t ROWS = 700000;
+	string data;
+	data.reserve(row.size() * ROWS);
+	for (idx_t i = 0; i < ROWS; i++) {
+		data += row;
+	}
+	MemoryRowSource source(data);
+	RowLexer lexer(RowDialect::PostgresCsv(',', '"', '"'), 2, 1 << 20, true);
+	const idx_t range_bytes = 3 * 1024 * 1024 + 7;
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), range_bytes, true);
+	REQUIRE(ranges.WholeFile());
+	RowRangeReader reader(ranges);
+	idx_t rows = 0;
+	idx_t range = 0;
+	while (ranges.Claim(range)) {
+		reader.Start(range, true, false, false);
+		while (true) {
+			const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
+			if (result == RowReadResult::DONE) {
+				break;
+			}
+			REQUIRE(result == RowReadResult::ROWS);
+			rows += reader.Ready();
+			reader.Emit(reader.Ready());
+		}
+		ranges.Finish(range);
+	}
+	REQUIRE(rows == ROWS);
+
+	REQUIRE(source.dones.size() == ranges.RangeCount());
+	for (idx_t i = 0; i < ranges.RangeCount(); i++) {
+		REQUIRE(source.dones[i] == make_pair(ranges.RangeBegin(i), ranges.RangeEnd(i)));
+	}
+	REQUIRE(source.wants.size() <= data.size() / RowWindow::PREFETCH_STEP + 2 * ranges.RangeCount());
+	auto wants = source.wants;
+	std::sort(wants.begin(), wants.end());
+	idx_t covered = 0;
+	for (auto &want : wants) {
+		REQUIRE(want.first < want.second);
+		REQUIRE(want.second <= data.size());
+		REQUIRE(want.second - want.first <= RowWindow::PREFETCH_BYTES + RowWindow::PIECE);
+		REQUIRE(want.first <= covered);
+		covered = MaxValue(covered, want.second);
+	}
+	REQUIRE(covered == data.size());
+	auto reads = source.reads;
+	std::sort(reads.begin(), reads.end());
+	covered = 0;
+	for (auto &read : reads) {
+		REQUIRE(read.first < read.second);
+		REQUIRE(read.second <= data.size());
+		REQUIRE(read.first <= covered);
+		covered = MaxValue(covered, read.second);
+	}
+	REQUIRE(covered == data.size());
+
+	source.wants.clear();
+	source.reads.clear();
+	RowBytes bytes;
+	ranges.ReadInto(bytes, 100, 50);
+	REQUIRE(bytes.data == source.Memory().data + 100);
+	REQUIRE(bytes.size == 50);
+	ranges.ReadInto(bytes, data.size(), 50);
+	REQUIRE(bytes.size == 0);
+	REQUIRE(source.wants == vector<pair<idx_t, idx_t>> {{100, 150}});
+	REQUIRE(source.reads == vector<pair<idx_t, idx_t>> {{100, 150}});
+}
+
+TEST_CASE("A mapped row source prefetches the bytes the page cache lacks before they are read", "[csv]") {
+	string data(10000, '\0');
+	for (idx_t i = 0; i < data.size(); i++) {
+		data[i] = static_cast<char>('a' + i % 26);
+	}
+	auto mapping = make_shared_ptr<RecordingMapping>(data_ptr_cast(&data[0]), data.size());
+	MappedRowSource source(mapping);
+	REQUIRE(source.Memory().data == data.data());
+	REQUIRE(source.End().GetIndex() == data.size());
+
+	source.Want(100, 300);
+	REQUIRE(mapping->prefetched == vector<pair<idx_t, idx_t>> {{100, 200}});
+	char out[64];
+	REQUIRE(source.Read(out, sizeof(out), data.size() - 10) == 10);
+	REQUIRE(memcmp(out, data.data() + data.size() - 10, 10) == 0);
+	REQUIRE(mapping->prefetched.back() == make_pair(idx_t(data.size() - 10), idx_t(10)));
+	REQUIRE(source.Read(out, sizeof(out), data.size()) == 0);
+	REQUIRE(mapping->prefetched.size() == 2);
+
+	mapping->cached = true;
+	source.Want(0, 5000);
+	REQUIRE(source.Read(out, 8, 0) == 8);
+	REQUIRE(memcmp(out, data.data(), 8) == 0);
+	REQUIRE(mapping->prefetched.size() == 2);
+
+	mapping->cached = false;
+	source.Want(0, 4000);
+	REQUIRE(mapping->prefetched.size() == 2);
+	source.Want(4000, 6000);
+	REQUIRE(mapping->prefetched.back() == make_pair(idx_t(5000), idx_t(1000)));
+	source.ReadInPlace(0, 6000);
+
+	source.Done(0, 4096);
+	REQUIRE(mapping->released == vector<pair<idx_t, idx_t>> {{0, 4096}});
+
+	TestMapping plain(data_ptr_cast(&data[0]), data.size());
+	REQUIRE(!plain.IsCached(0, data.size()));
+	plain.Release(0, data.size());
+	REQUIRE(memcmp(plain.GetData(0, data.size()), data.data(), data.size()) == 0);
+}
+
+TEST_CASE("A small file, a file gone from its path, or one that grew after it was opened, is read instead of mapped",
+          "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &context = *con.context;
+	auto &fs = FileSystem::GetFileSystem(context);
+	CSVReaderOptions options;
+	auto write = [](const string &path, idx_t rows) {
+		std::ofstream out(path, std::ios::binary);
+		out << "a,b\n";
+		for (idx_t row = 0; row < rows; row++) {
+			out << "1,2\n";
+		}
+	};
+	const idx_t rows = MAPPED_FILE_MIN_BYTES / 4;
+
+	const auto small = TestCreatePath("small_unmapped.csv");
+	write(small, rows - 2);
+	auto small_handle = CSVFileHandle::OpenFile(context, OpenFileInfo(small), options, CachingMode::NO_CACHING);
+	REQUIRE(small_handle->FileSize() < MAPPED_FILE_MIN_BYTES);
+	REQUIRE(!MappedRowSource::Open(context, *small_handle, small));
+
+	const auto gone = TestCreatePath("gone_after_open.csv");
+	write(gone, rows);
+	auto gone_handle = CSVFileHandle::OpenFile(context, OpenFileInfo(gone), options, CachingMode::NO_CACHING);
+	fs.RemoveFile(gone);
+	REQUIRE(!MappedRowSource::Open(context, *gone_handle, gone));
+
+	const auto path = TestCreatePath("grown_after_open.csv");
+	write(path, rows);
+	auto handle = CSVFileHandle::OpenFile(context, OpenFileInfo(path), options, CachingMode::NO_CACHING);
+	{
+		std::ofstream out(path, std::ios::binary | std::ios::app);
+		out << "3,4\n";
+	}
+	REQUIRE(!MappedRowSource::Open(context, *handle, path));
+	auto reopened = CSVFileHandle::OpenFile(context, OpenFileInfo(path), options, CachingMode::NO_CACHING);
+	auto mapped = MappedRowSource::Open(context, *reopened, path);
+	REQUIRE(mapped);
+	REQUIRE(mapped->End().GetIndex() == 12);
 }

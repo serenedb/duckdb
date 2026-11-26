@@ -31,8 +31,13 @@ shared_ptr<CSVBufferManager> CSVBufferManager::Open(ClientContext &context, cons
 		file_handle = ReadCSV::OpenCSV(file, options, context);
 	}
 	if (file_handle->HasKnownBufferRanges()) {
-		return make_shared_ptr<CSVRandomAccessBufferManager>(context, options, file, per_file_single_threaded,
-		                                                     std::move(file_handle));
+		auto manager = make_shared_ptr<CSVRandomAccessBufferManager>(context, options, file, per_file_single_threaded,
+		                                                             std::move(file_handle));
+		manager->mapped = MappedRowSource::Open(context, *manager->file_handle, file.path);
+		if (manager->mapped) {
+			manager->cached_buffers.clear();
+		}
+		return manager;
 	}
 	return make_shared_ptr<CSVSequentialBufferManager>(context, options, file, per_file_single_threaded,
 	                                                   std::move(file_handle));
