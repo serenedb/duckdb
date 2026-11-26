@@ -34,6 +34,9 @@ public:
 
 static constexpr idx_t MAPPED_FILE_MIN_BYTES = idx_t(1) << 21;
 
+unique_ptr<MemoryMappedFile> MapForReading(ClientContext &context, const string &path, bool on_disk, idx_t size,
+                                           idx_t tail);
+
 class WholeFile : public RowBuffer {
 public:
 	static shared_ptr<WholeFile> Read(ClientContext &context, FileHandle &handle);
