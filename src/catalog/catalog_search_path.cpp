@@ -289,7 +289,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		throw CatalogException("%s: No catalog + schema named \"%s\" found.", GetSetName(set_type), path.ToString());
 	}
 	if (set_type == CatalogSetPathType::SET_SCHEMA) {
-		if (new_paths[0].GetCatalog() == TEMP_CATALOG || new_paths[0].GetCatalog() == SYSTEM_CATALOG) {
+		if (DatabaseManager::Get(context).IsReservedName(new_paths[0].GetCatalog())) {
 			throw CatalogException("%s cannot be set to internal schema %s", GetSetName(set_type),
 			                       new_paths[0].GetCatalog());
 		}
@@ -382,8 +382,9 @@ Identifier CatalogSearchPath::GetDefaultCatalog(const Identifier &schema) const 
 	if (DefaultSchemaGenerator::IsDefaultSchema(schema)) {
 		// Check attached catalogs first -- they may override system schemas
 		// (e.g. SereneDB serves its own pg_catalog/information_schema)
+		auto &db_manager = DatabaseManager::Get(context);
 		for (auto &path : paths) {
-			if (path.GetCatalog() == TEMP_CATALOG || path.GetCatalog() == SYSTEM_CATALOG || path.GetCatalog().empty()) {
+			if (path.GetCatalog().empty() || db_manager.IsReservedName(path.GetCatalog())) {
 				continue;
 			}
 			return path.GetCatalog();
@@ -425,8 +426,9 @@ vector<Identifier> CatalogSearchPath::GetCatalogsForSchema(const Identifier &sch
 		// Check attached catalogs first, system catalog as fallback.
 		// This lets attached catalogs (e.g. SereneDB) serve pg_catalog/information_schema
 		// while keeping DuckDB's versions accessible via explicit system.pg_catalog.*
+		auto &db_manager = DatabaseManager::Get(context);
 		for (auto &path : paths) {
-			if (path.GetCatalog() == TEMP_CATALOG || path.GetCatalog() == SYSTEM_CATALOG || path.GetCatalog().empty()) {
+			if (path.GetCatalog().empty() || db_manager.IsReservedName(path.GetCatalog())) {
 				continue;
 			}
 			catalogs.emplace_back(path.GetCatalog());
