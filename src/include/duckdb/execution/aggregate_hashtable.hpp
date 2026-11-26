@@ -117,6 +117,8 @@ public:
 	                              Vector &new_group_addresses, SelectionVector &new_groups_out);
 	optional_idx TryAddCompressedGroups(DataChunk &groups, DataChunk &payload, const unsafe_vector<idx_t> &filter);
 	optional_idx TryAddDictionaryGroups(DataChunk &groups, DataChunk &payload, const unsafe_vector<idx_t> &filter);
+	optional_idx TryAddDictionaryCombinationGroups(DataChunk &groups, DataChunk &payload,
+	                                               const unsafe_vector<idx_t> &filter);
 	optional_idx TryAddConstantGroups(DataChunk &groups, DataChunk &payload, const unsafe_vector<idx_t> &filter);
 	void SliceNewGroups(DataChunk &result, idx_t new_group_count);
 
@@ -196,6 +198,8 @@ private:
 
 		//! The current dictionary vector id (if any)
 		string dictionary_id;
+		string combined_id;
+		SelectionVector combined_entries;
 		DataChunk unique_values;
 		Vector hashes;
 		Vector new_dictionary_pointers;
@@ -292,6 +296,13 @@ private:
 	//! Reinserts tuples (triggered by Resize)
 	void ReinsertTuples(PartitionedTupleData &data);
 	void ReinsertEntries(const ht_entry_t *old_entries, idx_t old_capacity);
+
+	static constexpr idx_t MAX_DICTIONARY_SIZE_THRESHOLD = 20000;
+	static constexpr idx_t DICTIONARY_THRESHOLD = 2;
+	template <class SLICE>
+	optional_idx AddDictionaryGroups(DataChunk &groups, DataChunk &payload, const unsafe_vector<idx_t> &filter,
+	                                 idx_t dict_size, const string &dictionary_id, const SelectionVector &offsets,
+	                                 const SLICE &slice);
 
 	void UpdateAggregates(DataChunk &payload, const unsafe_vector<idx_t> &filter, idx_t count,
 	                      bool ht_offsets_valid = true);
