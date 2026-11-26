@@ -23,7 +23,7 @@
 #elif defined(__GNUC__)
 #include <sched.h>
 #include <unistd.h>
-#if defined(__GLIBC__)
+#if defined(__GLIBC__) || defined(__linux__) || defined(__APPLE__)
 #include <pthread.h>
 #endif
 #endif
@@ -71,11 +71,40 @@ static int64_t MinSliceTicks() {
 	return ticks;
 }
 
+static constexpr const char *WORKER_THREAD_NAME = "sdb_worker";
+static constexpr const char *BLOCKING_THREAD_NAME = "sdb_blocking";
+
+static void SetThreadName(const char *name) {
+#if !defined(DUCKDB_NO_THREADS) && defined(__linux__)
+	pthread_setname_np(pthread_self(), name);
+#elif !defined(DUCKDB_NO_THREADS) && defined(__APPLE__)
+	pthread_setname_np(name);
+#else
+	(void)name;
+#endif
+}
+
+static bool EnterBlocking(SchedulerWorker &worker) {
+	if (worker.blocking_depth++ > 0) {
+		return false;
+	}
+	SetThreadName(BLOCKING_THREAD_NAME);
+	return true;
+}
+
+static bool LeaveBlocking(SchedulerWorker &worker) {
+	if (--worker.blocking_depth > 0) {
+		return false;
+	}
+	SetThreadName(WORKER_THREAD_NAME);
+	return true;
+}
+
 TaskScheduler::BlockingScope::BlockingScope() : BlockingScope(true) {
 }
 
 TaskScheduler::BlockingScope::BlockingScope(bool wake) : worker(current_worker) {
-	if (!worker || worker->blocking_depth++ > 0) {
+	if (!worker || !EnterBlocking(*worker)) {
 		return;
 	}
 	worker->blocked_since = TimePoint::Now();
@@ -89,7 +118,7 @@ TaskScheduler::BlockingScope::BlockingScope(bool wake) : worker(current_worker) 
 }
 
 TaskScheduler::BlockingScope::~BlockingScope() {
-	if (!worker || --worker->blocking_depth > 0) {
+	if (!worker || !LeaveBlocking(*worker)) {
 		return;
 	}
 	worker->blocked_ticks += TimePoint::Now() - worker->blocked_since;
@@ -549,9 +578,9 @@ void TaskScheduler::RunStarted(SchedulerWorker &worker, shared_ptr<Task> &task) 
 		ReleaseClaims(worker);
 		queue.Detach(*account);
 	}
-	worker.blocking_depth++;
+	EnterBlocking(worker);
 	std::ignore = task->Execute(TaskExecutionMode::PROCESS_ALL);
-	worker.blocking_depth--;
+	LeaveBlocking(worker);
 	if (account) {
 		queue.Attach(*account);
 	}
@@ -569,9 +598,9 @@ void TaskScheduler::RunTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
 		ReleaseClaims(worker);
 		queue.Detach(*worker.account);
 		ReleaseSlot(worker);
-		worker.blocking_depth++;
+		EnterBlocking(worker);
 		result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
-		worker.blocking_depth--;
+		LeaveBlocking(worker);
 		queue.Attach(*worker.account);
 		worker.released_slot = false;
 		Unblock();
@@ -809,6 +838,7 @@ bool TaskScheduler::ShouldYield() {
 
 void TaskScheduler::WorkerLoop(atomic<bool> *marker, bool spare) {
 #ifndef DUCKDB_NO_THREADS
+	SetThreadName(WORKER_THREAD_NAME);
 	SchedulerWorker worker(*this, spare);
 	shared_ptr<Task> task;
 	if (!Register(worker)) {
