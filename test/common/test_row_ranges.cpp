@@ -18,6 +18,11 @@
 #include <random>
 #include <thread>
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 using namespace duckdb;
 
 namespace {
@@ -1636,5 +1641,50 @@ TEST_CASE("A small file, a file gone from its path, or one that grew after it wa
 	auto reopened = CSVFileHandle::OpenFile(context, OpenFileInfo(path), options, CachingMode::NO_CACHING);
 	auto mapped = MappedRowSource::Open(context, *reopened, path);
 	REQUIRE(mapped);
-	REQUIRE(mapped->End().GetIndex() == 12);
+	REQUIRE(mapped->End().GetIndex() == 4 + rows * 4 + 4);
+}
+
+TEST_CASE("A whole file is mapped from its minimum size up and read below it, with the file's bytes either way, "
+          "in the page cache or not, kept by a holder after its handle closes",
+          "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &context = *con.context;
+	auto &fs = FileSystem::GetFileSystem(context);
+	for (const idx_t size :
+	     {idx_t(0), idx_t(100), MAPPED_FILE_MIN_BYTES - 1, MAPPED_FILE_MIN_BYTES, MAPPED_FILE_MIN_BYTES + 4097}) {
+		const auto path = TestCreatePath("whole_file_" + to_string(size));
+		string bytes(size, '\0');
+		for (idx_t i = 0; i < size; i++) {
+			bytes[i] = static_cast<char>('a' + i % 26);
+		}
+		{
+			std::ofstream out(path, std::ios::binary);
+			out << bytes;
+		}
+#if defined(__linux__)
+		{
+			const int fd = open(path.c_str(), O_RDONLY);
+			REQUIRE(fd >= 0);
+			REQUIRE(fdatasync(fd) == 0);
+			REQUIRE(posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED) == 0);
+			close(fd);
+		}
+#endif
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+		auto file = WholeFile::Read(context, *handle);
+		const auto data = file->data;
+		REQUIRE(file->size == size);
+		RowBufferHolder holder(std::move(file));
+		handle.reset();
+		REQUIRE(string(data, size) == bytes);
+		if (size == 0) {
+			continue;
+		}
+		{
+			std::fstream out(path, std::ios::binary | std::ios::in | std::ios::out);
+			out.put('#');
+		}
+		REQUIRE((data[0] == '#') == (size >= MAPPED_FILE_MIN_BYTES));
+	}
 }

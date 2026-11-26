@@ -58,6 +58,27 @@ unique_ptr<MemoryMappedFile> MapForReading(ClientContext &context, const string 
 
 } // namespace
 
+shared_ptr<WholeFile> WholeFile::Read(ClientContext &context, FileHandle &handle) {
+	auto result = make_shared_ptr<WholeFile>();
+	result->size = handle.GetFileSize();
+	result->mapping = MapForReading(context, handle.GetPath(), handle.OnDiskFile(), result->size, 0);
+	if (result->mapping) {
+		if (!result->mapping->IsCached(0, result->size)) {
+			result->mapping->Prefetch(0, result->size);
+		}
+		handle.ReadInPlace(context, result->size, 0);
+		result->data = const_char_ptr_cast(result->mapping->GetData(0, result->size));
+		return result;
+	}
+	if (result->size == 0) {
+		return result;
+	}
+	result->owned = Allocator::DefaultAllocator().Allocate(result->size);
+	result->data = const_char_ptr_cast(result->owned.get());
+	result->size = NumericCast<idx_t>(handle.Read(context, result->owned.get(), result->size));
+	return result;
+}
+
 shared_ptr<MappedRowSource> MappedRowSource::Open(ClientContext &context, CSVFileHandle &handle, const string &path) {
 	auto mapping = MapForReading(context, path, handle.OnDiskFile(), handle.FileSize(), RowWindow::PADDING);
 	if (!mapping) {
