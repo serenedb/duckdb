@@ -90,7 +90,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		}
 		const auto variable_scope = GetSettingScope(extension_option, scope);
 		if (check_access) {
-			Settings::CheckChange(context, checked_as, name, extension_option.access, variable_scope);
+			Settings::CheckChange(checked_as, name, extension_option.access, variable_scope);
 		}
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
@@ -105,7 +105,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
 	if (check_access) {
-		Settings::CheckChange(context, checked_as, name, option->access, variable_scope);
+		Settings::CheckChange(checked_as, name, option->access, variable_scope);
 	}
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	context.OnSettingChange(

@@ -83,7 +83,7 @@ MemberOptionName <- 'ADMIN' / 'INHERIT' / 'SET'
 # first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
 # may carry an argument-type signature -- fn(int) -- to pick a specific
 # overload; PROCEDURE is accepted as a routine synonym too.
-GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantParameterTarget / GrantUnqualifiedTarget / GrantNamedTarget
+GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantUnqualifiedTarget / GrantNamedTarget
 GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' List(QualifiedName)
 GrantObjTypePlural <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'PROCEDURES'
 GrantFunctionTarget <- GrantRoutineKind List(RoutineSignature)
@@ -96,7 +96,6 @@ InArgMode <- 'IN'
 OutArgMode <- 'OUT'
 InoutArgMode <- 'INOUT'
 VariadicArgMode <- 'VARIADIC'
-GrantParameterTarget <- 'PARAMETER' List(SettingPath)
 GrantUnqualifiedTarget <- GrantUnqualifiedObjType List(ColId)
 GrantNamedTarget <- GrantObjType? List(QualifiedName)
 
@@ -163,6 +162,5 @@ AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?
 # privilege (GRANT SELECT (a, b) ON t). The keyword's validity for the target
 # object class (e.g. EXECUTE on a table) is still checked in the command layer.
 Privilege <- PrivilegeKeyword PrivilegeColumns?
-PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE' / 'SET' / AlterSystemPrivilege
-AlterSystemPrivilege <- 'ALTER' 'SYSTEM'
+PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE'
 PrivilegeColumns <- Parens(List(ColId))

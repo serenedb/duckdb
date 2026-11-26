@@ -273,9 +273,6 @@ static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool i
 
 static string PermissionsTargetToSQL(const AlterPermissionsInfo &info, const QualifiedName &name,
                                      const vector<LogicalType> &func_parameters, bool has_func_args) {
-	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
-		return Settings::ConfigNameToSQL(name.Name().GetIdentifierName());
-	}
 	if (info.all_in_schema) {
 		return name.ToString();
 	}

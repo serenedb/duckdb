@@ -32,11 +32,11 @@ static void CheckConfigChange(ClientContext &context, const RoleAccess &caller, 
                               vector<string> &reset_config, bool &reset_all_config, const vector<string> &current) {
 	for (auto &entry : set_config) {
 		const Identifier name(string(Settings::ConfigKey(entry)));
-		Settings::CheckChange(context, caller, name, AccessOf(context, name), SetScope::SESSION);
+		Settings::CheckChange(caller, name, AccessOf(context, name), SetScope::SESSION);
 	}
 	for (auto &key : reset_config) {
 		const Identifier name(key);
-		Settings::CheckChange(context, caller, name, AccessOf(context, name), SetScope::SESSION);
+		Settings::CheckChange(caller, name, AccessOf(context, name), SetScope::SESSION);
 	}
 	if (!reset_all_config) {
 		return;
@@ -45,7 +45,7 @@ static void CheckConfigChange(ClientContext &context, const RoleAccess &caller, 
 	for (auto &entry : current) {
 		const auto key = Settings::ConfigKey(entry);
 		const Identifier name {string(key)};
-		if (Settings::MayChange(context, caller, name, AccessOf(context, name), SetScope::SESSION)) {
+		if (Settings::MayChange(caller, AccessOf(context, name), SetScope::SESSION)) {
 			reset_config.emplace_back(key);
 		}
 	}

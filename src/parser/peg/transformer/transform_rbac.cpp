@@ -651,13 +651,6 @@ static vector<ObjectReference> TransformGrantTarget(PEGTransformer &transformer,
 		}
 		return names;
 	}
-	if (chosen.Name() == "GrantParameterTarget") {
-		info.entry_catalog_type = CatalogType::PARAMETER_ENTRY;
-		for (auto &setting : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
-			names.push_back(ObjectReference {QualifiedName(transformer.Transform<Identifier>(setting.get()))});
-		}
-		return names;
-	}
 	if (chosen.Name() == "GrantUnqualifiedTarget") {
 		info.entry_catalog_type = GrantObjectType(ObjectTypeKeyword(target.GetChild(0)));
 		for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {

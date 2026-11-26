@@ -2190,7 +2190,6 @@ excluded_rules:
   - RoutineSignature
   - FuncArgSignature
   - FuncArg
-  - GrantParameterTarget
   - GrantUnqualifiedTarget
   - GrantNamedTarget
   - GrantedBy

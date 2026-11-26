@@ -37,7 +37,6 @@ enum class CatalogType : uint8_t {
 	JOB_ENTRY = 233,
 	TABLESPACE_ENTRY = 234,
 	FOREIGN_DATA_WRAPPER_ENTRY = 235,
-	PARAMETER_ENTRY = 236,
 
 	// functions
 	TABLE_FUNCTION_ENTRY = 25,

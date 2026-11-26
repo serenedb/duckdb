@@ -25,7 +25,6 @@ add_library_unity(
   create_foreign_data_wrapper_info.cpp
   create_foreign_server_info.cpp
   create_macro_info.cpp
-  create_parameter_info.cpp
   create_pragma_function_info.cpp
   create_replication_origin_info.cpp
   create_role_info.cpp

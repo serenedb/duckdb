@@ -16,9 +16,9 @@ namespace duckdb {
 static void CheckSetAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
                            const char *statement) {
 	const auto check = [&](const SettingAccess &access, SetScope variable_scope) {
-		if (!Settings::MayChange(context, role, name, access, variable_scope)) {
+		if (!Settings::MayChange(role, access, variable_scope)) {
 			PhysicalSet::WarnOutsideTransaction(context, scope, statement);
-			Settings::CheckChange(context, role, name, access, variable_scope);
+			Settings::CheckChange(role, name, access, variable_scope);
 		}
 	};
 	if (auto option = DBConfig::GetOptionByName(name)) {

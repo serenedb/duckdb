@@ -161,29 +161,16 @@ void Settings::CheckValue(ClientContext &context, const Identifier &name, const 
 	value.CastAs(context, extension_option.type);
 }
 
-static bool ParameterAllows(ClientContext &context, const RoleAccess &role, const Identifier &name, AclMode use) {
-	auto parameter = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::PARAMETER_ENTRY, QualifiedName(name)),
-	                                   OnEntryNotFound::RETURN_NULL);
-	return parameter && Allowed(role, *parameter, use);
-}
-
-bool Settings::MayChange(ClientContext &context, const RoleAccess &role, const Identifier &name,
-                         const SettingAccess &access, SetScope scope) {
+bool Settings::MayChange(const RoleAccess &role, const SettingAccess &access, SetScope scope) {
 	if (access.context == SettingContext::INTERNAL) {
 		return false;
 	}
-	if (role.is_superuser) {
-		return true;
-	}
-	if (scope == SetScope::GLOBAL) {
-		return ParameterAllows(context, role, name, AclMode::AlterSystem);
-	}
-	return access.context != SettingContext::SUPERUSER || ParameterAllows(context, role, name, AclMode::Set);
+	return role.is_superuser || (scope != SetScope::GLOBAL && access.context != SettingContext::SUPERUSER);
 }
 
-void Settings::CheckChange(ClientContext &context, const RoleAccess &role, const Identifier &name,
-                           const SettingAccess &access, SetScope scope) {
-	if (MayChange(context, role, name, access, scope)) {
+void Settings::CheckChange(const RoleAccess &role, const Identifier &name, const SettingAccess &access,
+                           SetScope scope) {
+	if (MayChange(role, access, scope)) {
 		return;
 	}
 	if (access.context == SettingContext::INTERNAL) {

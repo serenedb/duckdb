@@ -795,27 +795,6 @@
     }
   },
   {
-    "class": "CreateParameterInfo",
-    "base": "CreateInfo",
-    "enum": "PARAMETER_ENTRY",
-    "includes": [
-      "duckdb/parser/parsed_data/create_parameter_info.hpp"
-    ],
-    "members": [
-      {
-        "id": 200,
-        "name": "name",
-        "serialize_property": "qualified_name.Name()",
-        "type": "Identifier"
-      }
-    ],
-    "methods": {
-      "SetName": [
-        "name"
-      ]
-    }
-  },
-  {
     "class": "CreateSubscriptionInfo",
     "base": "CreateInfo",
     "enum": "SUBSCRIPTION_ENTRY",

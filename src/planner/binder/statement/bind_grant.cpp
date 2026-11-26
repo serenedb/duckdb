@@ -11,7 +11,6 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database_manager.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -38,19 +37,6 @@ static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &in
 		context.WarnUser(StringUtil::Format("%s privileges were granted for %s", amount, object),
 		                 "PRIVILEGE_NOT_GRANTED");
 	}
-}
-
-static void RequireGrantableAcl(ClientContext &context, const AlterPermissionsInfo &info, const RoleAccess &role,
-                                idx_t owner, std::span<const AclItem> acl, CatalogType type, std::string_view name) {
-	if (role.MemberOf(owner)) {
-		return;
-	}
-	const auto options = BestGrantor(info.grantors, owner, info.privileges, acl).options;
-	if (options == AclMode::NoRights && role.HeldModes(acl) == AclMode::NoRights) {
-		ThrowPermissionDenied(type, name);
-	}
-	WarnUngranted(context, info, info.privileges, options, info.privileges == ObjectKindOf(type).privileges,
-	              StringUtil::Format("\"%s\"", name));
 }
 
 static const Permissions &TargetPermissions(idx_t overload_oid, CatalogEntry &target) {
@@ -244,27 +230,6 @@ static const RoleAccess &ResolveGrantors(Binder &binder, AlterPermissionsInfo &i
 
 static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const RoleAccess &role,
                          ObjectReference &object) {
-	auto &context = binder.context;
-	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
-		const auto setting = object.name.Name();
-		if (!Settings::GetAccess(context, setting)) {
-			Catalog::AutoloadExtensionByConfigName(context, setting);
-		}
-		const auto &name = setting.GetIdentifierName();
-		if (Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
-			throw NotImplementedException("parameter privileges are not supported by this catalog");
-		}
-		const auto owner = DBConfig::GetConfig(context).bootstrap_role;
-		std::span<const AclItem> acl;
-		if (auto parameter = binder.EntryRetriever().GetEntry(
-		        EntryLookupInfo(CatalogType::PARAMETER_ENTRY, QualifiedName(setting)), OnEntryNotFound::RETURN_NULL)) {
-			acl = parameter->permissions.acl;
-		}
-		RequireGrantableAcl(context, info, role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
-		object.name = QualifiedName(Identifier(StringUtil::Lower(name)));
-		object.type = CatalogType::PARAMETER_ENTRY;
-		return;
-	}
 	auto &target = ResolvePermissionsTarget(binder, info, object);
 	RefuseSystemTablespace(target);
 	if (target.internal) {
@@ -454,8 +419,7 @@ void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementPropertie
 			                            DatabaseModificationType::ALTER_TABLE);
 		} else if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
 		           catalog_type != CatalogType::TABLESPACE_ENTRY &&
-		           catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY &&
-		           catalog_type != CatalogType::PARAMETER_ENTRY) {
+		           catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 			object.name = BindTableName(object.name);
 			properties.RegisterDBModify(Catalog::GetCatalog(context, object.name.Catalog()), context,
 			                            DatabaseModificationType::ALTER_TABLE);
