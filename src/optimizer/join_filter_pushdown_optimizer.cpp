@@ -143,6 +143,21 @@ bool JoinFilterPushdownUtil::JoinTypeIsSupported(JoinType join_type) {
 	}
 }
 
+static bool FilterTargetPreservesLeftInput(JoinType type) {
+	switch (type) {
+	case JoinType::INNER:
+	case JoinType::LEFT:
+	case JoinType::SEMI:
+	case JoinType::ANTI:
+	case JoinType::MARK:
+	case JoinType::SINGLE:
+		return true;
+	default:
+		// Filtering a NULL-generating input can create new unmatched rows.
+		return false;
+	}
+}
+
 static void PushdownProjectionColumns(LogicalProjection &proj, const vector<JoinFilterPushdownColumn> &columns,
                                       vector<JoinFilterPushdownColumn> &projected_columns) {
 	for (auto &filter : columns) {
@@ -176,8 +191,12 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, for_scan_order);
 		break;
 	case LogicalOperatorType::LOGICAL_FILTER:
-	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
 		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets);
+		break;
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+		if (FilterTargetPreservesLeftInput(probe_child.Cast<LogicalComparisonJoin>().join_type)) {
+			GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets);
+		}
 		break;
 	case LogicalOperatorType::LOGICAL_UNNEST: {
 		auto &unnest = probe_child.Cast<LogicalUnnest>();
