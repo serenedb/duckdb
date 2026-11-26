@@ -690,6 +690,9 @@ bool CSVErrorHandler::PrintLineNumber(const CSVError &error) const {
 	if (!print_line) {
 		return false;
 	}
+	if (!error.sqlstate.empty()) {
+		return true;
+	}
 	switch (error.type) {
 	case CAST_ERROR:
 	case UNTERMINATED_QUOTES:

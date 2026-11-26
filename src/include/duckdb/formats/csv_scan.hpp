@@ -244,7 +244,8 @@ private:
 	                Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;
 	std::string_view RawField(idx_t file_column, idx_t row) const;
-	idx_t CopyEndMarker(idx_t count);
+	idx_t CopyEndMarker(idx_t count, idx_t &tail);
+	void ReportCopyTail(idx_t row);
 	void ApplyCopyDefaults(DataChunk &output);
 	CSVError CopyRowError(const CsvRow &row, const CsvRowError &error);
 	void ReportRow(idx_t row_idx, const CsvRow &row, vector<CsvRowError> &errors);
@@ -294,6 +295,7 @@ private:
 	vector<unique_ptr<ExpressionExecutor>> copy_defaults;
 	string copy_buffer;
 	bool copy_ended = false;
+	bool copy_tail_reported = false;
 };
 
 } // namespace duckdb
