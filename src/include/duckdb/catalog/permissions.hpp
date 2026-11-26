@@ -25,8 +25,8 @@ struct StatementNaming {
 	const QualifiedName &name;
 };
 
-DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
-DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
+DUCKDB_API const Permissions &PermissionsOf(const CatalogEntry &entry,
+                                            optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 constexpr uint64_t VISIBLE_TO_ALL = ~uint64_t(0);
 DUCKDB_API uint64_t VisibilityBits(const CatalogEntry &entry);
@@ -38,6 +38,7 @@ DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, 
                                                    optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
                         optional_ptr<const MacroFunction> overload = nullptr);
+DUCKDB_API bool AllowedAny(const RoleAccess &role, const CatalogEntry &entry, AclMode privileges);
 DUCKDB_API void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
                         optional_ptr<const MacroFunction> overload = nullptr,
                         optional_ptr<const StatementNaming> naming = nullptr);

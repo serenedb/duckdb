@@ -1283,7 +1283,7 @@ static SchemaAccess RestrictToRole(ClientContext &context, const RoleAccess &rol
 		result = CatalogEntryLookup();
 		return SchemaAccess::HIDDEN;
 	}
-	if (result.schema && !CanUseSchema(role, *result.schema)) {
+	if (result.schema && !Allowed(role, *result.schema, AclMode::Usage)) {
 		return SchemaAccess::NO_USAGE;
 	}
 	if (result.Found() && !EntryVisible(context, role, *result.entry)) {

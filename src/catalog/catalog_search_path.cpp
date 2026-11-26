@@ -602,7 +602,7 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 		if (!schema) {
 			continue;
 		}
-		if (CanUseSchema(context.CurrentRole(), *schema)) {
+		if (Allowed(context.CurrentRole(), *schema, AclMode::Usage)) {
 			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
 		}
 		skipped_unusable = true;

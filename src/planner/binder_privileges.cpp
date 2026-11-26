@@ -175,7 +175,7 @@ void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunct
 		ThrowPermissionDenied(function, overload);
 	}
 	auto calls = global_binder_state->recorded_calls;
-	if (!calls || !overload || IsUnowned(function)) {
+	if (!calls || !overload || PermissionsOf(function, overload).owner == 0) {
 		return;
 	}
 	if (&function.ParentCatalog() != &calls->catalog) {
@@ -342,21 +342,16 @@ BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
 	return ref.type == TableReferenceType::BASE_TABLE ? Bind(ref.Cast<BaseTableRef>(), use) : Bind(ref);
 }
 
-static bool Unchecked(const StandardEntry &relation) {
-	const bool system_view = relation.type == CatalogType::VIEW_ENTRY && relation.ParentCatalog().IsSystemCatalog();
-	return IsUnowned(relation) && !system_view;
-}
-
 RelationChecks Binder::ChecksOf(const StandardEntry &relation) {
 	auto &role = CheckAs();
-	if (role.is_superuser || Unchecked(relation)) {
+	if (role.is_superuser) {
 		return {};
 	}
 	return {&role, global_binder_state->relation_references++};
 }
 
 RelationChecks Binder::ReadChecks(const StandardEntry &relation, RelationChecks checks) {
-	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, relation.permissions, AclMode::Select)) {
+	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(relation), AclMode::Select)) {
 		return {};
 	}
 	return checks;
@@ -384,7 +379,7 @@ void Binder::Deny(const StandardEntry &relation, const RelationChecks &checks) {
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const LogicalIndex> columns) {
-	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, table.permissions, use)) {
+	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), use)) {
 		return;
 	}
 	const bool granted =
@@ -398,7 +393,7 @@ void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const Identifier> columns) {
-	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, table.permissions, use)) {
+	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), use)) {
 		return;
 	}
 	const bool granted = columns.empty()
@@ -414,7 +409,7 @@ void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks
 
 void Binder::RequireColumn(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                            const ColumnDefinition &column) {
-	if (checks.role && !checks.role->Can(CatalogType::TABLE_ENTRY, table.permissions, use) &&
+	if (checks.role && !checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), use) &&
 	    !checks.role->Can(CatalogType::TABLE_ENTRY, column.Acl(), use)) {
 		Deny(table, checks);
 	}

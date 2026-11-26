@@ -314,6 +314,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
 		auto &role = CheckAs();
+		const auto owner = PermissionsOf(view_catalog_entry).owner;
 		auto checks = use == TableRefUse::UTILITY_TARGET ? RelationChecks()
 		                                                 : ReadChecks(view_catalog_entry, ChecksOf(view_catalog_entry));
 		if (checks.role && !role.CanColumns(view_catalog_entry, AclMode::Select, {})) {
@@ -326,8 +327,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 		view_binder->SetCanContainNulls(true);
 		if (!role.IsSystem() && view_catalog_entry.security_invoker) {
 			view_binder->acting.privileges = &CurrentRole();
-		} else if (!role.IsSystem() && !IsUnowned(view_catalog_entry)) {
-			view_binder->acting.privileges = &AccessOf(view_catalog_entry.permissions.owner);
+		} else if (!role.IsSystem() && owner != 0) {
+			view_binder->acting.privileges = &AccessOf(owner);
 		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them
@@ -349,7 +350,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 
 		auto &view_catalog = view_catalog_entry.ParentCatalog();
 		auto &view_schema = view_catalog_entry.ParentSchema(context).name;
-		if (!IsUnowned(view_catalog_entry) && !view_catalog.IsTemporaryCatalog()) {
+		if (owner != 0 && !view_catalog.IsTemporaryCatalog()) {
 			view_binder->SetSearchPath(view_catalog, view_schema, view_catalog_entry.name_bindings);
 		} else {
 			view_binder->entry_retriever.SetSearchPath(GetSearchPath(view_catalog, view_schema, true));

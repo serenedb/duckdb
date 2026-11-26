@@ -390,7 +390,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	if (table) {
 		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
 		auto &schema = table->ParentSchema(context);
-		if (!CanUseSchema(CheckAs(), schema)) {
+		if (!Allowed(CheckAs(), schema, AclMode::Usage)) {
 			ThrowPermissionDenied(schema);
 		}
 	}

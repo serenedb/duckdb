@@ -140,19 +140,16 @@ static AclMode DefaultModes(const RoleAccess &access, CatalogType type, const Pe
 }
 
 bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return is_superuser || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(),
-	                              DefaultModes(*this, type, permissions), type, need, false);
+	return Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), DefaultModes(*this, type, permissions), type,
+	              need, false);
 }
 
 bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return is_superuser || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(),
-	                              DefaultModes(*this, type, permissions), type, need, true);
+	return Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), DefaultModes(*this, type, permissions), type,
+	              need, true);
 }
 
 bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const {
-	if (Can(CatalogType::TABLE_ENTRY, relation.permissions, need)) {
-		return true;
-	}
 	const auto granted = [&](std::span<const AclItem> acl) {
 		return Can(CatalogType::TABLE_ENTRY, acl, need);
 	};

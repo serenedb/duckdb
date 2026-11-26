@@ -45,8 +45,11 @@ inline std::span<const AclItem> ColumnAclOf(const StandardEntry &relation, idx_t
 inline bool AllowedAny(const RoleAccess &role, CatalogType type, const Permissions &permissions, AclMode privileges,
                        AclMode grant_options, std::span<const std::span<const AclItem>> columns = {},
                        optional_ptr<const ColumnList> all_columns = nullptr) {
+	if (role.is_superuser) {
+		return true;
+	}
 	if (privileges == AclMode::NoRights && grant_options == AclMode::NoRights) {
-		return role.is_superuser;
+		return false;
 	}
 	const auto any_column = [&](auto &&visit) {
 		for (auto acl : columns) {

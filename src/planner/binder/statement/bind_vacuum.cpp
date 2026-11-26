@@ -32,7 +32,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 	}
 	auto &table = *table_ptr;
 	auto &base_ref = info.ref->Cast<BaseTableRef>();
-	if (!IsUnowned(table) && !CheckAs().Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Maintain)) {
+	if (!Allowed(CheckAs(), table, AclMode::Maintain)) {
 		context.WarnUser(StringUtil::Format("permission denied to %s \"%s\", skipping it",
 		                                    info.options.vacuum ? "vacuum" : "analyze",
 		                                    base_ref.Table().GetIdentifierName()));

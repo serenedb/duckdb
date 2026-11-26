@@ -1510,11 +1510,10 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
 		                      function.FunctionName().GetIdentifierName());
 	}
-	const bool owned = !IsUnowned(macro_func);
+	auto &permissions = PermissionsOf(macro_func, macro_def);
+	const bool owned = permissions.owner != 0;
 	binder.Execute(macro_func, macro_def);
-	const auto owner = owned && macro_def.security_definer
-	                       ? optional_idx(macro_func.OverloadPermissions(macro_def).owner)
-	                       : optional_idx();
+	const auto owner = owned && macro_def.security_definer ? optional_idx(permissions.owner) : optional_idx();
 	if (binder.global_binder_state->macro_type_probing && expr->GetExpressionClass() != ExpressionClass::WINDOW &&
 	    HasExactResultType(macro_def)) {
 		probed = true;

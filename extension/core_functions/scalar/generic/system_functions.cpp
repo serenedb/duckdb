@@ -37,7 +37,7 @@ bool VisitUsableSearchPath(ClientContext &context, const CatalogSearchPath &sear
 		searched_current_catalog = true;
 		auto schema_entry =
 		    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-		if (schema_entry && CanUseSchema(role, *schema_entry) && !visit(entry.GetSchema())) {
+		if (schema_entry && Allowed(role, *schema_entry, AclMode::Usage) && !visit(entry.GetSchema())) {
 			break;
 		}
 	}

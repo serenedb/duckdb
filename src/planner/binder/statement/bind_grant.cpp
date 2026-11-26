@@ -150,7 +150,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermiss
 		    {name, object.func_parameters, object.has_func_args, info.include_functions, info.include_procedures},
 		    AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 		entry = routine.entry;
-		if (routine.overload && !IsUnowned(*entry)) {
+		if (routine.overload && PermissionsOf(*entry, *routine.overload).owner != 0) {
 			object.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
 		}
 	} else {

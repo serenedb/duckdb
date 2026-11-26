@@ -195,7 +195,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		break;
 	}
 	case MergeActionType::MERGE_DELETE:
-		if (target.role && !target.role->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Delete)) {
+		if (target.role && !target.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), AclMode::Delete)) {
 			Deny(table, target);
 		}
 		break;

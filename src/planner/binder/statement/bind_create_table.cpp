@@ -1009,7 +1009,8 @@ static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEnt
 		Identifier name(column);
 		columns.push_back(table.GetColumnIndex(name).index);
 	}
-	if (!role.CanColumns(table, AclMode::References, columns)) {
+	if (!role.Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), AclMode::References) &&
+	    !role.CanColumns(table, AclMode::References, columns)) {
 		ThrowPermissionDenied(table);
 	}
 }

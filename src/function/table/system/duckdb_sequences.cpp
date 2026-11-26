@@ -151,8 +151,7 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 		max_value.Append(Value::BIGINT(seq_data.max_value));
 		increment_by.Append(Value::BIGINT(seq_data.increment));
 		cycle.Append(Value::BOOLEAN(seq_data.cycle));
-		const bool readable = IsUnowned(seq) || data.role.CanAny(CatalogType::SEQUENCE_ENTRY, seq.permissions,
-		                                                         AclMode::Usage | AclMode::Select);
+		const bool readable = AllowedAny(data.role, seq, AclMode::Usage | AclMode::Select);
 		if (seq_data.usage_count == 0 || !seq_data.last_value || !readable) {
 			last_value.Append(Value());
 		} else {
