@@ -478,10 +478,10 @@ public:
 	bool ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
-	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
+	BoundStatement BindTarget(TableRef &ref, TableRefUse use, AclMode target = AclMode::NoRights);
 	RelationChecks ChecksOf(const StandardEntry &relation);
 	RelationChecks ReadChecks(const StandardEntry &relation, RelationChecks checks);
-	RelationChecks ReadChecks(const StandardEntry &relation, TableRefUse use);
+	RelationChecks ReadChecks(const StandardEntry &relation, TableRefUse use, AclMode target);
 	void Deny(const StandardEntry &relation, const RelationChecks &checks);
 	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
 	                    std::span<const LogicalIndex> columns);
@@ -767,7 +767,7 @@ private:
 	void BuildUnionByNameInfo(BoundSetOperationNode &result);
 
 	BoundStatement BindJoin(Binder &parent, TableRef &ref);
-	BoundStatement Bind(BaseTableRef &ref, TableRefUse use = TableRefUse::READ);
+	BoundStatement Bind(BaseTableRef &ref, TableRefUse use = TableRefUse::READ, AclMode target = AclMode::NoRights);
 	BoundStatement Bind(BoundRefWrapper &ref);
 	BoundStatement Bind(JoinRef &ref);
 	BoundStatement Bind(MatchRecognizeRef &ref);

@@ -19,6 +19,8 @@
 #include "duckdb/planner/expression_binder/projection_binder.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/storage/data_table.hpp"
+
+#include <absl/algorithm/container.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -195,10 +197,6 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		break;
 	}
 	case MergeActionType::MERGE_DELETE:
-		if (target.role && !Allowed(*target.role, table, AclMode::Delete)) {
-			Deny(table, target);
-		}
-		break;
 	case MergeActionType::MERGE_DO_NOTHING:
 		break;
 	default:
@@ -248,7 +246,13 @@ BoundStatement Binder::BindNode(MergeQueryNode &node, bool inserts_checked) {
 	// bind the target table
 	auto target_binder = Binder::CreateBinder(context, this);
 	auto table_alias = node.target->alias;
-	auto bound_table = target_binder->BindTarget(*node.target, TableRefUse::DML_TARGET);
+	const bool deletes = absl::c_any_of(node.actions, [](const auto &condition) {
+		return absl::c_any_of(condition.second, [](const unique_ptr<MergeIntoAction> &action) {
+			return action->action_type == MergeActionType::MERGE_DELETE;
+		});
+	});
+	auto bound_table =
+	    target_binder->BindTarget(*node.target, TableRefUse::DML_TARGET, deletes ? AclMode::Delete : AclMode::NoRights);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only merge into base tables!");
 	}

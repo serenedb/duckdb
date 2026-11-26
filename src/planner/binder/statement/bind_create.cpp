@@ -985,7 +985,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	// Resolve the base table first — triggers inherit catalog/schema from their table (like Postgres).
 	TableDescription table_description(create_trigger_info.base_table->GetQualifiedName());
 	auto table_ref = make_uniq<BaseTableRef>(table_description);
-	auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET);
+	auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET, AclMode::Trigger);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("CREATE TRIGGER requires a base table, not a view or subquery");
 	}
@@ -995,7 +995,6 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 		throw BinderException("CREATE TRIGGER requires a base table");
 	}
 	auto &table = *table_ptr;
-	Require(context, CheckAs(), table, AclMode::Trigger);
 	// Dropping the trigger's own table must not require CASCADE. If the trigger body also references this table,
 	// the body-reference dependency below merges in ALTER-blocking flags.
 	create_trigger_info.dependencies.AddDependency(table, DependencyDependentFlags());
@@ -1277,7 +1276,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		// Plan the table scan - the table lives in the same (possibly nested) schema as the index.
 		TableDescription table_description(create_index_info.GetQualifiedName().WithName(create_index_info.table));
 		auto table_ref = make_uniq<BaseTableRef>(table_description);
-		auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET);
+		auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET, AclMode::Own);
 		auto plan = std::move(bound_table.plan);
 		// Tables go through the LOGICAL_GET; otherwise resolve a view and let its catalog decide.
 		optional_ptr<TableCatalogEntry> table_ptr;
@@ -1531,12 +1530,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			info.permissions.owner = role.role;
 		}
 		if (!info.tablespace.empty()) {
-			auto tablespace =
-			    entry_retriever.GetEntry(EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, QualifiedName(info.tablespace)),
-			                             OnEntryNotFound::RETURN_NULL);
-			if (tablespace && !tablespace->internal) {
-				Require(context, role, *tablespace, AclMode::Create);
-			}
+			entry_retriever.GetEntry(
+			    EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, QualifiedName(info.tablespace), AclMode::Create),
+			    OnEntryNotFound::RETURN_NULL);
 		}
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_DATABASE, std::move(stmt.info));
 		break;
@@ -1564,11 +1560,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		stmt.info->SetQualifiedName(
 		    QualifiedName(catalog.GetName(), Identifier(), stmt.info->GetQualifiedName().Name()));
 		if (auto &role = CheckAs(); !role.IsSystem()) {
-			if (auto database = Catalog::GetEntry(
-			        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName())),
-			        OnEntryNotFound::RETURN_NULL)) {
-				Require(context, role, *database, AclMode::Create);
-			}
+			entry_retriever.GetEntry(
+			    EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName()), AclMode::Create),
+			    OnEntryNotFound::RETURN_NULL);
 			stmt.info->permissions.owner = role.role;
 			catalog.RequireSubscription(context, role, stmt.info->Cast<CreateSubscriptionInfo>());
 		}

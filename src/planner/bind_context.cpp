@@ -811,7 +811,7 @@ void BindContext::AddTableFunction(TableIndex index, const Identifier &alias, co
 	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, entry), types, names, bound_column_ids,
 	                                       entry, index, std::move(virtual_columns), std::move(row_id_columns));
 	if (entry && entry->type == CatalogType::TABLE_ENTRY) {
-		binding->checks = binder.ReadChecks(*entry, TableRefUse::READ);
+		binding->checks = binder.ReadChecks(*entry, TableRefUse::READ, AclMode::NoRights);
 	}
 	AddBinding(std::move(binding));
 }

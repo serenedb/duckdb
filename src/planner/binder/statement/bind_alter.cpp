@@ -386,9 +386,6 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
 		auto &column_comment = info->Cast<SetColumnCommentInfo>();
 		entry = column_comment.TryResolveCatalogEntry(entry_retriever);
-		if (entry) {
-			Require(context, CheckAs(), *entry, AclMode::Own);
-		}
 		if (entry && column_comment.catalog_entry_type == CatalogType::VIEW_ENTRY) {
 			// when running SET COLUMN on a VIEW - ensure the view is bound
 			auto &view = entry->Cast<ViewCatalogEntry>();

@@ -55,7 +55,8 @@ vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	// visit the table reference
-	auto bound_table = BindTarget(*node.table, TableRefUse::DML_TARGET);
+	auto bound_table =
+	    BindTarget(*node.table, TableRefUse::DML_TARGET, node.is_truncate ? AclMode::Truncate : AclMode::Delete);
 	auto root = std::move(bound_table.plan);
 	if (root->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only delete from base table");
@@ -70,9 +71,6 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 	const auto target = ChecksOf(table);
-	if (target.role && !Allowed(*target.role, table, node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
-		Deny(table, target);
-	}
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);

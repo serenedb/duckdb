@@ -125,8 +125,8 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	}
 }
 
-static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermissionsInfo &info,
-                                              ObjectReference &object) {
+static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermissionsInfo &info, ObjectReference &object,
+                                              AclMode relation_use) {
 	auto &context = binder.context;
 	auto &name = object.name;
 	object.type = info.entry_catalog_type;
@@ -154,7 +154,8 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermiss
 			object.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
 		}
 	} else {
-		entry = binder.GetCatalogEntry(EntryLookupInfo(object.type, name), OnEntryNotFound::RETURN_NULL);
+		const auto use = Catalog::InRelationNamespace(object.type) ? relation_use : AclMode::NoRights;
+		entry = binder.GetCatalogEntry(EntryLookupInfo(object.type, name, use), OnEntryNotFound::RETURN_NULL);
 	}
 	if (!entry) {
 		throw CatalogException::MissingEntry(EntryLookupInfo(object.type, name), string());
@@ -222,7 +223,7 @@ static const RoleAccess &ResolveGrantors(Binder &binder, AlterPermissionsInfo &i
 
 static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const RoleAccess &role,
                          ObjectReference &object) {
-	auto &target = ResolvePermissionsTarget(binder, info, object);
+	auto &target = ResolvePermissionsTarget(binder, info, object, AclMode::NoRights);
 	Binder::RefuseSystemTablespace(target);
 	if (target.internal) {
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
@@ -273,22 +274,18 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner
 
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectReference &object) {
 	auto &context = binder.context;
-	auto &entry = ResolvePermissionsTarget(binder, info, object);
+	auto &entry = ResolvePermissionsTarget(binder, info, object, AclMode::Own);
 	Binder::RefuseSystemTablespace(entry);
 	auto &permissions = TargetPermissions(object.overload_oid, entry);
 	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
 	auto &role = binder.CheckAs();
-	const bool relation = Catalog::InRelationNamespace(entry.type);
-	if (relation) {
-		Require(context, role, entry, AclMode::Own);
-	}
 	if (info.new_owner_id == permissions.owner) {
 		return;
 	}
 	if (entry.type == CatalogType::SEQUENCE_ENTRY) {
 		RefuseOwnedSequence(context, entry);
 	}
-	if (!relation) {
+	if (!Catalog::InRelationNamespace(entry.type)) {
 		Require(context, role, {entry, permissions}, AclMode::Own);
 	}
 	RequireNewOwner(binder, entry, info.new_owner_id, nullptr);

@@ -8,9 +8,9 @@ EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_
 
 EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_p,
                                  optional_ptr<BoundAtClause> at_clause_p, QueryErrorContext error_context_p,
-                                 optional_idx caller_role_p)
+                                 optional_idx caller_role_p, AclMode use_p)
     : catalog_type(catalog_type_p), name(std::move(name_p)), at_clause(at_clause_p), error_context(error_context_p),
-      caller_role(caller_role_p) {
+      use(use_p), caller_role(caller_role_p) {
 }
 
 EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_p, AclMode use_p)

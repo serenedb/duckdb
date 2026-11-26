@@ -24,7 +24,8 @@ public:
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name,
 	                QueryErrorContext error_context = QueryErrorContext());
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, optional_ptr<BoundAtClause> at_clause,
-	                QueryErrorContext error_context, optional_idx caller_role = optional_idx());
+	                QueryErrorContext error_context, optional_idx caller_role = optional_idx(),
+	                AclMode use = AclMode::NoRights);
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, AclMode use);
 	//! Deprecated: pass a QualifiedName instead (use QualifiedName(name) for an unqualified lookup)
 	[[deprecated("Pass a QualifiedName instead, e.g. QualifiedName(name)")]] EntryLookupInfo(

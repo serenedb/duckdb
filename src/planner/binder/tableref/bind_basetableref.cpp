@@ -143,7 +143,7 @@ void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema, const vec
 	entry_retriever.SetSearchPath(GetSearchPath(catalog, schema, true), catalog.GetName(), bindings);
 }
 
-BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
+BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) {
 	QueryErrorContext error_context(ref.query_location);
 	// CTEs and views are also referred to using BaseTableRefs, hence need to distinguish here
 	// check if the table name refers to a CTE
@@ -179,7 +179,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 	auto at_clause = BindAtClause(ref.at_clause);
 	auto entry_at_clause = at_clause ? at_clause.get() : entry_retriever.GetAtClause();
 	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(ref.Table()), entry_at_clause, error_context,
-	                             CallerRole());
+	                             CallerRole(), use == TableRefUse::UTILITY_TARGET ? target : AclMode::NoRights);
 	// resolve the catalog/schema qualification for the lookup only - the reference itself keeps the name as written,
 	// which is what name extraction and replacement scans report
 	auto bound_name = BindTableName(entry_retriever, ref.GetQualifiedName());
@@ -303,7 +303,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
 		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table).checks =
-		    ReadChecks(table, use);
+		    ReadChecks(table, use, target);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;

@@ -341,8 +341,8 @@ void Binder::UseFunctionSearchPath(const vector<string> &config) {
 	}
 }
 
-BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
-	return ref.type == TableReferenceType::BASE_TABLE ? Bind(ref.Cast<BaseTableRef>(), use) : Bind(ref);
+BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use, AclMode target) {
+	return ref.type == TableReferenceType::BASE_TABLE ? Bind(ref.Cast<BaseTableRef>(), use, target) : Bind(ref);
 }
 
 RelationChecks Binder::ChecksOf(const StandardEntry &relation) {
@@ -360,11 +360,15 @@ RelationChecks Binder::ReadChecks(const StandardEntry &relation, RelationChecks 
 	return checks;
 }
 
-RelationChecks Binder::ReadChecks(const StandardEntry &relation, TableRefUse use) {
+RelationChecks Binder::ReadChecks(const StandardEntry &relation, TableRefUse use, AclMode target) {
 	if (use == TableRefUse::UTILITY_TARGET) {
 		return {};
 	}
-	auto checks = ReadChecks(relation, ChecksOf(relation));
+	const auto relation_checks = ChecksOf(relation);
+	if (relation_checks.role && target != AclMode::NoRights && !Allowed(*relation_checks.role, relation, target)) {
+		Deny(relation, relation_checks);
+	}
+	auto checks = ReadChecks(relation, relation_checks);
 	if (checks.role && use == TableRefUse::READ && !checks.role->CanColumns(relation, AclMode::Select, {})) {
 		Deny(relation, checks);
 		return {};
@@ -498,10 +502,8 @@ void Binder::RefuseSystemTablespace(const CatalogEntry &entry) {
 }
 
 void Binder::RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info) {
-	auto &role = CheckAs();
-	Require(context, role, relation, AclMode::Own);
 	auto &schema = relation.ParentSchema(context);
-	Require(context, role, schema, AclMode::Create);
+	Require(context, CheckAs(), schema, AclMode::Create);
 	RequireReplacedOwner(schema, info, info.GetIndexName());
 	RequirePlacement(relation.catalog, info, relation);
 }
