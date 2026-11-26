@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
+
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/json_document.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -70,6 +72,24 @@ struct JsonDirectNode {
 	idx_t child = DConstants::INVALID_INDEX;
 };
 
+class JsonFlags {
+public:
+	void Resize(idx_t count) {
+		storage.assign(count + 2 * ABSL_CACHELINE_SIZE, 0);
+		size = count;
+	}
+	uint8_t *Data() {
+		return storage.data() + ABSL_CACHELINE_SIZE;
+	}
+	idx_t Size() const {
+		return size;
+	}
+
+private:
+	vector<uint8_t> storage;
+	idx_t size = 0;
+};
+
 struct JsonDirectNodeState {
 	Vector *target = nullptr;
 	data_ptr_t data = nullptr;
@@ -78,7 +98,7 @@ struct JsonDirectNodeState {
 	vector<std::string_view> raw;
 	idx_t list_size = 0;
 	idx_t list_capacity = 0;
-	vector<uint8_t> found;
+	JsonFlags found;
 	vector<JsonKeyHint> hints;
 };
 
@@ -269,7 +289,7 @@ private:
 	vector<data_ptr_t> direct_data;
 	vector<ValidityMask *> direct_validity;
 	vector<vector<std::string_view>> direct_raw;
-	vector<uint8_t> direct_found;
+	JsonFlags direct_found;
 	vector<JsonKeyHint> key_hints;
 	vector<JsonDirectNodeState> node_states;
 	vector<idx_t> node_roots;

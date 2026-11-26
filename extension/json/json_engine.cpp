@@ -1032,7 +1032,7 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 		candidates.Initialize(STANDARD_VECTOR_SIZE);
 		const idx_t column_count = global.columns.names.size();
 		direct_raw.resize(column_count);
-		direct_found.resize(column_count);
+		direct_found.Resize(column_count);
 		for (idx_t i = 0; i < column_count; i++) {
 			direct_strings.emplace_back(LogicalType::VARCHAR, idx_t(STANDARD_VECTOR_SIZE));
 			if (global.kinds[i] == JsonDirectKind::TREE) {
@@ -1797,7 +1797,7 @@ void JsonScan::BindNode(idx_t id, Vector &vector, idx_t capacity) {
 		break;
 	case JsonDirectKind::STRUCT: {
 		auto &entries = StructVector::GetEntries(vector);
-		state.found.resize(node.children.size());
+		state.found.Resize(node.children.size());
 		for (idx_t i = 0; i < node.children.size(); i++) {
 			BindNode(node.children[i], entries[node.slots[i]], capacity);
 		}
@@ -1874,8 +1874,8 @@ bool JsonScan::DirectStruct(idx_t id, simdjson::ondemand::value &value, idx_t ro
 		return false;
 	}
 	state.validity->SetValid(row);
-	auto found = state.found.data();
-	memset(found, 0, state.found.size());
+	auto found = state.found.Data();
+	memset(found, 0, state.found.Size());
 	idx_t position = 0;
 	for (auto field_result : object) {
 		ondemand::field field;
@@ -2289,7 +2289,8 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 	if (document.get_object().get(object)) {
 		return FALLBACK;
 	}
-	memset(direct_found.data(), 0, column_count);
+	auto found = direct_found.Data();
+	memset(found, 0, column_count);
 	const bool unknown_error = pass != JsonDirectPass::OTHERS && direct_unknown_error;
 	const bool duplicate_error = pass != JsonDirectPass::OTHERS && direct_duplicate_error;
 	const bool walking = pass == JsonDirectPass::FILTERS && !global.walk.empty();
@@ -2333,16 +2334,16 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		}
 		const idx_t column = hint.column;
 		const uint8_t strength = hint.strength;
-		if (direct_found[column] == strength) {
+		if (found[column] == strength) {
 			if (duplicate_error) {
 				return FALLBACK;
 			}
 			continue;
 		}
-		if (direct_found[column] > strength) {
+		if (found[column] > strength) {
 			continue;
 		}
-		direct_found[column] = strength;
+		found[column] = strength;
 		if (rejected || skips[column] || !vectors[column]) {
 			continue;
 		}
@@ -2417,7 +2418,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		return FALLBACK;
 	}
 	for (idx_t column = 0; column < column_count; column++) {
-		if (direct_found[column] || skips[column] || !vectors[column]) {
+		if (found[column] || skips[column] || !vectors[column]) {
 			continue;
 		}
 		if (global.column_nodes[column] != DConstants::INVALID_INDEX) {
