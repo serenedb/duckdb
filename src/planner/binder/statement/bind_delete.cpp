@@ -70,8 +70,7 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 	const auto target = ChecksOf(table);
-	if (target.role && !target.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table),
-	                                     node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
+	if (target.role && !Allowed(*target.role, table, node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
 		Deny(table, target);
 	}
 

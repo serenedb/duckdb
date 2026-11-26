@@ -469,7 +469,6 @@ public:
 	void BindAsFunctionBody(const RoleAccess &role);
 	void BindUnchecked();
 	void BindStoredDefinition();
-	void BindSharedDefinition();
 	void RecordCalls(optional_ptr<RecordedCalls> calls);
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
 	static bool MayRun(const RoleAccess &role, const SQLStatement &statement);
@@ -488,8 +487,6 @@ public:
 	                    std::span<const LogicalIndex> columns);
 	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
 	                    std::span<const Identifier> columns);
-	void RequireColumn(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
-	                   const ColumnDefinition &column);
 	void CheckColumnRead(Binding &binding, const Identifier &column);
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();

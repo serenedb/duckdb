@@ -7,7 +7,6 @@
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
-#include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/privileges.hpp"
@@ -159,11 +158,6 @@ void Binder::BindUnchecked() {
 
 void Binder::BindStoredDefinition() {
 	acting.lookups = &RoleAccess::System();
-}
-
-void Binder::BindSharedDefinition() {
-	BindUnchecked();
-	BindStoredDefinition();
 }
 
 void Binder::RecordCalls(optional_ptr<RecordedCalls> calls) {
@@ -351,7 +345,7 @@ RelationChecks Binder::ChecksOf(const StandardEntry &relation) {
 }
 
 RelationChecks Binder::ReadChecks(const StandardEntry &relation, RelationChecks checks) {
-	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(relation), AclMode::Select)) {
+	if (!checks.role || Allowed(*checks.role, relation, AclMode::Select)) {
 		return {};
 	}
 	return checks;
@@ -379,21 +373,14 @@ void Binder::Deny(const StandardEntry &relation, const RelationChecks &checks) {
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const LogicalIndex> columns) {
-	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), use)) {
-		return;
-	}
-	const bool granted =
-	    columns.empty() ? checks.role->CanColumns(table, use, {}) : absl::c_all_of(columns, [&](LogicalIndex column) {
-		    return checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(column).Acl(), use);
-	    });
-	if (!granted) {
+	if (checks.role && !Allowed(*checks.role, table, use) && !checks.role->CanColumns(table, use, columns)) {
 		Deny(table, checks);
 	}
 }
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const Identifier> columns) {
-	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), use)) {
+	if (!checks.role || Allowed(*checks.role, table, use)) {
 		return;
 	}
 	const bool granted = columns.empty()
@@ -407,21 +394,14 @@ void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks
 	}
 }
 
-void Binder::RequireColumn(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
-                           const ColumnDefinition &column) {
-	if (checks.role && !checks.role->Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), use) &&
-	    !checks.role->Can(CatalogType::TABLE_ENTRY, column.Acl(), use)) {
-		Deny(table, checks);
-	}
-}
-
 void Binder::CheckColumnRead(Binding &binding, const Identifier &column) {
 	column_t index;
 	if (!binding.checks.role || !binding.TryGetBindingIndex(column, index) || index >= VIRTUAL_COLUMN_START) {
 		return;
 	}
 	auto &relation = *binding.GetStandardEntry();
-	if (!binding.checks.role->Can(CatalogType::TABLE_ENTRY, ColumnAclOf(relation, index), AclMode::Select)) {
+	const LogicalIndex read(index);
+	if (!binding.checks.role->CanColumns(relation, AclMode::Select, {&read, 1})) {
 		Deny(relation, binding.checks);
 	}
 }

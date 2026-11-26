@@ -1000,17 +1000,16 @@ static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const F
 static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEntry &entry,
                               const ForeignKeyConstraint &fk) {
 	auto &role = entry_retriever.CheckAs();
-	if (role.is_superuser || entry.type != CatalogType::TABLE_ENTRY) {
+	if (entry.type != CatalogType::TABLE_ENTRY || Allowed(role, entry, AclMode::References)) {
 		return;
 	}
 	auto &table = entry.Cast<TableCatalogEntry>();
-	vector<idx_t> columns;
+	vector<LogicalIndex> columns;
 	for (auto &column : fk.pk_columns) {
 		Identifier name(column);
-		columns.push_back(table.GetColumnIndex(name).index);
+		columns.push_back(table.GetColumnIndex(name));
 	}
-	if (!role.Can(CatalogType::TABLE_ENTRY, PermissionsOf(table), AclMode::References) &&
-	    !role.CanColumns(table, AclMode::References, columns)) {
+	if (!role.CanColumns(table, AclMode::References, columns)) {
 		ThrowPermissionDenied(table);
 	}
 }

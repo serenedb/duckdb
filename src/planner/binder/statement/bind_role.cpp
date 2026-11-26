@@ -138,7 +138,7 @@ static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, 
 	}
 	auto &grantor = *binder.BindRole(info.granted_by);
 	auto &grantor_name = grantor.name.GetIdentifierName();
-	if (!caller.is_superuser && caller.role != grantor.oid && !caller.Uses(grantor.oid)) {
+	if (!caller.MemberOf(grantor.oid)) {
 		if (info.revoke) {
 			throw PermissionException::WithDetail(
 			    StringUtil::Format(

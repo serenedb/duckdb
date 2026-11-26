@@ -149,14 +149,14 @@ bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMod
 	              need, true);
 }
 
-bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const {
+bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const LogicalIndex> columns) const {
 	const auto granted = [&](std::span<const AclItem> acl) {
 		return Can(CatalogType::TABLE_ENTRY, acl, need);
 	};
 	if (columns.empty()) {
 		return AnyColumnAcl(relation, granted);
 	}
-	return absl::c_all_of(columns, [&](idx_t column) { return granted(ColumnAclOf(relation, column)); });
+	return absl::c_all_of(columns, [&](LogicalIndex column) { return granted(ColumnAclOf(relation, column)); });
 }
 
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {

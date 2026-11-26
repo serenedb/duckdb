@@ -35,11 +35,11 @@ bool AnyColumnAcl(const StandardEntry &relation, F &&f) {
 	                      [&](const ColumnDefinition &column) { return f(std::span<const AclItem>(column.Acl())); });
 }
 
-inline std::span<const AclItem> ColumnAclOf(const StandardEntry &relation, idx_t column) {
+inline std::span<const AclItem> ColumnAclOf(const StandardEntry &relation, LogicalIndex column) {
 	if (relation.type == CatalogType::VIEW_ENTRY) {
-		return relation.Cast<ViewCatalogEntry>().ColumnAcl(column);
+		return relation.Cast<ViewCatalogEntry>().ColumnAcl(column.index);
 	}
-	return relation.Cast<TableCatalogEntry>().GetColumns().GetColumn(LogicalIndex(column)).Acl();
+	return relation.Cast<TableCatalogEntry>().GetColumns().GetColumn(column).Acl();
 }
 
 inline bool AllowedAny(const RoleAccess &role, CatalogType type, const Permissions &permissions, AclMode privileges,
