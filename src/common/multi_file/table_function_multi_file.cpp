@@ -761,6 +761,15 @@ unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindWith(
 	    make_uniq<TableFunctionMultiFileWrapper>(std::move(single_file_function), std::move(settings)));
 }
 
+unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindWith(
+    ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types, vector<Identifier> &names,
+    TableFunction single_file_function, TableFunctionMultiFileSettings settings, vector<OpenFileInfo> expanded) {
+	return TableFunctionMultiFileFunction::MultiFileBindInterface(
+	    context, input, return_types, names,
+	    make_uniq<TableFunctionMultiFileWrapper>(std::move(single_file_function), std::move(settings)),
+	    make_shared_ptr<SimpleMultiFileList>(std::move(expanded)));
+}
+
 static unique_ptr<FunctionData> TableFunctionMultiFileBind(ClientContext &context, TableFunctionBindInput &input,
                                                            vector<LogicalType> &return_types,
                                                            vector<Identifier> &names) {
