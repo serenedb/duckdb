@@ -100,9 +100,9 @@ const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
 
 void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
 	vector<CatalogSearchEntry> new_path;
+	auto &db_manager = DatabaseManager::Get(context);
 	for (auto &entry : entries) {
-		if (IsInvalidCatalog(entry.GetCatalog()) || entry.GetCatalog() == SYSTEM_CATALOG ||
-		    entry.GetCatalog() == TEMP_CATALOG) {
+		if (IsInvalidCatalog(entry.GetCatalog()) || db_manager.IsReservedName(entry.GetCatalog())) {
 			continue;
 		}
 		new_path.push_back(std::move(entry));

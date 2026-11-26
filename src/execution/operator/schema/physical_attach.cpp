@@ -85,8 +85,7 @@ SourceResultType PhysicalAttach::GetDataInternal(ExecutionContext &context, Data
 			DBPathAndType::ExtractExtensionPrefix(path, options.db_type);
 		}
 		if (name.empty()) {
-			auto &fs = FileSystem::GetFileSystem(context.client);
-			name = Identifier(AttachedDatabase::ExtractDatabaseName(path, fs));
+			name = AttachedDatabase::ExtractDatabaseName(DatabaseInstance::GetDatabase(context.client), path);
 		}
 
 		// check ATTACH IF NOT EXISTS

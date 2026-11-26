@@ -243,7 +243,7 @@ shared_ptr<AttachedDatabase> DatabaseInstance::CreateAttachedDatabase(ClientCont
 
 void DatabaseInstance::CreateMainDatabase() {
 	AttachInfo info;
-	info.name = Identifier(AttachedDatabase::ExtractDatabaseName(config.options.database_path, GetFileSystem()));
+	info.name = AttachedDatabase::ExtractDatabaseName(*this, config.options.database_path);
 	info.path = config.options.database_path;
 
 	Connection con(*this);
