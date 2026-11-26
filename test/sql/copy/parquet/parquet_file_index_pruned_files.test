@@ -1,0 +1,61 @@
+# name: test/sql/copy/parquet/parquet_file_index_pruned_files.test
+# description: file_index is the position of a file in the list the scan was bound with, also when filters prune files
+# group: [parquet]
+
+require parquet
+
+statement ok
+COPY (SELECT range AS i, chr((97 + range % 3)::INTEGER) AS part, range % 2 AS half FROM range(12)) TO '{TEST_DIR}/file_index_pruned' (FORMAT parquet, PARTITION_BY (part, half));
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true) GROUP BY ALL ORDER BY ALL
+----
+a	0	0
+a	1	1
+b	0	2
+b	1	3
+c	0	4
+c	1	5
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true) WHERE part = 'b' GROUP BY ALL ORDER BY ALL
+----
+b	0	2
+b	1	3
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true) WHERE part = 'c' OR half = 1 GROUP BY ALL ORDER BY ALL
+----
+a	1	1
+b	1	3
+c	0	4
+c	1	5
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true, filename = true) WHERE filename LIKE '%part=c%' GROUP BY ALL ORDER BY ALL
+----
+c	0	4
+c	1	5
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true) WHERE part <> 'a' AND file_index = 3 GROUP BY ALL ORDER BY ALL
+----
+b	1	3
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true) WHERE part <> 'a' AND file_index <> 3 GROUP BY ALL ORDER BY ALL
+----
+b	0	2
+c	0	4
+c	1	5
+
+query III
+SELECT t.part, t.half, t.file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true) t JOIN (VALUES ('b')) v(p) ON t.part = v.p WHERE t.half = 1 GROUP BY ALL ORDER BY ALL
+----
+b	1	3
+
+query III
+SELECT part, half, file_index FROM read_parquet('{TEST_DIR}/file_index_pruned/*/*/*.parquet', hive_partitioning = true, union_by_name = true) WHERE part = 'c' GROUP BY ALL ORDER BY ALL
+----
+c	0	4
+c	1	5
