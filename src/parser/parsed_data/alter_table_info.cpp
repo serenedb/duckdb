@@ -499,8 +499,7 @@ AlterDatabaseSettingsInfo::AlterDatabaseSettingsInfo() : AlterInfo(AlterType::AL
 }
 
 CatalogType AlterDatabaseSettingsInfo::GetCatalogType() const {
-	return set_connection_limit || set_allow_connections ? CatalogType::DATABASE_ENTRY
-	                                                     : CatalogType::DB_ROLE_SETTING_ENTRY;
+	return CatalogType::DATABASE_ENTRY;
 }
 
 unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
@@ -509,7 +508,6 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 	result->if_not_found = if_not_found;
 	result->role = role;
 	result->role_id = role_id;
-	result->database_id = database_id;
 	result->all_roles = all_roles;
 	result->reset_all_config = reset_all_config;
 	result->reset_config = reset_config;
@@ -524,9 +522,6 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 string AlterDatabaseSettingsInfo::ToString() const {
 	auto database = SQLIdentifier::ToString(GetQualifiedName().Name());
 	auto config = ConfigClauseToSQL(set_config, reset_config, reset_all_config);
-	if (all_roles && GetQualifiedName().Name().empty()) {
-		return "ALTER ROLE ALL" + config + ";";
-	}
 	if (all_roles) {
 		return "ALTER ROLE ALL IN DATABASE " + database + config + ";";
 	}

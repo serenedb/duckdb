@@ -683,6 +683,11 @@
         "type": "case_insensitive_map_t<Value>"
       },
       {
+        "id": 202,
+        "name": "settings",
+        "type": "vector<DatabaseSetting>"
+      },
+      {
         "id": 203,
         "name": "connection_limit",
         "type": "int32_t",
@@ -788,31 +793,6 @@
         "name"
       ]
     }
-  },
-  {
-    "class": "CreateDbRoleSettingInfo",
-    "base": "CreateInfo",
-    "enum": "DB_ROLE_SETTING_ENTRY",
-    "includes": [
-      "duckdb/parser/parsed_data/create_db_role_setting_info.hpp"
-    ],
-    "members": [
-      {
-        "id": 200,
-        "name": "database",
-        "type": "idx_t"
-      },
-      {
-        "id": 201,
-        "name": "role",
-        "type": "idx_t"
-      },
-      {
-        "id": 202,
-        "name": "config",
-        "type": "vector<string>"
-      }
-    ]
   },
   {
     "class": "CreateParameterInfo",

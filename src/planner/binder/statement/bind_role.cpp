@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/database_entry.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -6,7 +7,6 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
-#include "duckdb/parser/parsed_data/create_db_role_setting_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -324,7 +324,7 @@ void Binder::BindAlterRole(AlterRoleInfo &info) {
 }
 
 static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &caller, optional_ptr<RoleEntry> role,
-                                  optional_ptr<CatalogEntry> database, AlterDatabaseSettingsInfo &info) {
+                                  DatabaseEntry &database, AlterDatabaseSettingsInfo &info) {
 	if (role && role->IsPredefined()) {
 		throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
 		                ExceptionType::INVALID_INPUT,
@@ -333,20 +333,16 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 	if (role && role->oid != caller.role) {
 		RequireAdminOf(caller, *role, RoleChange::ALTER);
 	}
-	if (!role && database) {
-		Require(context, caller, *database, AclMode::Own);
+	if (!role) {
+		Require(context, caller, database, AclMode::Own);
 	}
 	CheckConfig(context, info.set_config, info.reset_config);
 	if (caller.is_superuser) {
 		return;
 	}
-	auto &system = Catalog::GetSystemCatalog(context);
-	vector<string> current;
-	if (auto setting = system.LookupEntry(system.GetCatalogTransaction(context), CatalogType::DB_ROLE_SETTING_ENTRY,
-	                                      CreateDbRoleSettingInfo::NameOf(info.database_id, info.role_id))) {
-		current = setting->GetInfo()->Cast<CreateDbRoleSettingInfo>().config;
-	}
-	CheckConfigChange(context, caller, info.set_config, info.reset_config, info.reset_all_config, current);
+	auto current = database.SettingsOf(info.role_id);
+	CheckConfigChange(context, caller, info.set_config, info.reset_config, info.reset_all_config,
+	                  current ? *current : vector<string>());
 }
 
 void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
@@ -356,16 +352,9 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 		role = BindRole(info.role);
 		info.role_id = role->oid;
 	}
-	optional_ptr<CatalogEntry> database;
-	if (!info.GetQualifiedName().Name().empty()) {
-		database = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.GetQualifiedName()));
-		info.database_id = database->oid;
-	} else if (!caller.is_superuser) {
-		throw PermissionException::WithDetail("Only roles with the SUPERUSER attribute may alter settings globally.",
-		                                      "permission denied to alter setting");
-	}
+	auto database = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.GetQualifiedName()));
 	if (!caller.IsSystem()) {
-		CheckDatabaseSettings(context, caller, role, database, info);
+		CheckDatabaseSettings(context, caller, role, database->Cast<DatabaseEntry>(), info);
 	}
 	Settings::ResolveCurrentValues(context, info.set_config);
 }

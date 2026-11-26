@@ -63,8 +63,6 @@ string CatalogTypeToString(CatalogType type) {
 		return "Foreign Data Wrapper";
 	case CatalogType::PARAMETER_ENTRY:
 		return "Parameter";
-	case CatalogType::DB_ROLE_SETTING_ENTRY:
-		return "Database Role Setting";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -208,9 +206,6 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Parameter") {
 		return CatalogType::PARAMETER_ENTRY;
-	}
-	if (type == "Database Role Setting") {
-		return CatalogType::DB_ROLE_SETTING_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

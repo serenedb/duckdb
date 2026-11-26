@@ -23,9 +23,14 @@ public:
 	const vector<DefaultAcl> &DefaultAcls() const {
 		return default_acls;
 	}
+	const vector<DatabaseSetting> &Settings() const {
+		return settings;
+	}
+	optional_ptr<const vector<string>> SettingsOf(idx_t role) const;
 
 protected:
 	vector<DefaultAcl> default_acls;
+	vector<DatabaseSetting> settings;
 };
 
 } // namespace duckdb

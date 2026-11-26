@@ -752,11 +752,6 @@
         "id": 309,
         "name": "all_roles",
         "type": "bool"
-      },
-      {
-        "id": 310,
-        "name": "database_id",
-        "type": "idx_t"
       }
     ]
   },

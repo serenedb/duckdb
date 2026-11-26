@@ -440,14 +440,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		return AlterStatementOf(std::move(settings));
 	}
 	if (all_roles) {
-		if (chosen.Name() != "AlterRoleConfig") {
-			throw ParserException("syntax error at or near \"ALL\"");
-		}
-		auto settings = make_uniq<AlterDatabaseSettingsInfo>(Identifier());
-		settings->all_roles = true;
-		CollectConfigClause(transformer, chosen, settings->set_config, settings->reset_config,
-		                    settings->reset_all_config);
-		return AlterStatementOf(std::move(settings));
+		throw ParserException("syntax error at or near \"ALL\"");
 	}
 
 	auto info = make_uniq<AlterRoleInfo>(std::move(role.name));

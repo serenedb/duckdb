@@ -222,7 +222,6 @@ struct AlterDatabaseSettingsInfo : public AlterInfo {
 
 	RoleSpec role;
 	idx_t role_id = 0;
-	idx_t database_id = 0;
 	bool all_roles = false;
 	bool reset_all_config = false;
 	vector<string> reset_config;

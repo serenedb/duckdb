@@ -129,8 +129,6 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false, "parameter"};
 	case CatalogType::JOB_ENTRY:
 		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0, false, ""};
-	case CatalogType::DB_ROLE_SETTING_ENTRY:
-		return {CatalogType::DB_ROLE_SETTING_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 0, false, ""};
 	case CatalogType::TABLE_FUNCTION_ENTRY:
 		return {CatalogType::TABLE_FUNCTION_ENTRY, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, "function"};
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
