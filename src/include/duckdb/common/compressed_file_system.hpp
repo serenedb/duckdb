@@ -72,7 +72,6 @@ public:
 struct StreamData {
 	// various buffers & pointers
 	bool write = false;
-	bool refresh = false;
 	unsafe_unique_array<data_t> in_buff;
 	unsafe_unique_array<data_t> out_buff;
 	data_ptr_t out_buff_start = nullptr;

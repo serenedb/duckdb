@@ -285,7 +285,6 @@ void CompressedFile::ResetStreamData() {
 	stream_data.in_buff_end = nullptr;
 	stream_data.in_buf_size = 0;
 	stream_data.out_buf_size = 0;
-	stream_data.refresh = false;
 }
 
 void CompressedFile::Close() {
