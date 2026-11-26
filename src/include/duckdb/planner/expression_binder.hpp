@@ -235,6 +235,7 @@ public:
 	//! Exposed to be used from sub-binders that aren't subclasses of ExpressionBinder.
 	virtual BindResult BindExpression(unique_ptr<ParsedExpression> &expr_ptr, idx_t depth,
 	                                  bool root_expression = false);
+	BindResult BindExpressionOrNull(unique_ptr<ParsedExpression> &expr, idx_t depth, bool root_expression);
 
 	//! FIXME: Generalise this for extensibility.
 	//! Recursively replaces macro parameters with the provided input parameters.

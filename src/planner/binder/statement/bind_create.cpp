@@ -873,6 +873,31 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		if (error.HasError() && error.Type() != ExceptionType::PARAMETER_NOT_RESOLVED) {
 			error.Throw();
 		}
+		if (error.HasError() && should_create_dependencies) {
+			for (idx_t param_idx = 0; param_idx < parameter_references.size(); param_idx++) {
+				if (dummy_types[param_idx].id() == LogicalTypeId::UNKNOWN) {
+					parameter_references[param_idx] = ConstantExpression::Null();
+				}
+			}
+			auto call_binder = CreateBinder(context, this);
+			call_binder->SetCatalogLookupCallback(binder_callback);
+			global_binder_state->ignore_expression_errors = true;
+			try {
+				if (info.type == CatalogType::MACRO_ENTRY) {
+					auto expression = function->Cast<ScalarMacroFunction>().expression->Copy();
+					reference_parameters(expression, false);
+					BoundSelectNode sel_node;
+					SelectBinder(*call_binder, context, sel_node).Bind(expression, 0, false);
+				} else {
+					auto query_node = function->Cast<TableMacroFunction>().query_node->Copy();
+					ParsedExpressionIterator::EnumerateQueryNodeChildren(
+					    *query_node, [&](unique_ptr<ParsedExpression> &child) { reference_parameters(child, false); });
+					call_binder->Bind(*query_node);
+				}
+			} catch (const std::exception &) { // NOLINT(bugprone-empty-catch)
+			}
+			global_binder_state->ignore_expression_errors = false;
+		}
 	}
 
 	return BindCreateSchema(info);
