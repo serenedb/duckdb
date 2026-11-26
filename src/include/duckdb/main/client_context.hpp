@@ -40,6 +40,7 @@ class Binder;
 class Catalog;
 class CatalogSearchPath;
 class ColumnDataCollection;
+class CopyOutputGate;
 class DatabaseInstance;
 class FileOpener;
 class LogicalOperator;
@@ -149,6 +150,9 @@ public:
 	virtual void OnBoundPlan(Binder &binder, LogicalOperator &plan) {
 	}
 	virtual void OnStatementEnd() {
+	}
+	virtual optional_ptr<CopyOutputGate> GetCopyOutputGate(const string &file_path) {
+		return nullptr;
 	}
 	idx_t BindingGeneration() const {
 		return binding_generation.load(std::memory_order_relaxed);

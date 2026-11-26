@@ -20,6 +20,7 @@
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/execution/operator/persistent/copy_batch_slicer.hpp"
+#include "duckdb/execution/operator/persistent/copy_output_gate.hpp"
 #include "duckdb/execution/operator/persistent/copy_output_lifecycle.hpp"
 #include "fmt/format.h"
 
@@ -533,6 +534,8 @@ public:
 	//! The final batch
 	mutable annotated_mutex last_batch_lock;
 	unique_ptr<ColumnDataCollection> last_batch DUCKDB_GUARDED_BY(last_batch_lock);
+
+	optional_ptr<CopyOutputGate> output_gate;
 
 	//! Partitioning state
 	unique_ptr<PartitionedCopy> partitioned_copy;
@@ -3959,6 +3962,7 @@ unique_ptr<GlobalSinkState> PhysicalCopyToFile::GetGlobalSinkState(ClientContext
 	}
 
 	auto state = make_uniq<CopyToFileGlobalState>(*this, context);
+	state->output_gate = context.GetCopyOutputGate(file_path);
 	if (write_empty_file) {
 		// if we are writing the file also if it is empty - initialize now
 		state->Initialize();
@@ -3975,6 +3979,10 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 	auto &gstate = input.global_state.Cast<CopyToFileGlobalState>();
 	auto &lstate = input.local_state.Cast<CopyToFileLocalState>();
 
+	if (gstate.output_gate && input.interrupt_state.CanCallback() &&
+	    gstate.output_gate->BlockSink(input.interrupt_state)) {
+		return SinkResultType::BLOCKED;
+	}
 	if (!write_empty_file && !Rotate()) {
 		// if we are only writing the file when there are rows to write we need to initialize here
 		gstate.Initialize();

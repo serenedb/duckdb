@@ -8,6 +8,7 @@
 #include "duckdb/execution/operator/persistent/batch_memory_manager.hpp"
 #include "duckdb/execution/operator/persistent/batch_task_manager.hpp"
 #include "duckdb/execution/operator/persistent/copy_batch_slicer.hpp"
+#include "duckdb/execution/operator/persistent/copy_output_gate.hpp"
 #include "duckdb/execution/operator/persistent/copy_output_lifecycle.hpp"
 #include "duckdb/execution/operator/persistent/physical_copy_to_file.hpp"
 #include "duckdb/parallel/base_pipeline_event.hpp"
@@ -117,6 +118,7 @@ public:
 	atomic<bool> any_flushing;
 	//! Whether or not any threads are finished
 	atomic<bool> any_finished;
+	optional_ptr<CopyOutputGate> output_gate;
 	//! Minimum memory per thread
 	idx_t minimum_memory_per_thread;
 	//! Written file info (for RETURN_STATS)
@@ -205,6 +207,10 @@ SinkResultType PhysicalBatchCopyToFile::Sink(ExecutionContext &context, DataChun
 	auto &gstate = input.global_state.Cast<FixedBatchCopyGlobalState>();
 	auto &memory_manager = gstate.memory_manager;
 	auto batch_index = state.partition_info.batch_index.GetIndex();
+	if (gstate.output_gate && input.interrupt_state.CanCallback() &&
+	    gstate.output_gate->BlockSink(input.interrupt_state)) {
+		return SinkResultType::BLOCKED;
+	}
 	if (state.current_task == FixedBatchCopyState::PROCESSING_TASKS) {
 		ExecuteTasks(context.client, gstate);
 		FlushBatchData(context.client, gstate);
@@ -704,6 +710,7 @@ unique_ptr<GlobalSinkState> PhysicalBatchCopyToFile::GetGlobalSinkState(ClientCo
 	auto minimum_memory_per_thread =
 	    FixedBatchCopyGlobalState::MINIMUM_MEMORY_PER_COLUMN_PER_THREAD * children[0].get().GetTypes().size();
 	auto result = make_uniq<FixedBatchCopyGlobalState>(context, minimum_memory_per_thread);
+	result->output_gate = context.GetCopyOutputGate(file_path);
 	if (write_empty_file) {
 		// if we are writing the file also if it is empty - initialize now
 		result->Initialize(context, *this);
