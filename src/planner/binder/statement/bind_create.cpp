@@ -112,6 +112,9 @@ void Binder::BindSchemaOrCatalog(CatalogEntryRetriever &retriever, Identifier &c
 			continue;
 		}
 		if (catalog_ptr->CheckAmbiguousCatalogOrSchema(context, schema)) {
+			if (catalog_ptr->Compatibility() == SqlCompatibility::POSTGRES) {
+				return;
+			}
 			throw BinderException(
 			    "Ambiguous reference to catalog or schema %s - use a fully qualified path like '%s.%s'", schema,
 			    SQLIdentifier(catalog_name), SQLIdentifier(schema));
