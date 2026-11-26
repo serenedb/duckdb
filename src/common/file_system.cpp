@@ -960,6 +960,11 @@ unique_ptr<FileHandle> FileSystem::OpenCompressedFile(QueryContext context, uniq
 	throw NotImplementedException("%s: OpenCompressedFile is not implemented!", GetName());
 }
 
+optional_ptr<CompressedFileSystem> FileSystem::GetCompressedFileSystem(const FileCompressionType &compression,
+                                                                       const string &path) {
+	return nullptr;
+}
+
 bool FileSystem::IsLocalFileSystem() const {
 	return false;
 }

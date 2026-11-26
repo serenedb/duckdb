@@ -12,9 +12,47 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/query_context.hpp"
+#include "duckdb/common/serializer/async_write_queue.hpp"
+
+#include <span>
 
 namespace duckdb {
 class CompressedFile;
+
+class CompressedPiece : public AsyncWritePayload {
+public:
+	data_ptr_t Ptr() override {
+		return data.get();
+	}
+	idx_t Size() const override {
+		return size;
+	}
+	DUCKDB_API data_ptr_t Reserve(idx_t count);
+
+	unsafe_unique_array<data_t> data;
+	idx_t capacity = 0;
+	idx_t size = 0;
+	idx_t input_size = 0;
+	uint32_t input_crc = 0;
+	bool last = false;
+};
+
+class PieceCompressor {
+public:
+	DUCKDB_API virtual ~PieceCompressor();
+	DUCKDB_API virtual void Compress(std::span<const std::span<const data_t>> inputs, bool last,
+	                                 CompressedPiece &piece) = 0;
+	DUCKDB_API void Compress(const_data_ptr_t data, idx_t size, CompressedPiece &piece, bool last = false);
+};
+
+class PiecedFile {
+public:
+	DUCKDB_API virtual ~PiecedFile();
+	DUCKDB_API virtual unique_ptr<PieceCompressor> CreateCompressor() const = 0;
+	DUCKDB_API virtual string Head() const;
+	DUCKDB_API virtual void Append(const CompressedPiece &piece);
+	DUCKDB_API virtual string Tail() const;
+};
 
 struct StreamData {
 	// various buffers & pointers
@@ -37,8 +75,7 @@ struct StreamWrapper {
 	DUCKDB_API virtual void Initialize(QueryContext context, CompressedFile &file, bool write) = 0;
 	DUCKDB_API virtual bool Read(StreamData &stream_data) = 0;
 	DUCKDB_API virtual void FinalizeRead(StreamData &stream_data);
-	DUCKDB_API virtual void Write(CompressedFile &file, StreamData &stream_data, data_ptr_t buffer,
-	                              int64_t nr_bytes) = 0;
+	DUCKDB_API virtual void Write(CompressedFile &file, StreamData &stream_data, data_ptr_t buffer, int64_t nr_bytes);
 	DUCKDB_API virtual void Close() = 0;
 	DUCKDB_API virtual void AbortWrite();
 };
@@ -65,7 +102,11 @@ public:
 	DUCKDB_API virtual unique_ptr<StreamWrapper> CreateStream() = 0;
 	DUCKDB_API virtual idx_t InBufferSize() = 0;
 	DUCKDB_API virtual idx_t OutBufferSize() = 0;
+	DUCKDB_API virtual unique_ptr<PiecedFile> CreatePieces();
 };
+
+DUCKDB_API unique_ptr<PiecedFile> CreatePiecedFile(FileSystem &fs, const FileCompressionType &compression,
+                                                   const string &path);
 
 class CompressedFile : public FileHandle {
 public:
@@ -90,9 +131,12 @@ public:
 	DUCKDB_API void Close() override;
 	DUCKDB_API void AbortCompressedWrite();
 
+	static constexpr idx_t PIECE_BYTES = idx_t(1) << 20;
+
 private:
 	void Clear(); // for Initialize re-use to support FS.Reset()
 	void ResetStreamData();
+	void WritePiece(const_data_ptr_t data, idx_t size, bool last);
 
 	//! The number of compressed bytes read from the child handle
 	idx_t compressed_bytes_read = 0;
@@ -100,6 +144,11 @@ private:
 	atomic<idx_t> compressed_bytes_consumed {0};
 	bool initialized = false;
 	unique_ptr<StreamWrapper> stream_wrapper;
+	unique_ptr<PiecedFile> pieced;
+	unique_ptr<PieceCompressor> compressor;
+	unsafe_unique_array<data_t> pending;
+	idx_t pending_size = 0;
+	CompressedPiece piece;
 };
 
 } // namespace duckdb

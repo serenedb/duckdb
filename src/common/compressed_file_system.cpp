@@ -5,10 +5,49 @@
 
 namespace duckdb {
 
+data_ptr_t CompressedPiece::Reserve(idx_t count) {
+	if (capacity - size < count) {
+		auto grown = MaxValue(size + count, 2 * capacity);
+		auto bytes = make_unsafe_uniq_array_uninitialized<data_t>(grown);
+		if (size > 0) {
+			memcpy(bytes.get(), data.get(), size);
+		}
+		data = std::move(bytes);
+		capacity = grown;
+	}
+	return data.get() + size;
+}
+
+PieceCompressor::~PieceCompressor() {
+}
+
+void PieceCompressor::Compress(const_data_ptr_t data, idx_t size, CompressedPiece &piece, bool last) {
+	const std::span<const data_t> input(data, size);
+	Compress(std::span<const std::span<const data_t>>(&input, 1), last, piece);
+}
+
+PiecedFile::~PiecedFile() {
+}
+
+string PiecedFile::Head() const {
+	return string();
+}
+
+void PiecedFile::Append(const CompressedPiece &) {
+}
+
+string PiecedFile::Tail() const {
+	return string();
+}
+
 StreamWrapper::~StreamWrapper() {
 }
 
 void StreamWrapper::FinalizeRead(StreamData &) {
+}
+
+void StreamWrapper::Write(CompressedFile &file, StreamData &, data_ptr_t, int64_t) {
+	throw NotImplementedException("Writing is not supported for compressed file \"%s\"", file.path);
 }
 
 void StreamWrapper::AbortWrite() {
@@ -17,6 +56,15 @@ void StreamWrapper::AbortWrite() {
 
 bool CompressedFileSystem::CanHandleFile(const string &fpath) {
 	return false;
+}
+
+unique_ptr<PiecedFile> CompressedFileSystem::CreatePieces() {
+	return nullptr;
+}
+
+unique_ptr<PiecedFile> CreatePiecedFile(FileSystem &fs, const FileCompressionType &compression, const string &path) {
+	auto compressed = fs.GetCompressedFileSystem(compression, path);
+	return compressed ? compressed->CreatePieces() : nullptr;
 }
 
 CompressedFile::CompressedFile(CompressedFileSystem &fs, unique_ptr<FileHandle> child_handle_p, const string &path) try
@@ -65,6 +113,20 @@ void CompressedFile::Initialize(QueryContext context, bool write) {
 
 	this->context = context;
 	this->write = write;
+	compressed_bytes_read = 0;
+	compressed_bytes_consumed.store(0, std::memory_order_relaxed);
+	if (write) {
+		pieced = compressed_fs.CreatePieces();
+	}
+	if (pieced) {
+		compressor = pieced->CreateCompressor();
+		auto head = pieced->Head();
+		if (!head.empty()) {
+			child_handle->Write(context, head.data(), head.size());
+		}
+		initialized = true;
+		return;
+	}
 	stream_data.in_buf_size = compressed_fs.InBufferSize();
 	stream_data.out_buf_size = compressed_fs.OutBufferSize();
 	stream_data.in_buff = make_unsafe_uniq_array_uninitialized<data_t>(stream_data.in_buf_size);
@@ -73,9 +135,6 @@ void CompressedFile::Initialize(QueryContext context, bool write) {
 	stream_data.out_buff = make_unsafe_uniq_array_uninitialized<data_t>(stream_data.out_buf_size);
 	stream_data.out_buff_start = stream_data.out_buff.get();
 	stream_data.out_buff_end = stream_data.out_buff.get();
-
-	compressed_bytes_read = 0;
-	compressed_bytes_consumed.store(0, std::memory_order_relaxed);
 
 	stream_wrapper = compressed_fs.CreateStream();
 	stream_wrapper->Initialize(context, *this, write);
@@ -149,14 +208,56 @@ int64_t CompressedFile::ReadData(void *buffer, int64_t remaining) {
 }
 
 int64_t CompressedFile::WriteData(data_ptr_t buffer, int64_t nr_bytes) {
-	stream_wrapper->Write(*this, stream_data, buffer, nr_bytes);
+	if (!pieced) {
+		stream_wrapper->Write(*this, stream_data, buffer, nr_bytes);
+		return nr_bytes;
+	}
+	const auto total = UnsafeNumericCast<idx_t>(nr_bytes);
+	idx_t offset = 0;
+	while (offset < total) {
+		if (pending_size == 0 && total - offset >= PIECE_BYTES) {
+			WritePiece(buffer + offset, PIECE_BYTES, false);
+			offset += PIECE_BYTES;
+			continue;
+		}
+		if (!pending) {
+			pending = make_unsafe_uniq_array_uninitialized<data_t>(PIECE_BYTES);
+		}
+		const auto count = MinValue(PIECE_BYTES - pending_size, total - offset);
+		memcpy(pending.get() + pending_size, buffer + offset, count);
+		pending_size += count;
+		offset += count;
+		if (pending_size == PIECE_BYTES) {
+			WritePiece(pending.get(), pending_size, false);
+			pending_size = 0;
+		}
+	}
 	return nr_bytes;
+}
+
+void CompressedFile::WritePiece(const_data_ptr_t data, idx_t size, bool last) {
+	compressor->Compress(data, size, piece, last);
+	child_handle->Write(context, piece.data.get(), piece.size);
+	pieced->Append(piece);
 }
 
 // Clear does most of the heavy lifting of a close, but leaves the child_handle intact. Specifically it is separated out
 // to support upstream Reset() calls from the FileSystem, which should tear down / reset ephemeral state but leave
 // persistent state (child_handle) intact.
 void CompressedFile::Clear() {
+	if (pieced) {
+		if (pending_size > 0) {
+			WritePiece(pending.get(), pending_size, true);
+			pending_size = 0;
+		}
+		auto tail = pieced->Tail();
+		pieced.reset();
+		compressor.reset();
+		pending.reset();
+		if (!tail.empty()) {
+			child_handle->Write(context, tail.data(), tail.size());
+		}
+	}
 	if (stream_wrapper) {
 		stream_wrapper->Close();
 		stream_wrapper.reset();
@@ -196,6 +297,10 @@ void CompressedFile::Close() {
 
 void CompressedFile::AbortCompressedWrite() {
 	initialized = false;
+	pieced.reset();
+	compressor.reset();
+	pending.reset();
+	pending_size = 0;
 	std::exception_ptr error;
 	auto wrapper = std::move(stream_wrapper);
 	if (wrapper) {

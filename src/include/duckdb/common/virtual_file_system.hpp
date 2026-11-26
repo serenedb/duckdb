@@ -81,6 +81,8 @@ public:
 
 	void RegisterSubSystem(unique_ptr<FileSystem> fs) override;
 	void RegisterCompressionFilesystem(unique_ptr<CompressedFileSystem> fs) override;
+	optional_ptr<CompressedFileSystem> GetCompressedFileSystem(const FileCompressionType &compression,
+	                                                           const string &path) override;
 	void UnregisterSubSystem(const string &name) override;
 	unique_ptr<FileSystem> ExtractSubSystem(const string &name) override;
 
@@ -143,7 +145,8 @@ private:
 	optional_ptr<SubSystem> FindRemovable(const string &name) DUCKDB_REQUIRES(registry_lock);
 	// Return nullptr if compression is not involved, throw exception if compression is requested but no usable
 	// filesystem gets registered.
-	optional_ptr<FileSystem> FindCompressionFileSystem(const FileCompressionType &compression, const string &path);
+	optional_ptr<CompressedFileSystem> FindCompressionFileSystem(const FileCompressionType &compression,
+	                                                             const string &path);
 
 private:
 	annotated_mutex registry_lock;

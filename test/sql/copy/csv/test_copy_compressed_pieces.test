@@ -1,0 +1,68 @@
+# name: test/sql/copy/csv/test_copy_compressed_pieces.test
+# description: COPY TO a compressed CSV or JSON file from many threads, in and out of order
+# group: [csv]
+
+require parquet
+
+require json
+
+statement ok
+SET threads=8;
+
+statement ok
+CREATE TABLE pieces AS SELECT i, 'row ' || i || repeat('x', i % 50) AS s FROM range(400000) t(i);
+
+foreach compression gzip zstd
+
+statement ok
+SET preserve_insertion_order=false;
+
+statement ok
+COPY pieces TO '{TEMP_DIR}/pieces_${compression}.csv' (FORMAT csv, HEADER, COMPRESSION ${compression});
+
+query III
+SELECT count(*), sum(i), count(DISTINCT s) FROM read_csv('{TEMP_DIR}/pieces_${compression}.csv', compression='${compression}', header=true)
+----
+400000	79999800000	400000
+
+query I
+SELECT count(*) FROM (FROM pieces EXCEPT ALL FROM read_csv('{TEMP_DIR}/pieces_${compression}.csv', compression='${compression}', header=true))
+----
+0
+
+statement ok
+COPY pieces TO '{TEMP_DIR}/pieces_${compression}.ndjson' (FORMAT json, COMPRESSION ${compression});
+
+query II
+SELECT count(*), sum(i) FROM read_ndjson('{TEMP_DIR}/pieces_${compression}.ndjson', compression='${compression}', columns={'i': 'BIGINT', 's': 'VARCHAR'})
+----
+400000	79999800000
+
+statement ok
+SET preserve_insertion_order=true;
+
+statement ok
+COPY (FROM pieces ORDER BY i DESC) TO '{TEMP_DIR}/pieces_ordered_${compression}.csv' (FORMAT csv, HEADER false, COMPRESSION ${compression});
+
+query II
+SELECT count(*), count(*) FILTER (WHERE previous <> i + 1) FROM (SELECT i, lag(i) OVER (ORDER BY file_row_number) AS previous FROM read_csv('{TEMP_DIR}/pieces_ordered_${compression}.csv', compression='${compression}', header=false, file_row_number=true, columns={'i': 'BIGINT', 's': 'VARCHAR'}))
+----
+400000	0
+
+statement ok
+COPY (FROM pieces ORDER BY i) TO '{TEMP_DIR}/pieces_${compression}.json' (FORMAT json, ARRAY true, COMPRESSION ${compression});
+
+query III
+SELECT count(*), sum(i), min(i) FROM read_json('{TEMP_DIR}/pieces_${compression}.json', compression='${compression}', format='array', columns={'i': 'BIGINT', 's': 'VARCHAR'})
+----
+400000	79999800000	0
+
+statement ok
+COPY (FROM pieces WHERE i < 0) TO '{TEMP_DIR}/pieces_empty_${compression}.csv' (FORMAT csv, HEADER, COMPRESSION ${compression});
+
+query II
+SELECT count(*), sum(i) FROM read_csv('{TEMP_DIR}/pieces_empty_${compression}.csv', compression='${compression}', header=true, columns={'i': 'BIGINT', 's': 'VARCHAR'})
+----
+0	NULL
+
+endloop

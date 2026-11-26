@@ -23,18 +23,12 @@ struct ZstdStreamWrapper : public StreamWrapper {
 
 	CompressedFile *file = nullptr;
 	duckdb_zstd::ZSTD_DStream *zstd_stream_ptr = nullptr;
-	duckdb_zstd::ZSTD_CStream *zstd_compress_ptr = nullptr;
-	bool writing = false;
 
 public:
 	void Initialize(QueryContext context, CompressedFile &file, bool write) override;
 	bool Read(StreamData &stream_data) override;
-	void Write(CompressedFile &file, StreamData &stream_data, data_ptr_t buffer, int64_t nr_bytes) override;
 
 	void Close() override;
-	void AbortWrite() override;
-
-	void FlushStream();
 };
 
 ZstdStreamWrapper::~ZstdStreamWrapper() {
@@ -60,19 +54,13 @@ ZstdStreamWrapper::~ZstdStreamWrapper() {
 }
 
 void ZstdStreamWrapper::Initialize(QueryContext context, CompressedFile &file, bool write) {
-	D_ASSERT(!zstd_stream_ptr && !zstd_compress_ptr);
+	D_ASSERT(!zstd_stream_ptr);
+	D_ASSERT(!write);
 	this->file = &file;
-	this->writing = write;
-	if (write) {
-		zstd_compress_ptr = duckdb_zstd::ZSTD_createCStream();
-	} else {
-		zstd_stream_ptr = duckdb_zstd::ZSTD_createDStream();
-	}
+	zstd_stream_ptr = duckdb_zstd::ZSTD_createDStream();
 }
 
 bool ZstdStreamWrapper::Read(StreamData &sd) {
-	D_ASSERT(!writing);
-
 	duckdb_zstd::ZSTD_inBuffer in_buffer;
 	duckdb_zstd::ZSTD_outBuffer out_buffer;
 
@@ -95,95 +83,81 @@ bool ZstdStreamWrapper::Read(StreamData &sd) {
 	return false;
 }
 
-void ZstdStreamWrapper::Write(CompressedFile &file, StreamData &sd, data_ptr_t uncompressed_data,
-                              int64_t uncompressed_size) {
-	D_ASSERT(writing);
-
-	auto remaining = uncompressed_size;
-	while (remaining > 0) {
-		D_ASSERT(sd.out_buff.get() + sd.out_buf_size > sd.out_buff_start);
-		idx_t output_remaining = (sd.out_buff.get() + sd.out_buf_size) - sd.out_buff_start;
-
-		duckdb_zstd::ZSTD_inBuffer in_buffer;
-		duckdb_zstd::ZSTD_outBuffer out_buffer;
-
-		in_buffer.src = uncompressed_data;
-		in_buffer.size = remaining;
-		in_buffer.pos = 0;
-
-		out_buffer.dst = sd.out_buff_start;
-		out_buffer.size = output_remaining;
-		out_buffer.pos = 0;
-		auto res =
-		    duckdb_zstd::ZSTD_compressStream2(zstd_compress_ptr, &out_buffer, &in_buffer, duckdb_zstd::ZSTD_e_continue);
-		if (duckdb_zstd::ZSTD_isError(res)) {
-			throw IOException(duckdb_zstd::ZSTD_getErrorName(res));
-		}
-		idx_t input_consumed = in_buffer.pos;
-		idx_t written_to_output = out_buffer.pos;
-		sd.out_buff_start += written_to_output;
-		if (sd.out_buff_start == sd.out_buff.get() + sd.out_buf_size) {
-			// no more output buffer available: flush
-			file.child_handle->Write(file.context, sd.out_buff.get(), sd.out_buff_start - sd.out_buff.get());
-			sd.out_buff_start = sd.out_buff.get();
-		}
-		uncompressed_data += input_consumed;
-		remaining -= UnsafeNumericCast<int64_t>(input_consumed);
-	}
-}
-
-void ZstdStreamWrapper::FlushStream() {
-	auto &sd = file->stream_data;
-	duckdb_zstd::ZSTD_inBuffer in_buffer;
-	duckdb_zstd::ZSTD_outBuffer out_buffer;
-
-	in_buffer.src = nullptr;
-	in_buffer.size = 0;
-	in_buffer.pos = 0;
-	while (true) {
-		idx_t output_remaining = (sd.out_buff.get() + sd.out_buf_size) - sd.out_buff_start;
-
-		out_buffer.dst = sd.out_buff_start;
-		out_buffer.size = output_remaining;
-		out_buffer.pos = 0;
-
-		auto res =
-		    duckdb_zstd::ZSTD_compressStream2(zstd_compress_ptr, &out_buffer, &in_buffer, duckdb_zstd::ZSTD_e_end);
-		if (duckdb_zstd::ZSTD_isError(res)) {
-			throw IOException(duckdb_zstd::ZSTD_getErrorName(res));
-		}
-		idx_t written_to_output = out_buffer.pos;
-		sd.out_buff_start += written_to_output;
-		if (sd.out_buff_start > sd.out_buff.get()) {
-			file->child_handle->Write(file->context, sd.out_buff.get(), sd.out_buff_start - sd.out_buff.get());
-			sd.out_buff_start = sd.out_buff.get();
-		}
-		if (res == 0) {
-			break;
-		}
-	}
-}
-
 void ZstdStreamWrapper::Close() {
-	if (!zstd_stream_ptr && !zstd_compress_ptr) {
-		return;
-	}
-	if (writing) {
-		FlushStream();
-	}
-	AbortWrite();
-}
-
-void ZstdStreamWrapper::AbortWrite() {
 	if (zstd_stream_ptr) {
 		duckdb_zstd::ZSTD_freeDStream(zstd_stream_ptr);
 	}
-	if (zstd_compress_ptr) {
-		duckdb_zstd::ZSTD_freeCStream(zstd_compress_ptr);
-	}
 	zstd_stream_ptr = nullptr;
-	zstd_compress_ptr = nullptr;
 }
+
+void CheckZstd(size_t result) {
+	if (duckdb_zstd::ZSTD_isError(result)) {
+		throw IOException(duckdb_zstd::ZSTD_getErrorName(result));
+	}
+}
+
+class ZstdPieceCompressor : public PieceCompressor {
+public:
+	ZstdPieceCompressor() : context(duckdb_zstd::ZSTD_createCCtx()) {
+		if (!context) {
+			throw InternalException("Failed to create a ZSTD compression context");
+		}
+	}
+	~ZstdPieceCompressor() override {
+		duckdb_zstd::ZSTD_freeCCtx(context);
+	}
+
+	void Compress(std::span<const std::span<const data_t>> inputs, bool last, CompressedPiece &piece) override {
+		idx_t total = 0;
+		for (auto &input : inputs) {
+			total += input.size();
+		}
+		piece.size = 0;
+		piece.Reserve(duckdb_zstd::ZSTD_compressBound(total));
+		piece.input_size = total;
+		piece.last = last;
+		if (inputs.size() == 1) {
+			const auto written = duckdb_zstd::ZSTD_compress2(context, piece.data.get(), piece.capacity,
+			                                                 inputs[0].data(), inputs[0].size());
+			CheckZstd(written);
+			piece.size = written;
+			return;
+		}
+		CheckZstd(duckdb_zstd::ZSTD_CCtx_reset(context, duckdb_zstd::ZSTD_reset_session_only));
+		CheckZstd(duckdb_zstd::ZSTD_CCtx_setPledgedSrcSize(context, total));
+		for (idx_t i = 0; i < inputs.size(); i++) {
+			Stream(inputs[i], i + 1 == inputs.size() ? duckdb_zstd::ZSTD_e_end : duckdb_zstd::ZSTD_e_continue, piece);
+		}
+		if (inputs.empty()) {
+			Stream({}, duckdb_zstd::ZSTD_e_end, piece);
+		}
+	}
+
+private:
+	void Stream(std::span<const data_t> input, duckdb_zstd::ZSTD_EndDirective mode, CompressedPiece &piece) {
+		duckdb_zstd::ZSTD_inBuffer in_buffer {input.data(), input.size(), 0};
+		while (true) {
+			duckdb_zstd::ZSTD_outBuffer out_buffer {piece.data.get() + piece.size, piece.capacity - piece.size, 0};
+			const auto remaining = duckdb_zstd::ZSTD_compressStream2(context, &out_buffer, &in_buffer, mode);
+			CheckZstd(remaining);
+			piece.size += out_buffer.pos;
+			const auto done = mode == duckdb_zstd::ZSTD_e_end ? remaining == 0 : in_buffer.pos == in_buffer.size;
+			if (done) {
+				return;
+			}
+			piece.Reserve(MaxValue<idx_t>(remaining, duckdb_zstd::ZSTD_CStreamOutSize()));
+		}
+	}
+
+	duckdb_zstd::ZSTD_CCtx *context;
+};
+
+class ZstdPiecedFile : public PiecedFile {
+public:
+	unique_ptr<PieceCompressor> CreateCompressor() const override {
+		return make_uniq<ZstdPieceCompressor>();
+	}
+};
 
 struct ZStdFileSystemHolder {
 	ZStdFileSystem zstd_fs;
@@ -222,6 +196,10 @@ unique_ptr<FileHandle> ZStdFileSystem::OpenCompressedFile(QueryContext context, 
 
 unique_ptr<StreamWrapper> ZStdFileSystem::CreateStream() {
 	return make_uniq<ZstdStreamWrapper>();
+}
+
+unique_ptr<PiecedFile> ZStdFileSystem::CreatePieces() {
+	return make_uniq<ZstdPiecedFile>();
 }
 
 idx_t ZStdFileSystem::InBufferSize() {

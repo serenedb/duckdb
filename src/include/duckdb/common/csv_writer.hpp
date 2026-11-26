@@ -16,7 +16,10 @@
 
 namespace duckdb {
 class AsyncFileWriter;
+class CompressedPiece;
 class MemoryStream;
+class PieceCompressor;
+class PiecedFile;
 
 enum class CSVNewLineMode {
 	//! Newlines are written before writing out a new csv line. Ensures we don't write an empty line at the end of
@@ -58,6 +61,8 @@ struct CSVWriterState {
 
 	bool require_manual_flush = false;
 	CsvEncodeScratch scratch;
+	unique_ptr<PieceCompressor> compressor;
+	unique_ptr<CompressedPiece> piece;
 };
 
 class CSVWriter {
@@ -65,7 +70,8 @@ public:
 	//! Create a CSVWriter that writes to a (non-owned) WriteStream
 	CSVWriter(WriteStream &stream, vector<Identifier> name_list, bool shared = true);
 	//! Create a CSVWriter with the full set of options that writes to a (non-owned) AsyncFileWriter
-	CSVWriter(CSVReaderOptions &options, AsyncFileWriter &file_writer, bool shared = true);
+	CSVWriter(CSVReaderOptions &options, AsyncFileWriter &file_writer, optional_ptr<PiecedFile> pieced = nullptr,
+	          bool shared = true);
 
 	//! Create a CSVWriter that writes to a file
 	CSVWriter(CSVReaderOptions &options, FileSystem &fs, const string &file_path, FileCompressionType compression,
@@ -88,6 +94,7 @@ public:
 
 	//! Flushes all data in the local write state
 	void Flush(CSVWriterState &local_state);
+	void Compress(CSVWriterState &local_state);
 	//! (Non-shared only) variant of Flush
 	void Flush();
 
@@ -143,7 +150,14 @@ protected:
 
 	unique_ptr<CSVWriterState> global_write_state;
 
+	optional_ptr<PiecedFile> pieced;
+	unique_ptr<PieceCompressor> compressor;
+	unique_ptr<CompressedPiece> separator;
+
 	CsvEncoding Encoding() const;
+	idx_t FlushSize(const CSVWriterState &local_state) const;
+	void WriteCompressed(const_data_ptr_t data, idx_t size);
+	void WritePiece(unique_ptr<CompressedPiece> piece);
 };
 
 } // namespace duckdb

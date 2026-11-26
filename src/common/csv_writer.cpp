@@ -1,4 +1,5 @@
 #include "duckdb/common/csv_writer.hpp"
+#include "duckdb/common/compressed_file_system.hpp"
 #include "duckdb/common/serializer/async_file_writer.hpp"
 #include "duckdb/common/serializer/write_stream.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
@@ -73,11 +74,13 @@ CSVWriter::CSVWriter(WriteStream &stream, vector<Identifier> name_list, bool sha
 	}
 }
 
-CSVWriter::CSVWriter(CSVReaderOptions &options_p, AsyncFileWriter &file_writer_p, bool shared)
+CSVWriter::CSVWriter(CSVReaderOptions &options_p, AsyncFileWriter &file_writer_p, optional_ptr<PiecedFile> pieced_p,
+                     bool shared)
     : options(options_p), writer_options(options.dialect_options.state_machine_options.delimiter.GetValue(),
                                          options.dialect_options.state_machine_options.quote.GetValue(),
                                          options.write_newline, GetWriteCommentChar(options)),
-      async_file_writer(file_writer_p), write_stream(file_writer_p), should_initialize(true), shared(shared) {
+      async_file_writer(file_writer_p), write_stream(file_writer_p), should_initialize(true), shared(shared),
+      pieced(pieced_p) {
 	if (!shared) {
 		global_write_state = make_uniq<CSVWriterState>();
 	}
@@ -132,9 +135,13 @@ void CSVWriter::WriteChunk(DataChunk &input, CSVWriterState &local_state) {
 	D_ASSERT(options.null_str.size() == 1);
 	CsvEncodeChunk(Encoding(), input, *local_state.stream, local_state.written_anything, local_state.scratch);
 
-	if (!local_state.require_manual_flush && local_state.stream->GetPosition() >= local_state.flush_size) {
+	if (!local_state.require_manual_flush && local_state.stream->GetPosition() >= FlushSize(local_state)) {
 		Flush(local_state);
 	}
+}
+
+idx_t CSVWriter::FlushSize(const CSVWriterState &local_state) const {
+	return pieced ? MaxValue(local_state.flush_size, CompressedFile::PIECE_BYTES) : local_state.flush_size;
 }
 
 void CSVWriter::WriteChunk(DataChunk &input) {
@@ -145,14 +152,30 @@ void CSVWriter::WriteChunk(DataChunk &input) {
 }
 
 void CSVWriter::WriteRawString(const string &raw_string) {
+	unique_lock<mutex> flock(lock, std::defer_lock);
 	if (shared) {
-		lock_guard<mutex> flock(lock);
-		bytes_written += raw_string.size();
-		write_stream.WriteData(const_data_ptr_cast(raw_string.c_str()), raw_string.size());
-	} else {
-		bytes_written += raw_string.size();
-		write_stream.WriteData(const_data_ptr_cast(raw_string.c_str()), raw_string.size());
+		flock.lock();
 	}
+	bytes_written += raw_string.size();
+	if (pieced) {
+		WriteCompressed(const_data_ptr_cast(raw_string.c_str()), raw_string.size());
+		return;
+	}
+	write_stream.WriteData(const_data_ptr_cast(raw_string.c_str()), raw_string.size());
+}
+
+void CSVWriter::WriteCompressed(const_data_ptr_t data, idx_t size) {
+	if (!compressor) {
+		compressor = pieced->CreateCompressor();
+	}
+	auto piece = make_uniq<CompressedPiece>();
+	compressor->Compress(data, size, *piece);
+	WritePiece(std::move(piece));
+}
+
+void CSVWriter::WritePiece(unique_ptr<CompressedPiece> piece) {
+	pieced->Append(*piece);
+	async_file_writer->WriteData(unique_ptr<AsyncWriteBuffer>(std::move(piece)));
 }
 
 void CSVWriter::WriteRawString(const string &prefix, CSVWriterState &local_state) {
@@ -170,7 +193,20 @@ void CSVWriter::WriteHeader() {
 	Flush(state);
 }
 
+void CSVWriter::Compress(CSVWriterState &local_state) {
+	if (!pieced || !local_state.written_anything || local_state.piece) {
+		return;
+	}
+	if (!local_state.compressor) {
+		local_state.compressor = pieced->CreateCompressor();
+	}
+	local_state.piece = make_uniq<CompressedPiece>();
+	local_state.compressor->Compress(local_state.stream->GetData(), local_state.stream->GetPosition(),
+	                                 *local_state.piece);
+}
+
 void CSVWriter::Flush(CSVWriterState &local_state) {
+	Compress(local_state);
 	if (shared) {
 		lock_guard<mutex> flock(lock);
 		FlushInternal(local_state);
@@ -219,11 +255,30 @@ void CSVWriter::FlushInternal(CSVWriterState &local_state) {
 	}
 
 	if (written_anything && writer_options.newline_writing_mode == CSVNewLineMode::WRITE_BEFORE) {
-		write_stream.WriteData(const_data_ptr_cast(writer_options.newline.c_str()), writer_options.newline.size());
 		bytes_written += writer_options.newline.size();
+		if (pieced) {
+			if (!separator) {
+				if (!compressor) {
+					compressor = pieced->CreateCompressor();
+				}
+				separator = make_uniq<CompressedPiece>();
+				compressor->Compress(const_data_ptr_cast(writer_options.newline.c_str()), writer_options.newline.size(),
+				                     *separator);
+			}
+			pieced->Append(*separator);
+			write_stream.WriteData(separator->data.get(), separator->size);
+		} else {
+			write_stream.WriteData(const_data_ptr_cast(writer_options.newline.c_str()), writer_options.newline.size());
+		}
 	}
 
 	written_anything = true;
+	if (pieced) {
+		bytes_written += local_state.stream->GetPosition();
+		WritePiece(std::move(local_state.piece));
+		local_state.Reset();
+		return;
+	}
 	bytes_written += local_state.stream->GetPosition();
 	write_stream.WriteData(local_state.stream->GetData(), local_state.stream->GetPosition());
 

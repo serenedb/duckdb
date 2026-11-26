@@ -4,6 +4,8 @@
 #include "duckdb/common/numeric_utils.hpp"
 #include "test_helpers.hpp"
 
+#include <zlib.h>
+
 using namespace duckdb;
 
 namespace {
@@ -211,4 +213,64 @@ TEST_CASE("GZIP rejects a header whose extra field is cut short", "[file_system]
 TEST_CASE("GZIP string decompression rejects a header-only stream with FNAME", "[file_system][gzip]") {
 	const char header[] = {'\x1f', '\x8b', '\x08', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
 	REQUIRE_THROWS_AS(GZipFileSystem::UncompressGZIPString(header, sizeof(header)), IOException);
+}
+
+TEST_CASE("GZIP pieces written in any order form one member", "[file_system][gzip]") {
+	GZipFileSystem gzip_file_system;
+	auto compressor = gzip_file_system.CreatePieces()->CreateCompressor();
+
+	string long_input;
+	for (idx_t i = 0; i < 200000; i++) {
+		long_input += to_string(i * 7919 % 100003) + (i % 3 == 0 ? "\n" : ",");
+	}
+	const vector<string> inputs {"first piece\n", "", long_input, "last\n"};
+	vector<CompressedPiece> pieces(inputs.size());
+	for (idx_t i = 0; i < inputs.size(); i++) {
+		compressor->Compress(const_data_ptr_cast(inputs[i].data()), inputs[i].size(), pieces[i]);
+		REQUIRE(pieces[i].input_size == inputs[i].size());
+	}
+	CompressedPiece split;
+	const std::span<const data_t> halves[] = {
+	    {const_data_ptr_cast(long_input.data()), 1000},
+	    {const_data_ptr_cast(long_input.data()) + 1000, long_input.size() - 1000}};
+	compressor->Compress(halves, false, split);
+	REQUIRE(split.input_size == long_input.size());
+	REQUIRE(split.input_crc == pieces[2].input_crc);
+
+	for (bool last : {false, true}) {
+		CAPTURE(last);
+		auto frame = gzip_file_system.CreatePieces();
+		string file = frame->Head();
+		string expected;
+		for (auto index : {idx_t(2), idx_t(0), idx_t(3), idx_t(1)}) {
+			frame->Append(pieces[index]);
+			file.append(const_char_ptr_cast(pieces[index].data.get()), pieces[index].size);
+			expected += inputs[index];
+		}
+		CompressedPiece final_piece;
+		compressor->Compress(halves, last, final_piece);
+		frame->Append(final_piece);
+		file.append(const_char_ptr_cast(final_piece.data.get()), final_piece.size);
+		expected += long_input;
+		file += frame->Tail();
+
+		z_stream stream;
+		memset(&stream, 0, sizeof(stream));
+		REQUIRE(inflateInit2(&stream, 16 + MAX_WBITS) == Z_OK);
+		string output(expected.size() + 1, '\0');
+		stream.next_in = data_ptr_cast(&file[0]);
+		stream.avail_in = NumericCast<uInt>(file.size());
+		stream.next_out = data_ptr_cast(&output[0]);
+		stream.avail_out = NumericCast<uInt>(output.size());
+		const auto result = inflate(&stream, Z_FINISH);
+		const auto remaining = stream.avail_in;
+		output.resize(stream.total_out);
+		inflateEnd(&stream);
+		REQUIRE(result == Z_STREAM_END);
+		REQUIRE(remaining == 0);
+		REQUIRE(output == expected);
+
+		const vector<data_t> bytes(file.begin(), file.end());
+		REQUIRE(ReadCompressedData(bytes, bytes.size()) == expected);
+	}
 }
