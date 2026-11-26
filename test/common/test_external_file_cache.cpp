@@ -3802,7 +3802,7 @@ TEST_CASE("External file cache benchmark: pins that evict while the buffer pool 
 		const auto used = buffer_manager.GetUsedMemory();
 		const auto limit = buffer_manager.GetMaxMemory();
 		const idx_t reserved = limit > used + HEADROOM ? limit - used - HEADROOM : 0;
-		buffer_manager.ReserveMemory(reserved);
+		auto reservation = buffer_manager.ReserveMemory(MemoryTag::EXTENSION, reserved);
 		const auto misses = cache.GetStatistics().misses;
 		idx_t wrong = 0;
 		const auto start = std::chrono::steady_clock::now();
@@ -3813,7 +3813,7 @@ TEST_CASE("External file cache benchmark: pins that evict while the buffer pool 
 		}
 		const auto elapsed = MillisecondsSince(start);
 		const idx_t missed = cache.GetStatistics().misses - misses;
-		buffer_manager.FreeReservedMemory(reserved);
+		reservation.Resize(0);
 		REQUIRE(wrong == 0);
 		Printer::PrintF("pins that evict with the buffer pool full, round %llu: %.1f us per block, %llu misses", round,
 		                elapsed * 1000.0 / double(BLOCKS - RESIDENT), missed);
