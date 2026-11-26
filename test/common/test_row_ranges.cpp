@@ -1591,6 +1591,31 @@ TEST_CASE("A row source over compressed pieces reads any span of what they decom
 	REQUIRE(pieces.size() == 5);
 	REQUIRE(pieces[2].output_size == 0);
 	REQUIRE(!compressed->FindPieces(const_data_ptr_cast(file.data()), file.size() - 1, pieces));
+	const string unknown_size("\x28\xb5\x2f\xfd\x00\x00\x19\x00\x00"
+	                          "abc",
+	                          12);
+	const string huge_size("\x28\xb5\x2f\xfd\xe0\x00\x00\x00\x08\x00\x00\x00\x00", 13);
+	const string short_skippable("\x50\x2a\x4d\x18\x64\x00\x00\x00"
+	                             "abc",
+	                             11);
+	for (const auto &tail : {unknown_size, huge_size, short_skippable, string("xyz")}) {
+		const string bad = file + tail;
+		REQUIRE(!compressed->FindPieces(const_data_ptr_cast(bad.data()), bad.size(), pieces));
+	}
+
+	const string short_frame("\x28\xb5\x2f\xfd\x20\x06\x19\x00\x00"
+	                         "abc",
+	                         12);
+	string lying = file + short_frame;
+	REQUIRE(compressed->FindPieces(const_data_ptr_cast(lying.data()), lying.size(), pieces));
+	REQUIRE(pieces.back().output_size == 6);
+	{
+		auto lying_mapping = make_shared_ptr<RecordingMapping>(data_ptr_cast(&lying[0]), lying.size());
+		PiecedRowSource lying_source(lying_mapping, *compressed, pieces);
+		string out(6, '\0');
+		REQUIRE_THROWS_AS(lying_source.Read(&out[0], 6, expected.size()), IOException);
+		REQUIRE_THROWS_AS(lying_source.Read(&out[0], 5, expected.size() + 1), IOException);
+	}
 
 	auto mapping = make_shared_ptr<RecordingMapping>(data_ptr_cast(&file[0]), file.size());
 	REQUIRE(compressed->FindPieces(const_data_ptr_cast(file.data()), file.size(), pieces));
