@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <utility>
 
+#include "simdutf.h"
 #include "utf8proc_wrapper.hpp"
 #include "parquet_reader.hpp"
 #include "duckdb/common/types/blob.hpp"
@@ -137,6 +138,11 @@ void StringColumnReader::PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, u
 
 void StringColumnReader::PlainSkip(ByteBuffer &plain_data, uint8_t *defines, idx_t num_values) {
 	PlainSkipTemplated<StringParquetValueConversion>(plain_data, defines, num_values);
+}
+
+void StringColumnReader::PlainPage(const ByteBuffer &values) {
+	ascii_page = string_column_type == StringColumnType::VARCHAR &&
+	             simdutf::validate_ascii(const_char_ptr_cast(values.ptr), values.len);
 }
 
 } // namespace duckdb

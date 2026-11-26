@@ -420,6 +420,7 @@ void ColumnReader::PrepareRead(optional_ptr<const TableFilter> filter, optional_
 		break;
 	case PageType::DICTIONARY_PAGE: {
 		PreparePage(page_hdr);
+		PlainPage(*block);
 		auto dictionary_size = page_hdr.dictionary_page_header.num_values;
 		if (dictionary_size < 0) {
 			throw InvalidInputException("Failed to read file \"%s\": Invalid dictionary page header (num_values < 0)",
@@ -719,6 +720,7 @@ void ColumnReader::PrepareDataPage(PageHeader &page_hdr) {
 	case Encoding::PLAIN:
 		// nothing to do here, will be read directly below
 		encoding = ColumnEncoding::PLAIN;
+		PlainPage(*block);
 		break;
 
 	default:

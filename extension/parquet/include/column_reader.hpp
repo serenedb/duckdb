@@ -378,6 +378,8 @@ protected:
 	bool page_is_filtered_out = false;
 
 	virtual void ResetPage();
+	virtual void PlainPage(const ByteBuffer &values) {
+	}
 
 private:
 	void AllocateBlock(idx_t size);
