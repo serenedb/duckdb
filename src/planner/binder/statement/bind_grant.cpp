@@ -150,7 +150,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermiss
 		    {name, object.func_parameters, object.has_func_args, info.include_functions, info.include_procedures},
 		    AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 		entry = routine.entry;
-		if (routine.overload && PermissionsOf(*entry, *routine.overload).owner != 0) {
+		if (routine.overload && PermissionsOf(*entry).owner != 0) {
 			object.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
 		}
 	} else {
@@ -289,9 +289,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 		RefuseOwnedSequence(context, entry);
 	}
 	if (!relation) {
-		Require(context, role, entry, AclMode::Own,
-		        object.overload_oid ? entry.Cast<MacroCatalogEntry>().FindOverload(object.overload_oid).get()
-		                            : nullptr);
+		Require(context, role, {entry, permissions}, AclMode::Own);
 	}
 	RequireNewOwner(binder, entry, info.new_owner_id, nullptr);
 }

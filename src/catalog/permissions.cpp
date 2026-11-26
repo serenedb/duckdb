@@ -32,15 +32,16 @@
 
 namespace duckdb {
 
-const Permissions &PermissionsOf(const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
+const Permissions &PermissionsOf(PrivilegeTarget target) {
 	static const Permissions UNOWNED {.acl = {{.grantee = ACL_ID_PUBLIC, .privs = ACL_GRANTABLE & ~AclMode::Create}}};
+	auto &entry = target.entry;
 	const bool unowned =
 	    entry.permissions.owner == 0 || (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 	const bool system_view = entry.type == CatalogType::VIEW_ENTRY && entry.ParentCatalog().IsSystemCatalog();
 	if (unowned && !system_view) {
 		return UNOWNED;
 	}
-	return overload ? entry.Cast<MacroCatalogEntry>().OverloadPermissions(*overload) : entry.permissions;
+	return target.permissions;
 }
 
 static optional_ptr<CatalogEntry> SystemEntry(ClientContext &context, CatalogType type, const Identifier &name) {
@@ -246,20 +247,17 @@ uint64_t ViewerBits(const RoleAccess &role) {
 	return bits;
 }
 
-static string ObjectNounOf(CatalogType type, optional_ptr<const MacroFunction> overload) {
-	if (overload && overload->is_procedure) {
-		return "procedure";
-	}
+static string ObjectNounOf(CatalogType type) {
 	const auto noun = ObjectKindOf(type).noun;
 	return noun.empty() ? StringUtil::Lower(CatalogTypeToString(type)) : string(noun);
 }
 
-void ThrowPermissionDenied(CatalogType type, std::string_view name, optional_ptr<const MacroFunction> overload) {
-	throw PermissionException("permission denied for %s %s", ObjectNounOf(type, overload), name);
+void ThrowPermissionDenied(CatalogType type, std::string_view name) {
+	throw PermissionException("permission denied for %s %s", ObjectNounOf(type), name);
 }
 
-void ThrowPermissionDenied(const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
-	ThrowPermissionDenied(entry.type, entry.name.GetIdentifierName(), overload);
+void ThrowPermissionDenied(const CatalogEntry &entry) {
+	ThrowPermissionDenied(entry.type, entry.name.GetIdentifierName());
 }
 
 static bool IsFunction(const CatalogEntry &entry) {
@@ -281,29 +279,22 @@ static bool Uses(AclMode use, AclMode modes) {
 	return (use & modes) != AclMode::NoRights;
 }
 
-static bool OwnsEntry(const RoleAccess &role, const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
+static bool OwnsEntry(const RoleAccess &role, PrivilegeTarget target) {
+	auto &entry = target.entry;
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		return !entry.Cast<RoleEntry>().IsSuperuser() && role.Has(RoleOption::CreateRole) && role.AdminOf(entry.oid);
 	}
-	if (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY) {
-		return role.MemberOf(entry.permissions.owner);
-	}
-	auto &macro = entry.Cast<MacroCatalogEntry>();
-	if (overload) {
-		return role.MemberOf(macro.OverloadPermissions(*overload).owner);
-	}
-	return absl::c_all_of(macro.macros, [&](const unique_ptr<MacroFunction> &function) {
-		return role.MemberOf(macro.OverloadPermissions(*function).owner);
-	});
+	return role.MemberOf(target.permissions.owner);
 }
 
-static bool Holds(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
-                  optional_ptr<const MacroFunction> overload, bool any) {
-	if (Uses(use, AclMode::Execute) && IsFunction(entry) && (!overload || PermissionsOf(entry, overload).owner == 0)) {
+static bool Holds(const RoleAccess &role, PrivilegeTarget target, AclMode use, bool any) {
+	auto &entry = target.entry;
+	auto &permissions = PermissionsOf(target);
+	if (Uses(use, AclMode::Execute) && IsFunction(entry) && permissions.owner == 0) {
 		const auto capability = entry.Cast<FunctionEntry>().required_capability;
 		return capability == RoleCapability::None || role.Has(capability) || role.owns_builtins;
 	}
-	if (Uses(use, AclMode::Own | AclMode::Rename) && !OwnsEntry(role, entry, overload)) {
+	if (Uses(use, AclMode::Own | AclMode::Rename) && !OwnsEntry(role, target)) {
 		return false;
 	}
 	if (Uses(use, AclMode::Admin) && !role.AdminOf(entry.oid)) {
@@ -317,18 +308,16 @@ static bool Holds(const RoleAccess &role, const CatalogEntry &entry, AclMode use
 		return true;
 	}
 	const auto type = ObjectKindOf(entry.type).acl_class;
-	auto &permissions = PermissionsOf(entry, overload);
 	return any ? role.CanAny(type, permissions, modes) : role.Can(type, permissions, modes);
 }
 
-bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
-             optional_ptr<const MacroFunction> overload) {
+bool Allowed(const RoleAccess &role, PrivilegeTarget target, AclMode use) {
 	D_ASSERT(!Uses(use, AclMode::Drop));
-	return role.is_superuser || Holds(role, entry, use, overload, false);
+	return role.is_superuser || Holds(role, target, use, false);
 }
 
-bool AllowedAny(const RoleAccess &role, const CatalogEntry &entry, AclMode privileges) {
-	return role.is_superuser || Holds(role, entry, privileges, nullptr, true);
+bool AllowedAny(const RoleAccess &role, PrivilegeTarget target, AclMode privileges) {
+	return role.is_superuser || Holds(role, target, privileges, true);
 }
 
 [[noreturn]] static void ThrowNotOwner(const CatalogEntry &entry, optional_ptr<const StatementNaming> naming) {
@@ -337,12 +326,12 @@ bool AllowedAny(const RoleAccess &role, const CatalogEntry &entry, AclMode privi
 		                          StringUtil::Join(naming->name.Path(), ".",
 		                                           [](const Identifier &part) { return part.GetIdentifierName(); }));
 	}
-	throw PermissionException("must be owner of %s %s", ObjectNounOf(entry.type, nullptr),
-	                          entry.name.GetIdentifierName());
+	throw PermissionException("must be owner of %s %s", ObjectNounOf(entry.type), entry.name.GetIdentifierName());
 }
 
-static void RequireOwnership(const RoleAccess &role, CatalogEntry &entry, optional_ptr<const MacroFunction> overload,
+static void RequireOwnership(const RoleAccess &role, PrivilegeTarget target,
                              optional_ptr<const StatementNaming> naming) {
+	auto &entry = target.entry;
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		auto &target = entry.Cast<RoleEntry>();
 		string detail;
@@ -358,40 +347,41 @@ static void RequireOwnership(const RoleAccess &role, CatalogEntry &entry, option
 		}
 		throw PermissionException::WithDetail(detail, "permission denied");
 	}
-	if (!OwnsEntry(role, entry, overload)) {
+	if (!OwnsEntry(role, target)) {
 		ThrowNotOwner(entry, naming);
 	}
 }
 
-static void RequireCreateIn(ClientContext &context, const RoleAccess &role, CatalogEntry &container) {
+static void RequireCreateIn(ClientContext &context, const RoleAccess &role, const CatalogEntry &container) {
 	if (container.ParentCatalog().GetAttached().IsTemporary()) {
 		auto &database = ClientData::Get(context).default_database;
 		auto entry = SystemEntry(context, CatalogType::DATABASE_ENTRY, database);
-		if (entry && !Holds(role, *entry, AclMode::CreateTemp, nullptr, false)) {
+		if (entry && !Holds(role, *entry, AclMode::CreateTemp, false)) {
 			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
 			                          database.GetIdentifierName());
 		}
 		return;
 	}
-	if (!Holds(role, container, AclMode::Create, nullptr, false)) {
+	if (!Holds(role, container, AclMode::Create, false)) {
 		ThrowPermissionDenied(container);
 	}
 }
 
-void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
-             optional_ptr<const MacroFunction> overload, optional_ptr<const StatementNaming> naming) {
+void Require(ClientContext &context, const RoleAccess &role, PrivilegeTarget target, AclMode use,
+             optional_ptr<const StatementNaming> naming) {
 	D_ASSERT(!Uses(use, AclMode::Admin | AclMode::SetRole));
 	if (role.is_superuser) {
 		return;
 	}
+	auto &entry = target.entry;
 	if (Uses(use, AclMode::Own | AclMode::Rename)) {
-		RequireOwnership(role, entry, overload, naming);
+		RequireOwnership(role, target, naming);
 	}
 	if (Uses(use, AclMode::Rename)) {
 		const auto container = ObjectKindOf(entry.type).container;
 		if (container == ObjectContainer::DATABASE) {
 			auto database = SystemEntry(context, CatalogType::DATABASE_ENTRY, entry.ParentCatalog().GetName());
-			if (database && !Holds(role, *database, AclMode::Create, nullptr, false)) {
+			if (database && !Holds(role, *database, AclMode::Create, false)) {
 				ThrowPermissionDenied(*database);
 			}
 		} else if (container != ObjectContainer::CLUSTER) {
@@ -402,15 +392,15 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 		const auto container = ObjectKindOf(entry.type).container;
 		const bool in_schema = container != ObjectContainer::DATABASE && container != ObjectContainer::CLUSTER;
 		if (!in_schema || !role.MemberOf(entry.ParentSchema(context).permissions.owner)) {
-			RequireOwnership(role, entry, overload, naming);
+			RequireOwnership(role, target, naming);
 		}
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY && Uses(use, AclMode::Create)) {
 		RequireCreateIn(context, role, entry);
 		use = use & ~AclMode::Create;
 	}
-	if (!Holds(role, entry, use & ACL_GRANTABLE, overload, false)) {
-		ThrowPermissionDenied(entry, overload);
+	if (!Holds(role, target, use & ACL_GRANTABLE, false)) {
+		ThrowPermissionDenied(entry);
 	}
 }
 
@@ -422,8 +412,7 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
 		if (oid != extension->properties.end()) {
 			auto entry = catalog.LookupOwner(catalog.GetCatalogTransaction(context), oid->second.GetValue<idx_t>());
-			if (entry && entry->type == CatalogType::TYPE_ENTRY &&
-			    !Holds(role, *entry, AclMode::Usage, nullptr, false)) {
+			if (entry && entry->type == CatalogType::TYPE_ENTRY && !Holds(role, *entry, AclMode::Usage, false)) {
 				ThrowPermissionDenied(*entry);
 			}
 			return;

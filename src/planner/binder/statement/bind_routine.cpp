@@ -78,7 +78,16 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 	                              : !routine.include_functions ? "procedure"
 	                                                           : "routine",
 	                              routine.name};
-	Require(context, CheckAs(), *result.entry, use, result.overload.get(), named_by_statement ? &naming : nullptr);
+	const auto statement_naming = named_by_statement ? &naming : nullptr;
+	if (!macro) {
+		Require(context, CheckAs(), *result.entry, use, statement_naming);
+		return result;
+	}
+	for (auto &overload : macro->macros) {
+		if (!result.overload || overload.get() == result.overload.get()) {
+			Require(context, CheckAs(), {*macro, macro->OverloadPermissions(*overload)}, use, statement_naming);
+		}
+	}
 	return result;
 }
 

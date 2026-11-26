@@ -48,10 +48,11 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		throw BinderException(function, "%s() is not a procedure\nHINT: To call a function, use SELECT.",
 		                      function.FunctionName().GetIdentifierName());
 	}
-	auto &permissions = PermissionsOf(macro_func, macro_def);
-	const bool owned = permissions.owner != 0;
+	const bool owned = PermissionsOf(macro_func).owner != 0;
 	Execute(macro_func, macro_def);
-	const auto owner = owned && macro_def.security_definer ? optional_idx(permissions.owner) : optional_idx();
+	const auto owner = owned && macro_def.security_definer
+	                       ? optional_idx(macro_func.OverloadPermissions(macro_def).owner)
+	                       : optional_idx();
 	bool other_role = false;
 	if (owned && !CheckAs().IsSystem()) {
 		auto &role = FunctionBodyRole(owner);

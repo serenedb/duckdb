@@ -507,7 +507,7 @@ idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
 		} else {
-			Require(context, CheckAs(), *existing, AclMode::Own, overload.get());
+			Require(context, CheckAs(), {existing_macro, existing_macro.OverloadPermissions(*overload)}, AclMode::Own);
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;

@@ -296,7 +296,6 @@ struct GlobalBinderState {
 	optional_ptr<const StandardEntry> denied_relation;
 	idx_t denied_reference = 0;
 	optional_ptr<const CatalogEntry> denied_function;
-	optional_ptr<const MacroFunction> denied_overload;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode
@@ -470,7 +469,8 @@ public:
 	void BindUnchecked();
 	void BindStoredDefinition();
 	void RecordCalls(optional_ptr<RecordedCalls> calls);
-	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
+	void Execute(const CatalogEntry &function);
+	void Execute(const MacroCatalogEntry &function, const MacroFunction &overload);
 	static bool MayRun(const RoleAccess &role, const SQLStatement &statement);
 	void RequireStatement(const SQLStatement &statement);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);

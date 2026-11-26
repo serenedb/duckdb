@@ -164,12 +164,21 @@ void Binder::RecordCalls(optional_ptr<RecordedCalls> calls) {
 	global_binder_state->recorded_calls = calls;
 }
 
-void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload) {
-	if (!Allowed(CurrentRole(), function, AclMode::Execute, overload)) {
-		ThrowPermissionDenied(function, overload);
+void Binder::Execute(const CatalogEntry &function) {
+	if (!Allowed(CurrentRole(), function, AclMode::Execute)) {
+		ThrowPermissionDenied(function);
+	}
+}
+
+void Binder::Execute(const MacroCatalogEntry &function, const MacroFunction &overload) {
+	if (!Allowed(CurrentRole(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)) {
+		if (overload.is_procedure) {
+			throw PermissionException("permission denied for procedure %s", function.name.GetIdentifierName());
+		}
+		ThrowPermissionDenied(function);
 	}
 	auto calls = global_binder_state->recorded_calls;
-	if (!calls || !overload || PermissionsOf(function, overload).owner == 0) {
+	if (!calls || PermissionsOf(function).owner == 0) {
 		return;
 	}
 	if (&function.ParentCatalog() != &calls->catalog) {
@@ -178,7 +187,7 @@ void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunct
 		                              function.ParentSchemaName().GetIdentifierName(),
 		                              function.name.GetIdentifierName());
 	}
-	calls->overloads.push_back(function.Cast<MacroCatalogEntry>().OverloadOid(*overload));
+	calls->overloads.push_back(function.OverloadOid(overload));
 }
 
 void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed) {
@@ -204,9 +213,9 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 			if (!overload) {
 				throw CatalogException("function with OID %llu does not exist", oid);
 			}
-			if (!Allowed(role, *function, AclMode::Execute, overload.get())) {
+			auto &macro = function->Cast<MacroCatalogEntry>();
+			if (!Allowed(role, {macro, macro.OverloadPermissions(*overload)}, AclMode::Execute)) {
 				state.denied_function = function.get();
-				state.denied_overload = overload.get();
 				return;
 			}
 		}
@@ -415,11 +424,9 @@ void Binder::AdoptPrivilegeChecks(Binder &other) {
 	auto &state = *global_binder_state;
 	if (!state.denied_function) {
 		state.denied_function = source.denied_function;
-		state.denied_overload = source.denied_overload;
 	}
 	source.denied_relation = nullptr;
 	source.denied_function = nullptr;
-	source.denied_overload = nullptr;
 }
 
 void Binder::CheckPrivileges() {
@@ -428,7 +435,7 @@ void Binder::CheckPrivileges() {
 		ThrowPermissionDenied(*state.denied_relation);
 	}
 	if (state.denied_function) {
-		ThrowPermissionDenied(*state.denied_function, state.denied_overload);
+		ThrowPermissionDenied(*state.denied_function);
 	}
 }
 
@@ -459,8 +466,17 @@ void Binder::RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &
 	if (role.is_superuser || !replaces) {
 		return;
 	}
-	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
+	auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name);
+	if (!existing) {
+		return;
+	}
+	if (existing->type != CatalogType::MACRO_ENTRY && existing->type != CatalogType::TABLE_MACRO_ENTRY) {
 		Require(context, role, *existing, AclMode::Own);
+		return;
+	}
+	auto &macro = existing->Cast<MacroCatalogEntry>();
+	for (auto &overload : macro.macros) {
+		Require(context, role, {macro, macro.OverloadPermissions(*overload)}, AclMode::Own);
 	}
 }
 
