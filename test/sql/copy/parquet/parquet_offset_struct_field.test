@@ -1,0 +1,31 @@
+# name: test/sql/copy/parquet/parquet_offset_struct_field.test
+# group: [parquet]
+
+require parquet
+
+statement ok
+COPY (SELECT {'a': i} AS s FROM range(300000) t(i)) TO '{TEST_DIR}/offset_struct_field.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000)
+
+query I
+SELECT s.a FROM read_parquet('{TEST_DIR}/offset_struct_field.parquet') ORDER BY s.a LIMIT 3 OFFSET 150000
+----
+150000
+150001
+150002
+
+query I
+SELECT s.a FROM read_parquet('{TEST_DIR}/offset_struct_field.parquet') ORDER BY s.a DESC LIMIT 3 OFFSET 150000
+----
+149999
+149998
+149997
+
+statement ok
+COPY (SELECT {'b': i % 7, 'a': 300000 - i} AS s FROM range(300000) t(i)) TO '{TEST_DIR}/offset_struct_second_field.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000)
+
+query I
+SELECT s.a FROM read_parquet('{TEST_DIR}/offset_struct_second_field.parquet') ORDER BY s.a LIMIT 3 OFFSET 150000
+----
+150001
+150002
+150003
