@@ -135,6 +135,7 @@ private:
 	FileWriteMode GetWriteMode() override;
 	//! Return whether this writer targets a local file-like handle.
 	bool IsLocalFile() override;
+	bool WritesMayBlock() override;
 	//! Write bytes to the underlying file handle at the assigned logical stream offset.
 	void Write(data_ptr_t buffer, idx_t size, idx_t offset) override;
 	//! Write bytes to the underlying file handle's current position.

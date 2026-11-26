@@ -29,6 +29,7 @@ public:
 	bool CanSeek() override {
 		return false;
 	}
+	bool WritesMayBlock(FileHandle &handle) override;
 	bool IsPipe(const string &filename, optional_ptr<FileOpener> opener) override {
 		return true;
 	}

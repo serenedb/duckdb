@@ -95,11 +95,11 @@ private:
 	bool settled = false;
 };
 
-AsyncWriteQueue::AsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)
+AsyncWriteQueue::AsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p, bool async)
     : client_context(client_context_p), target(target_p) {
 	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_tasks = MaxValue<idx_t>(async_threads, 1);
-	if (async_threads == 0) {
+	if (!async || async_threads == 0) {
 		return;
 	}
 	executor = make_uniq<TaskExecutor>(client_context, TaskSchedulerType::ASYNC);
@@ -512,13 +512,13 @@ idx_t ManagedAsyncWriteQueue::PendingWrite::Size() const {
 	return size;
 }
 
-ManagedAsyncWriteQueue::ManagedAsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)
+ManagedAsyncWriteQueue::ManagedAsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p, bool async)
     : client_context(client_context_p), target(target_p), memory_governor(client_context_p) {
 	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_drain_tasks = MaxValue<idx_t>(async_threads, 1);
 
 	AsyncWriteTarget &async_target = *this;
-	write_queue = make_uniq<AsyncWriteQueue>(client_context, async_target);
+	write_queue = make_uniq<AsyncWriteQueue>(client_context, async_target, async);
 }
 
 ManagedAsyncWriteQueue::~ManagedAsyncWriteQueue() {
@@ -1047,7 +1047,7 @@ ManagedAsyncWriteStreamQueue::ManagedAsyncWriteStreamQueue(ClientContext &client
 	}
 
 	AsyncWriteTarget &async_target = *this;
-	write_queue = make_uniq<ManagedAsyncWriteQueue>(client_context, async_target);
+	write_queue = make_uniq<ManagedAsyncWriteQueue>(client_context, async_target, target.WritesMayBlock());
 }
 
 ManagedAsyncWriteStreamQueue::~ManagedAsyncWriteStreamQueue() {

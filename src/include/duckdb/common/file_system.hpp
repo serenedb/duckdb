@@ -281,6 +281,7 @@ public:
 
 	DUCKDB_API virtual bool CanSeek();
 	DUCKDB_API FileWriteMode GetWriteMode();
+	DUCKDB_API bool WritesMayBlock();
 	DUCKDB_API bool IsPipe();
 	DUCKDB_API bool OnDiskFile();
 	//! Try to obtain a network throughput estimate (Local files return false).
@@ -539,6 +540,7 @@ public:
 	DUCKDB_API virtual bool IsManuallySet();
 	//! Return the write ordering contract for this handle.
 	DUCKDB_API virtual FileWriteMode GetWriteMode(FileHandle &handle);
+	DUCKDB_API virtual bool WritesMayBlock(FileHandle &handle);
 	//! Whether or not we can seek into the file
 	DUCKDB_API virtual bool CanSeek();
 	//! Whether or not the FS handles plain files on disk. This is relevant for certain optimizations, as random reads

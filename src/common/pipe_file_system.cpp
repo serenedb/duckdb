@@ -64,6 +64,10 @@ timestamp_t PipeFileSystem::GetLastModifiedTime(FileHandle &handle) {
 	return child_handle.file_system.GetLastModifiedTime(child_handle);
 }
 
+bool PipeFileSystem::WritesMayBlock(FileHandle &handle) {
+	return handle.Cast<PipeFile>().child_handle->WritesMayBlock();
+}
+
 void PipeFileSystem::FileSync(FileHandle &handle) {
 }
 

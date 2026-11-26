@@ -951,6 +951,10 @@ FileWriteMode FileSystem::GetWriteMode(FileHandle &handle) {
 	return FileWriteMode::SEQUENTIAL;
 }
 
+bool FileSystem::WritesMayBlock(FileHandle &handle) {
+	return true;
+}
+
 unique_ptr<FileHandle> FileSystem::OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle, bool write) {
 	throw NotImplementedException("%s: OpenCompressedFile is not implemented!", GetName());
 }
@@ -1057,6 +1061,10 @@ bool FileHandle::CanSeek() {
 
 FileWriteMode FileHandle::GetWriteMode() {
 	return file_system.GetWriteMode(*this);
+}
+
+bool FileHandle::WritesMayBlock() {
+	return file_system.WritesMayBlock(*this);
 }
 
 FileCompressionType FileHandle::GetFileCompressionType() {

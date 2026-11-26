@@ -142,6 +142,10 @@ void AsyncFileWriter::WriteDataInternal(const_data_ptr_t buffer, idx_t write_siz
 	if (finished) {
 		throw IOException("Cannot write to closed file \"%s\"", path);
 	}
+	if (!write_queue->IsAsync()) {
+		WriteDataSynchronously(const_cast<data_ptr_t>(buffer), write_size);
+		return;
+	}
 
 	// Caller-owned memory cannot outlive async scheduling, so even large const inputs are copied before registration.
 	if (write_size >= AsyncWriteConfig::COPIED_BUFFER_CAPACITY) {
@@ -305,6 +309,10 @@ void AsyncFileWriter::LeaveBatch() noexcept {
 
 FileWriteMode AsyncFileWriter::GetWriteMode() {
 	return handle->GetWriteMode();
+}
+
+bool AsyncFileWriter::WritesMayBlock() {
+	return handle->WritesMayBlock();
 }
 
 bool AsyncFileWriter::IsLocalFile() {

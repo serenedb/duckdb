@@ -84,7 +84,7 @@ class AsyncWriteQueue {
 	friend class AsyncWriteQueueTaskGuard;
 
 public:
-	DUCKDB_API AsyncWriteQueue(ClientContext &client_context, AsyncWriteTarget &target);
+	DUCKDB_API AsyncWriteQueue(ClientContext &client_context, AsyncWriteTarget &target, bool async = true);
 	DUCKDB_API ~AsyncWriteQueue();
 
 	AsyncWriteQueue(const AsyncWriteQueue &) = delete;
@@ -193,6 +193,9 @@ public:
 	virtual FileWriteMode GetWriteMode() = 0;
 	//! Whether this target is a local file-like target. Remote targets use larger coalesced writes.
 	virtual bool IsLocalFile() = 0;
+	virtual bool WritesMayBlock() {
+		return true;
+	}
 	//! Write a specific byte range using the target's explicit-offset write path.
 	virtual void Write(data_ptr_t buffer, idx_t size, idx_t offset) = 0;
 	//! Write bytes using the target's sequential write path.
@@ -214,7 +217,7 @@ public:
 	enum class SchedulePolicy : uint8_t { THRESHOLD, FORCE };
 
 public:
-	DUCKDB_API ManagedAsyncWriteQueue(ClientContext &client_context, AsyncWriteTarget &target);
+	DUCKDB_API ManagedAsyncWriteQueue(ClientContext &client_context, AsyncWriteTarget &target, bool async = true);
 	DUCKDB_API ~ManagedAsyncWriteQueue() override;
 
 	ManagedAsyncWriteQueue(const ManagedAsyncWriteQueue &) = delete;
