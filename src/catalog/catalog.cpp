@@ -2152,7 +2152,7 @@ void Catalog::RequireSubscription(ClientContext &context, const RoleAccess &role
 }
 
 void Catalog::RequireSubscription(ClientContext &context, const RoleAccess &role, CatalogEntry &subscription,
-                                  const AlterSubscriptionInfo &info) {
+                                  optional_ptr<const AlterSubscriptionInfo> alter) {
 }
 
 catalog_entry_vector_t Catalog::OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) {

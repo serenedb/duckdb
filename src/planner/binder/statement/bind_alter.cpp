@@ -271,11 +271,13 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_SUBSCRIPTION) {
-		auto &subscription = *entry_retriever.GetEntry(
-		    EntryLookupInfo(CatalogType::SUBSCRIPTION_ENTRY, info->GetQualifiedName(), AclMode::Own));
+		auto &alter = info->Cast<AlterSubscriptionInfo>();
+		auto &subscription = *entry_retriever.GetEntry(EntryLookupInfo(
+		    CatalogType::SUBSCRIPTION_ENTRY, info->GetQualifiedName(),
+		    alter.alter_subscription_type == AlterSubscriptionType::RENAME ? AclMode::Rename : AclMode::Own));
 		auto &catalog = subscription.ParentCatalog();
 		info->SetQualifiedName(catalog.GetName(), Identifier(), subscription.name);
-		catalog.RequireSubscription(context, CheckAs(), subscription, info->Cast<AlterSubscriptionInfo>());
+		catalog.RequireSubscription(context, CheckAs(), subscription, alter);
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 		return nullptr;
 	}

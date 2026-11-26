@@ -574,7 +574,7 @@ public:
 	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role,
 	                                 const CreateSubscriptionInfo &info);
 	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role, CatalogEntry &subscription,
-	                                 const AlterSubscriptionInfo &info);
+	                                 optional_ptr<const AlterSubscriptionInfo> alter);
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
 	virtual void ScanOwned(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);

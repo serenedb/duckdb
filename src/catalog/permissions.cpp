@@ -27,7 +27,6 @@
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
-#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 
 #include <absl/algorithm/container.h>
 
@@ -381,13 +380,6 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	}
 	if (Uses(use, AclMode::Own | AclMode::Rename)) {
 		RequireOwnership(role, entry, overload, naming);
-	}
-	if (Uses(use, AclMode::Own) && entry.type == CatalogType::SUBSCRIPTION_ENTRY &&
-	    !entry.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
-		throw PermissionException::WithHint(
-		    "Subscriptions with the password_required option set to false may only be created or modified by the "
-		    "superuser.",
-		    "password_required=false is superuser-only");
 	}
 	if (Uses(use, AclMode::Rename)) {
 		const auto container = ObjectKindOf(entry.type).container;

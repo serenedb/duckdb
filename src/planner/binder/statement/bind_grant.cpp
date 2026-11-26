@@ -231,35 +231,20 @@ static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const
 	RequireGrantable(binder, info, object, role, target);
 }
 
-static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectReference &object) {
-	auto &context = binder.context;
-	auto &entry = ResolvePermissionsTarget(binder, info, object);
-	Binder::RefuseSystemTablespace(entry);
-	auto &permissions = TargetPermissions(object.overload_oid, entry);
-	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
+static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner,
+                            optional_ptr<const unordered_set<idx_t>> reassigned_schemas) {
 	auto &role = binder.CheckAs();
-	const bool enforce = !role.is_superuser;
-	const bool relation = Catalog::InRelationNamespace(entry.type);
-	if (enforce && relation) {
-		Require(context, role, entry, AclMode::Own);
-	}
-	if (info.new_owner_id == permissions.owner) {
+	if (role.is_superuser) {
 		return;
 	}
-	if (entry.type == CatalogType::SEQUENCE_ENTRY) {
-		RefuseOwnedSequence(context, entry);
+	auto &context = binder.context;
+	if (entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
+		entry.ParentCatalog().RequireSubscription(context, role, entry, nullptr);
 	}
-	if (!enforce) {
-		return;
+	if (!reassigned_schemas && !role.CanSet(new_owner)) {
+		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(new_owner));
 	}
-	if (!relation) {
-		Require(context, role, entry, AclMode::Own,
-		        object.overload_oid ? entry.Cast<MacroCatalogEntry>().FindOverload(object.overload_oid).get()
-		                            : nullptr);
-	}
-	if (!role.CanSet(info.new_owner_id)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(info.new_owner_id));
-	}
+	const auto container = ObjectKindOf(entry.type).container;
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
 		if (!role.Has(RoleOption::CreateDb)) {
 			throw PermissionException("permission denied to change owner of database");
@@ -269,19 +254,46 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 		    Catalog::GetEntry(context, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                      QualifiedName(entry.ParentCatalog().GetName(), Identifier(),
 		                                    Identifier(entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name)));
-		Require(context, context.AccessOf(info.new_owner_id), wrapper, AclMode::Usage);
-	} else if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
-		if (auto database = Catalog::GetEntry(
-		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(entry.ParentCatalog().GetName())),
-		        OnEntryNotFound::RETURN_NULL)) {
-			Require(context, role, *database, AclMode::Create);
-		}
-	} else if (entry.type != CatalogType::TABLESPACE_ENTRY) {
+		Require(context, binder.AccessOf(new_owner), wrapper, AclMode::Usage);
+	} else if (container == ObjectContainer::DATABASE) {
+		binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY,
+		                                                 QualifiedName(entry.ParentCatalog().GetName()),
+		                                                 AclMode::Create),
+		                                 OnEntryNotFound::RETURN_NULL);
+	} else if (container == ObjectContainer::SCHEMA &&
+	           (!reassigned_schemas ||
+	            (!Catalog::InRelationNamespace(entry.type) && entry.type != CatalogType::TYPE_ENTRY))) {
 		auto &schema = entry.ParentSchema(context);
-		if (!Allowed(context.AccessOf(info.new_owner_id), schema, AclMode::Create)) {
+		if ((!reassigned_schemas || !reassigned_schemas->count(schema.oid)) &&
+		    !Allowed(binder.AccessOf(new_owner), schema, AclMode::Create)) {
 			ThrowPermissionDenied(schema);
 		}
 	}
+}
+
+static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectReference &object) {
+	auto &context = binder.context;
+	auto &entry = ResolvePermissionsTarget(binder, info, object);
+	Binder::RefuseSystemTablespace(entry);
+	auto &permissions = TargetPermissions(object.overload_oid, entry);
+	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
+	auto &role = binder.CheckAs();
+	const bool relation = Catalog::InRelationNamespace(entry.type);
+	if (relation) {
+		Require(context, role, entry, AclMode::Own);
+	}
+	if (info.new_owner_id == permissions.owner) {
+		return;
+	}
+	if (entry.type == CatalogType::SEQUENCE_ENTRY) {
+		RefuseOwnedSequence(context, entry);
+	}
+	if (!relation) {
+		Require(context, role, entry, AclMode::Own,
+		        object.overload_oid ? entry.Cast<MacroCatalogEntry>().FindOverload(object.overload_oid).get()
+		                            : nullptr);
+	}
+	RequireNewOwner(binder, entry, info.new_owner_id, nullptr);
 }
 
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
@@ -340,56 +352,43 @@ static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, cons
 
 static void ListReassigned(Binder &binder, AlterOwnedInfo &info) {
 	auto &context = binder.context;
-	auto &role = binder.CheckAs();
-	const auto &new_owner = context.AccessOf(info.new_owner_id);
 	const auto reassigned = [&](idx_t owner) {
 		return owner != info.new_owner_id && absl::c_linear_search(info.role_ids, owner);
 	};
-	auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
-	const auto transaction = catalog.GetCatalogTransaction(context);
-	unordered_set<idx_t> given;
-	const auto add = [&](CatalogEntry &entry, idx_t overload) {
+	unordered_set<idx_t> schemas;
+	const auto add = [&](CatalogTransaction transaction, CatalogEntry &entry, idx_t overload) {
+		RequireNewOwner(binder, entry, info.new_owner_id, schemas);
 		if (entry.type == CatalogType::SCHEMA_ENTRY) {
-			binder.EntryRetriever().GetEntry(
-			    EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName()), AclMode::Create),
-			    OnEntryNotFound::RETURN_NULL);
-			given.insert(entry.oid);
-		} else if (!role.is_superuser &&
-		           (overload || entry.type == CatalogType::TOKENIZER_ENTRY || entry.type == CatalogType::JOB_ENTRY)) {
-			auto &schema = entry.ParentSchema(transaction);
-			if (!given.count(schema.oid) && !Allowed(new_owner, schema, AclMode::Create)) {
-				ThrowPermissionDenied(schema);
-			}
+			schemas.insert(entry.oid);
 		}
 		info.objects.push_back(
-		    {.name = QualifiedName::FromCatalogSchema(catalog.GetName(),
+		    {.name = QualifiedName::FromCatalogSchema(entry.ParentCatalog().GetName(),
 		                                              DependencyManager::GetSchemaPath(transaction, entry), entry.name),
 		     .type = entry.type,
 		     .overload_oid = overload});
 	};
+	auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
+	const auto transaction = catalog.GetCatalogTransaction(context);
 	catalog.ScanOwned(transaction, [&](CatalogEntry &entry) {
 		if (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY) {
 			if (reassigned(entry.permissions.owner)) {
-				add(entry, 0);
+				add(transaction, entry, 0);
 			}
 			return;
 		}
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		for (auto &overload : macro.macros) {
 			if (reassigned(macro.OverloadPermissions(*overload).owner)) {
-				add(entry, macro.OverloadOid(*overload));
+				add(transaction, entry, macro.OverloadOid(*overload));
 			}
 		}
 	});
 	auto &system = Catalog::GetSystemCatalog(context);
-	system.ScanOwned(system.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
-		if (!reassigned(entry.permissions.owner)) {
-			return;
+	const auto system_transaction = system.GetCatalogTransaction(context);
+	system.ScanOwned(system_transaction, [&](CatalogEntry &entry) {
+		if (reassigned(entry.permissions.owner)) {
+			add(system_transaction, entry, 0);
 		}
-		if (entry.type == CatalogType::DATABASE_ENTRY && !role.is_superuser && !role.Has(RoleOption::CreateDb)) {
-			throw PermissionException("permission denied to change owner of database");
-		}
-		info.objects.push_back({.name = QualifiedName(system.GetName(), Identifier(), entry.name), .type = entry.type});
 	});
 }
 
