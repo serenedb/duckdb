@@ -707,6 +707,9 @@ public:
 		auto &order = *bind_data.scan_order;
 		if (bind_data.file_list->GetExpandResult() == FileExpandResult::SINGLE_FILE &&
 		    bind_data.reader_bind.schema.empty()) {
+			if (bind_data.IsHivePartitioningColumn(order.column_idx.GetPrimaryIndex())) {
+				return optional_idx();
+			}
 			return order.column_idx.GetPrimaryIndex();
 		}
 		if (order.column_idx.HasChildren()) {

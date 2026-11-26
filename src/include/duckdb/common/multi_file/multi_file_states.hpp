@@ -105,6 +105,15 @@ struct MultiFileBindData : public TableFunctionData {
 		return scan_order || partitions_to_scan;
 	}
 
+	bool IsHivePartitioningColumn(idx_t column_idx) const {
+		for (auto &hive : reader_bind.hive_partitioning_indexes) {
+			if (hive.index == column_idx) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void Initialize(shared_ptr<BaseFileReader> reader) {
 		initial_reader = std::move(reader);
 	}

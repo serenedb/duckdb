@@ -818,6 +818,33 @@ static void TableFunctionMultiFileGetMetrics(TableFunctionGetMetricsInput &input
 	input.operator_metrics.total_row_groups_to_scan = scan_state.collected_total;
 }
 
+class ScannedFilePartition final : public PartitionRowGroup {
+public:
+	ScannedFilePartition(const MultiFileBindData &bind_data_p, shared_ptr<PartitionRowGroup> file_p)
+	    : bind_data(bind_data_p), file(std::move(file_p)) {
+	}
+
+	optionally_owned_ptr<const BaseStatistics> GetColumnStatistics(const StorageIndex &storage_index) final {
+		if (bind_data.IsHivePartitioningColumn(storage_index.GetPrimaryIndex())) {
+			return {};
+		}
+		return file->GetColumnStatistics(storage_index);
+	}
+
+	bool MinMaxIsExact(const StorageIndex &storage_index) final {
+		return !bind_data.IsHivePartitioningColumn(storage_index.GetPrimaryIndex()) &&
+		       file->MinMaxIsExact(storage_index);
+	}
+
+	bool HasPendingWrites() final {
+		return file->HasPendingWrites();
+	}
+
+private:
+	const MultiFileBindData &bind_data;
+	const shared_ptr<PartitionRowGroup> file;
+};
+
 vector<PartitionStatistics> TableFunctionMultiFileWrapper::GetPartitionStats(ClientContext &context,
                                                                              GetPartitionStatsInput &input) {
 	vector<PartitionStatistics> result;
@@ -832,7 +859,17 @@ vector<PartitionStatistics> TableFunctionMultiFileWrapper::GetPartitionStats(Cli
 	}
 	BoundTableFunction bound_function(function);
 	GetPartitionStatsInput file_input(bound_function, reader.bind_data.get());
-	return function.get_partition_stats(context, file_input);
+	result = function.get_partition_stats(context, file_input);
+	if (bind_data.reader_bind.hive_partitioning_indexes.empty()) {
+		return result;
+	}
+	for (auto &partition : result) {
+		if (partition.partition_row_group) {
+			partition.partition_row_group =
+			    make_shared_ptr<ScannedFilePartition>(bind_data, std::move(partition.partition_row_group));
+		}
+	}
+	return result;
 }
 
 static vector<column_t> TableFunctionMultiFileGetRowIdColumns(ClientContext &, optional_ptr<FunctionData>) {
