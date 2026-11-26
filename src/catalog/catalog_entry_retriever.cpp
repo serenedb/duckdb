@@ -145,6 +145,12 @@ const RoleAccess &CatalogEntryRetriever::CheckAs() const {
 	return acting && acting->lookups ? *acting->lookups : context.CurrentRole();
 }
 
+void CatalogEntryRetriever::CheckUse(CatalogEntry &entry, AclMode use) {
+	if (use != AclMode::NoRights) {
+		Require(context, acting && acting->privileges ? *acting->privileges : context.CurrentRole(), entry, use);
+	}
+}
+
 optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr<CatalogEntry> result) {
 	if (!result) {
 		return result;

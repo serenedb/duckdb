@@ -124,11 +124,7 @@ private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
 	optional_ptr<CatalogEntry> GetBoundEntry(const EntryLookupInfo &lookup_info);
 	void RecordBinding(const EntryLookupInfo &lookup_info, CatalogEntry &entry);
-	void CheckUse(CatalogEntry &entry, AclMode use) {
-		if (use != AclMode::NoRights) {
-			Require(context, CheckAs(), entry, use);
-		}
-	}
+	void CheckUse(CatalogEntry &entry, AclMode use);
 
 private:
 	//! (optional) callback, called on every successful entry retrieval
