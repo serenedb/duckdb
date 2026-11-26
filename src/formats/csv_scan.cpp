@@ -750,9 +750,9 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	idx_t range_bytes = DConstants::INVALID_INDEX;
 	if (!stream && !source.sniffing) {
 		const idx_t data_size = size - MinValue(start, size);
-		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 		const idx_t range_max = lean->Dialect().quoting == RowQuoting::ANYWHERE ? QUOTED_RANGE_MAX : RANGE_MAX;
-		const idx_t wanted = MinValue(MaxValue(data_size / (threads * 4), RANGE_MIN), range_max);
+		const idx_t wanted =
+		    RowRanges::RangeBytes(data_size, TaskScheduler::QueryThreads(context), RANGE_MIN, range_max);
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
 	} else if (stream && !source.sniffing && options.parallel) {
 		const idx_t limit = input->host_stream ? RowInput::HOST_STREAM_BYTES : RANGE_MAX;
