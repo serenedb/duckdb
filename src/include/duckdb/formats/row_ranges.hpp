@@ -41,6 +41,15 @@ private:
 	shared_ptr<RowBytes> bytes;
 };
 
+class RowBufferHolder : public AuxiliaryDataHolder {
+public:
+	explicit RowBufferHolder(shared_ptr<RowBuffer> buffer_p) : buffer(std::move(buffer_p)) {
+	}
+
+private:
+	shared_ptr<RowBuffer> buffer;
+};
+
 struct RowMemory {
 	shared_ptr<RowBuffer> buffer;
 	const char *data = nullptr;

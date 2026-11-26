@@ -34,6 +34,18 @@ public:
 
 static constexpr idx_t MAPPED_FILE_MIN_BYTES = idx_t(1) << 21;
 
+class WholeFile : public RowBuffer {
+public:
+	static shared_ptr<WholeFile> Read(ClientContext &context, FileHandle &handle);
+
+	const char *data = nullptr;
+	idx_t size = 0;
+
+private:
+	unique_ptr<MemoryMappedFile> mapping;
+	AllocatedData owned;
+};
+
 class MappedRowSource : public RowSource {
 public:
 	static shared_ptr<MappedRowSource> Open(ClientContext &context, CSVFileHandle &handle, const string &path);
