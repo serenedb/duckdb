@@ -21,6 +21,7 @@ struct MMapOptions {
 	//! Size of the virtual mapping. Writable mappings sparsely extend the file up to this
 	//! size at open time so the region never has to be remapped. Ignored for read-only.
 	idx_t reserve_size = 0;
+	idx_t tail = 0;
 };
 
 //! A fixed-size memory-mapped view of a file. The mapping pointer is stable for the
@@ -50,9 +51,14 @@ public:
 	DUCKDB_API virtual void Prefetch(idx_t location, idx_t nr_bytes);
 	//! Drops the whole pages of [location, location + nr_bytes) from the mapping and the page cache
 	DUCKDB_API virtual void Evict(idx_t location, idx_t nr_bytes);
+	DUCKDB_API virtual void Release(idx_t location, idx_t nr_bytes);
+	DUCKDB_API virtual bool IsCached(idx_t location, idx_t nr_bytes);
 
 	DUCKDB_API idx_t Size() const {
 		return size;
+	}
+	idx_t Tail() const {
+		return tail;
 	}
 	const string &GetPath() const {
 		return path;
@@ -68,6 +74,7 @@ public:
 protected:
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
+	idx_t tail = 0;
 };
 
 } // namespace duckdb
