@@ -13,6 +13,9 @@ statement ok
 COPY (SELECT i, i // 5 AS j FROM range(100000000) t(i)) TO '{TEST_DIR}/large_integers.parquet'
 
 statement ok
+SET threads=8
+
+statement ok
 SET memory_limit='0.3GB'
 
 # we need to do this otherwise we buffer a lot more data in a BatchedDataCollection
