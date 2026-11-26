@@ -243,7 +243,8 @@ public:
 	//! Bind using an explicitly provided interface - used by wrappers that construct the interface themselves
 	static unique_ptr<FunctionData> MultiFileBindInterface(ClientContext &context, TableFunctionBindInput &input,
 	                                                       vector<LogicalType> &return_types, vector<Identifier> &names,
-	                                                       unique_ptr<MultiFileReaderInterface> interface_p) {
+	                                                       unique_ptr<MultiFileReaderInterface> interface_p,
+	                                                       shared_ptr<MultiFileList> expanded = nullptr) {
 		auto interface = std::move(interface_p);
 		auto multi_file_reader = MultiFileReader::Create(input.table_function);
 
@@ -261,7 +262,8 @@ public:
 			}
 		}
 
-		auto file_list = multi_file_reader->CreateFileList(context, input.inputs[0], glob_input);
+		auto file_list =
+		    expanded ? std::move(expanded) : multi_file_reader->CreateFileList(context, input.inputs[0], glob_input);
 
 		interface->InitializeInterface(context, *multi_file_reader, *file_list);
 

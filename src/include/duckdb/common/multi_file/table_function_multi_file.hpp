@@ -390,6 +390,11 @@ public:
 	                                                  vector<LogicalType> &return_types, vector<Identifier> &names,
 	                                                  TableFunction single_file_function,
 	                                                  TableFunctionMultiFileSettings settings);
+	static unique_ptr<FunctionData> MultiFileBindWith(ClientContext &context, TableFunctionBindInput &input,
+	                                                  vector<LogicalType> &return_types, vector<Identifier> &names,
+	                                                  TableFunction single_file_function,
+	                                                  TableFunctionMultiFileSettings settings,
+	                                                  vector<OpenFileInfo> expanded);
 
 	//! Binds a COPY ... FROM over the wrapped function - assign this to CopyFunction::copy_from_bind, together with
 	//! the wrapped multi-file function as CopyFunction::copy_from_function
