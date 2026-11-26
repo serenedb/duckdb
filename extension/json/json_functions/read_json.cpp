@@ -99,7 +99,7 @@ public:
 			for (idx_t i = 0; i < next; i++) {
 				const auto &val = values[i];
 				if (val) {
-					JSONStructure::ExtractStructure(*val, node, true, options.geojson.value_or(false));
+					JSONStructure::ExtractStructure(*val, node, options.geojson.value_or(false));
 				}
 			}
 			remaining -= next;

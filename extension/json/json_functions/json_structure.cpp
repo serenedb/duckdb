@@ -40,12 +40,6 @@ JSONStructureNode::JSONStructureNode(const char *key_ptr, const size_t key_len) 
 	key = make_uniq<string>(key_ptr, key_len);
 }
 
-JSONStructureNode::JSONStructureNode(const JSONNode &key_p, const JSONNode &val_p, const bool ignore_errors,
-                                     const bool detect_geojson)
-    : JSONStructureNode(key_p.str, key_p.size) {
-	JSONStructure::ExtractStructure(val_p, *this, ignore_errors, detect_geojson);
-}
-
 static void SwapJSONStructureNode(JSONStructureNode &a, JSONStructureNode &b) noexcept {
 	std::swap(a.key, b.key);
 	std::swap(a.initialized, b.initialized);
@@ -534,48 +528,22 @@ JSONStructureNode &JSONStructureDescription::GetOrCreateChild(const char *key_pt
 	return children.back();
 }
 
-JSONStructureNode &JSONStructureDescription::GetOrCreateChild(const JSONNode &key, const JSONNode &val,
-                                                              const bool ignore_errors, const bool detect_geojson) {
-	D_ASSERT(key.type == JSONValueType::STRING);
-	auto &child = GetOrCreateChild(key.str, key.size);
-	JSONStructure::ExtractStructure(val, child, ignore_errors, detect_geojson);
-	return child;
-}
-
-static void ExtractStructureArray(const JSONNode &arr, JSONStructureNode &node, const bool ignore_errors,
-                                  const bool detect_geojson) {
+static void ExtractStructureArray(const JSONNode &arr, JSONStructureNode &node, const bool detect_geojson) {
 	D_ASSERT(arr.type == JSONValueType::ARRAY);
 	auto &description = node.GetOrCreateDescription(LogicalTypeId::LIST);
 	auto &child = description.GetOrCreateChild();
 
 	for (auto &val : arr.Elements()) {
-		JSONStructure::ExtractStructure(val, child, ignore_errors, detect_geojson);
+		JSONStructure::ExtractStructure(val, child, detect_geojson);
 	}
 }
 
-static void ExtractStructureObject(const JSONNode &obj, JSONStructureNode &node, const bool ignore_errors,
-                                   const bool detect_geojson) {
+static void ExtractStructureObject(const JSONNode &obj, JSONStructureNode &node, const bool detect_geojson) {
 	D_ASSERT(obj.type == JSONValueType::OBJECT);
 	auto &description = node.GetOrCreateDescription(LogicalTypeId::STRUCT);
-
-	// Keep track of keys so we can detect duplicates
-	unordered_set<string> obj_keys;
-	case_insensitive_set_t ci_obj_keys;
-
 	for (auto &key : obj.Keys()) {
-		auto &val = *(&key + 1);
-		const string obj_key(key.GetString());
-		auto insert_result = obj_keys.insert(obj_key);
-		if (!ignore_errors && !insert_result.second) { // Exact match
-			JSONCommon::ThrowValFormatError("Duplicate key \"" + obj_key + "\" in object %s", obj);
-		}
-		auto ci_insert_result = ci_obj_keys.insert(obj_key);
-		if (!ignore_errors && !ci_insert_result.second) { // Case-insensitive match
-			JSONCommon::ThrowValFormatError("Duplicate key (different case) \"" + obj_key + "\" and \"" +
-			                                    *ci_insert_result.first + "\" in object %s",
-			                                obj);
-		}
-		description.GetOrCreateChild(key, val, ignore_errors, detect_geojson);
+		D_ASSERT(key.type == JSONValueType::STRING);
+		JSONStructure::ExtractStructure(*(&key + 1), description.GetOrCreateChild(key.str, key.size), detect_geojson);
 	}
 }
 
@@ -589,8 +557,7 @@ static void ExtractStructureVal(const JSONNode &val, JSONStructureNode &node) {
 	}
 }
 
-void JSONStructure::ExtractStructure(const JSONNode &val, JSONStructureNode &node, const bool ignore_errors,
-                                     const bool detect_geojson) {
+void JSONStructure::ExtractStructure(const JSONNode &val, JSONStructureNode &node, const bool detect_geojson) {
 	StackDepth::Check();
 	node.count++;
 	if (val.type == JSONValueType::JSON_NULL) {
@@ -599,7 +566,7 @@ void JSONStructure::ExtractStructure(const JSONNode &val, JSONStructureNode &nod
 
 	switch (val.type) {
 	case JSONValueType::ARRAY:
-		return ExtractStructureArray(val, node, ignore_errors, detect_geojson);
+		return ExtractStructureArray(val, node, detect_geojson);
 	case JSONValueType::OBJECT:
 		// A GeoJSON geometry is a leaf: it becomes GEOMETRY rather than a struct of type/coordinates. Detecting it
 		// here (rather than on the finished tree) means geometries of different kinds still merge into one type.
@@ -607,15 +574,15 @@ void JSONStructure::ExtractStructure(const JSONNode &val, JSONStructureNode &nod
 			node.GetOrCreateDescription(LogicalTypeId::GEOMETRY);
 			return;
 		}
-		return ExtractStructureObject(val, node, ignore_errors, detect_geojson);
+		return ExtractStructureObject(val, node, detect_geojson);
 	default:
 		return ExtractStructureVal(val, node);
 	}
 }
 
-JSONStructureNode ExtractStructureInternal(const JSONNode &val, const bool ignore_errors) {
+JSONStructureNode ExtractStructureInternal(const JSONNode &val) {
 	JSONStructureNode node;
-	JSONStructure::ExtractStructure(val, node, ignore_errors, false);
+	JSONStructure::ExtractStructure(val, node, false);
 	return node;
 }
 
@@ -660,7 +627,7 @@ static void WriteStructure(const JSONStructureNode &node, JSONStringWriter &writ
 static optional<string_t> JSONStructureFunction(const JSONNode *val, JSONFunctionLocalState &lstate, Vector &result) {
 	auto &writer = lstate.writer;
 	writer.Clear();
-	WriteStructure(ExtractStructureInternal(*val, true), writer);
+	WriteStructure(ExtractStructureInternal(*val), writer);
 	return StringVector::AddString(result, writer.View().data(), writer.View().size());
 }
 
