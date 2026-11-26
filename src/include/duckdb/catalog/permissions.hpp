@@ -48,7 +48,6 @@ DUCKDB_API bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMo
 DUCKDB_API void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
                         optional_ptr<const MacroFunction> overload = nullptr,
                         optional_ptr<const StatementNaming> naming = nullptr);
-DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);
 

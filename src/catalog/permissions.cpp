@@ -264,12 +264,6 @@ void ThrowPermissionDenied(const CatalogEntry &entry, optional_ptr<const MacroFu
 	ThrowPermissionDenied(entry.type, entry.name.GetIdentifierName(), overload);
 }
 
-void RequireSuperuser(const RoleAccess &role) {
-	if (!role.is_superuser) {
-		throw PermissionException("permission denied: superuser required");
-	}
-}
-
 static bool IsFunction(const CatalogEntry &entry) {
 	switch (entry.type) {
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
