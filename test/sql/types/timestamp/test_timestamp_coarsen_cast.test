@@ -1,0 +1,49 @@
+# name: test/sql/types/timestamp/test_timestamp_coarsen_cast.test
+# description: Timestamps cast to a coarser unit round half away from the epoch, a whole vector at a time, and keep infinities and NULLs
+# group: [timestamp]
+
+statement ok
+CREATE TABLE ns AS SELECT make_timestamp_ns(i * 250 - 5000000) AS t FROM range(0, 40000) t(i);
+
+statement ok
+CREATE TABLE ns_wide AS SELECT make_timestamp_ns(i * 250000000 - 5000000000 + i % 3 - 1) AS t FROM range(0, 40000) t(i);
+
+statement ok
+CREATE TABLE us AS SELECT TIMESTAMP '1970-01-01 00:00:00' + INTERVAL (i * 250 - 5000000) MICROSECOND AS t FROM range(0, 40000) t(i);
+
+query I
+SELECT count(*) FROM ns WHERE epoch_us(t::TIMESTAMP) != CASE WHEN epoch_ns(t) >= 0 THEN (epoch_ns(t) + 500) // 1000 ELSE -((500 - epoch_ns(t)) // 1000) END OR epoch_ms(t::TIMESTAMP_MS) != CASE WHEN epoch_ns(t) >= 0 THEN (epoch_ns(t) + 500000) // 1000000 ELSE -((500000 - epoch_ns(t)) // 1000000) END
+----
+0
+
+query I
+SELECT count(*) FROM ns_wide WHERE epoch_ms(t::TIMESTAMP_S) != 1000 * CASE WHEN epoch_ns(t) >= 0 THEN (epoch_ns(t) + 500000000) // 1000000000 ELSE -((500000000 - epoch_ns(t)) // 1000000000) END OR epoch_ms(t::TIMESTAMP_MS) != CASE WHEN epoch_ns(t) >= 0 THEN (epoch_ns(t) + 500000) // 1000000 ELSE -((500000 - epoch_ns(t)) // 1000000) END
+----
+0
+
+query I
+SELECT count(*) FROM us WHERE epoch_ms(t::TIMESTAMP_MS) != CASE WHEN epoch_us(t) >= 0 THEN (epoch_us(t) + 500) // 1000 ELSE -((500 - epoch_us(t)) // 1000) END OR epoch_ms(t::TIMESTAMP_S) != 1000 * CASE WHEN epoch_us(t) >= 0 THEN (epoch_us(t) + 500000) // 1000000 ELSE -((500000 - epoch_us(t)) // 1000000) END
+----
+0
+
+query I
+SELECT count(*) FROM us WHERE epoch_ms(t::TIMESTAMP_MS::TIMESTAMP_S) != 1000 * CASE WHEN epoch_ms(t::TIMESTAMP_MS) >= 0 THEN (epoch_ms(t::TIMESTAMP_MS) + 500) // 1000 ELSE -((500 - epoch_ms(t::TIMESTAMP_MS)) // 1000) END
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT t FROM ns UNION ALL SELECT t FROM ns_wide) WHERE t::TIMESTAMPTZ_NS::TIMESTAMPTZ::TIMESTAMP != t::TIMESTAMP OR t::TIMESTAMPTZ_NS::TIMESTAMP_MS != t::TIMESTAMP_MS OR t::TIMESTAMPTZ_NS::TIMESTAMP_S != t::TIMESTAMP_S
+----
+0
+
+query I
+SELECT count(*) FROM us WHERE t::TIMESTAMPTZ::TIMESTAMP_MS != t::TIMESTAMP_MS OR t::TIMESTAMPTZ::TIMESTAMP_S != t::TIMESTAMP_S
+----
+0
+
+query IIIIII
+SELECT t::TIMESTAMP, t::TIMESTAMP_MS, t::TIMESTAMP_S, t::TIMESTAMPTZ_NS::TIMESTAMPTZ::TIMESTAMP, t::TIMESTAMP::TIMESTAMP_MS, t::TIMESTAMP::TIMESTAMPTZ::TIMESTAMP_S FROM (VALUES (1, TIMESTAMP_NS 'infinity'), (2, TIMESTAMP_NS '-infinity'), (3, NULL)) v(k, t) ORDER BY k
+----
+infinity	infinity	infinity	infinity	infinity	infinity
+-infinity	-infinity	-infinity	-infinity	-infinity	-infinity
+NULL	NULL	NULL	NULL	NULL	NULL
