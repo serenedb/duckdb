@@ -850,20 +850,45 @@ void ArrowToDuckDBConversion::ColumnArrowToDuckDBRunEndEncoded(Vector &vector, c
 		throw NotImplementedException("Type '%s' not implemented for RunEndEncoding", TypeIdToString(physical_type));
 	}
 }
+template <class TGT, class SRC>
+TGT DecimalValue(SRC value) {
+	if constexpr (std::is_same_v<SRC, TGT>) {
+		return value;
+	} else if constexpr (std::is_same_v<SRC, hugeint_t>) {
+		const auto low = static_cast<int64_t>(value.lower);
+		D_ASSERT(value.upper == (low >> 63));
+		return DecimalValue<TGT>(low);
+	} else if constexpr (std::is_same_v<TGT, hugeint_t>) {
+		return hugeint_t(static_cast<int64_t>(value));
+	} else {
+		D_ASSERT(value >= NumericLimits<TGT>::Minimum() && value <= NumericLimits<TGT>::Maximum());
+		return static_cast<TGT>(value);
+	}
+}
+
+template <class TGT, class SRC, class ROWS>
+void ConvertDecimalValues(SRC src_ptr, Vector &vector, ValidityMask &val_mask, idx_t size, const ROWS &rows) {
+	auto tgt_ptr = FlatVector::GetDataMutable<TGT>(vector);
+	if (val_mask.AllValid()) {
+		for (idx_t row = 0; row < size; row++) {
+			tgt_ptr[row] = DecimalValue<TGT>(src_ptr[rows[row]]);
+		}
+		return;
+	}
+	for (idx_t row = 0; row < size; row++) {
+		if (val_mask.RowIsValid(row)) {
+			tgt_ptr[row] = DecimalValue<TGT>(src_ptr[rows[row]]);
+		}
+	}
+}
+
 template <class SRC, class ROWS>
 void ConvertDecimal(SRC src_ptr, Vector &vector, ArrowArray &array, idx_t size, int64_t nested_offset,
                     uint64_t parent_offset, idx_t chunk_offset, ValidityMask &val_mask, DecimalBitWidth arrow_bit_width,
                     const ROWS &rows) {
 	switch (vector.GetType().InternalType()) {
 	case PhysicalType::INT16: {
-		auto tgt_ptr = FlatVector::GetDataMutable<int16_t>(vector);
-		for (idx_t row = 0; row < size; row++) {
-			if (val_mask.RowIsValid(row)) {
-				auto result = TryCast::Operation(src_ptr[rows[row]], tgt_ptr[row]);
-				D_ASSERT(result);
-				(void)result;
-			}
-		}
+		ConvertDecimalValues<int16_t>(src_ptr, vector, val_mask, size, rows);
 		break;
 	}
 	case PhysicalType::INT32: {
@@ -873,14 +898,7 @@ void ConvertDecimal(SRC src_ptr, Vector &vector, ArrowArray &array, idx_t size, 
 			                GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
 			SetDirectData(vector, data, size, rows);
 		} else {
-			auto tgt_ptr = FlatVector::GetDataMutable<int32_t>(vector);
-			for (idx_t row = 0; row < size; row++) {
-				if (val_mask.RowIsValid(row)) {
-					auto result = TryCast::Operation(src_ptr[rows[row]], tgt_ptr[row]);
-					D_ASSERT(result);
-					(void)result;
-				}
-			}
+			ConvertDecimalValues<int32_t>(src_ptr, vector, val_mask, size, rows);
 		}
 		break;
 	}
@@ -891,14 +909,7 @@ void ConvertDecimal(SRC src_ptr, Vector &vector, ArrowArray &array, idx_t size, 
 			                GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
 			SetDirectData(vector, data, size, rows);
 		} else {
-			auto tgt_ptr = FlatVector::GetDataMutable<int64_t>(vector);
-			for (idx_t row = 0; row < size; row++) {
-				if (val_mask.RowIsValid(row)) {
-					auto result = TryCast::Operation(src_ptr[rows[row]], tgt_ptr[row]);
-					D_ASSERT(result);
-					(void)result;
-				}
-			}
+			ConvertDecimalValues<int64_t>(src_ptr, vector, val_mask, size, rows);
 		}
 		break;
 	}
@@ -909,14 +920,7 @@ void ConvertDecimal(SRC src_ptr, Vector &vector, ArrowArray &array, idx_t size, 
 			                GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
 			SetDirectData(vector, data, size, rows);
 		} else {
-			auto tgt_ptr = FlatVector::GetDataMutable<hugeint_t>(vector);
-			for (idx_t row = 0; row < size; row++) {
-				if (val_mask.RowIsValid(row)) {
-					auto result = TryCast::Operation(src_ptr[rows[row]], tgt_ptr[row]);
-					D_ASSERT(result);
-					(void)result;
-				}
-			}
+			ConvertDecimalValues<hugeint_t>(src_ptr, vector, val_mask, size, rows);
 		}
 
 		break;
