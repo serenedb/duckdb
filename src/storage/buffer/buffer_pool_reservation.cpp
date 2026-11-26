@@ -30,6 +30,12 @@ void BufferPoolReservation::Resize(idx_t new_size) {
 	size = new_size;
 }
 
+void BufferPoolReservation::Retag(MemoryTag new_tag) {
+	pool.UpdateUsedMemory(tag, -UnsafeNumericCast<int64_t>(size));
+	pool.UpdateUsedMemory(new_tag, UnsafeNumericCast<int64_t>(size));
+	tag = new_tag;
+}
+
 void BufferPoolReservation::Merge(BufferPoolReservation src) {
 	size += src.size;
 	src.size = 0;

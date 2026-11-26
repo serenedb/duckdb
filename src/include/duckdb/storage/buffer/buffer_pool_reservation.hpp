@@ -33,6 +33,7 @@ struct BufferPoolReservation {
 	virtual ~BufferPoolReservation();
 
 	void Resize(idx_t new_size);
+	void Retag(MemoryTag new_tag);
 	void Merge(BufferPoolReservation src);
 	TempBufferPoolReservation Split(idx_t split_size);
 };
