@@ -9,7 +9,7 @@ unique_ptr<LogicalOperator> FilterPullup::PullupFromLeft(unique_ptr<LogicalOpera
 	         op->type == LogicalOperatorType::LOGICAL_ASOF_JOIN || op->type == LogicalOperatorType::LOGICAL_ANY_JOIN ||
 	         op->type == LogicalOperatorType::LOGICAL_EXCEPT || op->type == LogicalOperatorType::LOGICAL_DELIM_JOIN);
 
-	FilterPullup left_pullup(true, can_add_column);
+	FilterPullup left_pullup(true, can_add_column, op->type == LogicalOperatorType::LOGICAL_EXCEPT);
 	FilterPullup right_pullup(false, can_add_column);
 
 	op->children[0] = left_pullup.Rewrite(std::move(op->children[0]));
