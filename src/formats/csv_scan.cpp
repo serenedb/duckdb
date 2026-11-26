@@ -947,6 +947,7 @@ void CsvScan::Start(idx_t range_p) {
 	lean_rows = DConstants::INVALID_INDEX;
 	base = 0;
 	copy_ended = false;
+	copy_tail_reported = false;
 }
 
 bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
@@ -976,11 +977,15 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 				return false;
 			}
 			const idx_t count = MinValue(reader.Ready(), max_rows);
-			const idx_t rows = global.copy && global.copy->Text() ? CopyEndMarker(count) : count;
+			idx_t tail = DConstants::INVALID_INDEX;
+			const idx_t rows = global.copy && global.copy->Text() ? CopyEndMarker(count, tail) : count;
 			if (rows > 0) {
 				DecodeLean(rows, output);
 			} else {
 				output.Reset();
+			}
+			if (tail != DConstants::INVALID_INDEX) {
+				ReportCopyTail(tail);
 			}
 			reader.Emit(count);
 			if (output.size() > 0) {
@@ -1366,24 +1371,23 @@ CSVError CsvScan::CopyRowError(const CsvRow &row, const CsvRowError &error) {
 
 void CsvScan::ReportRow(idx_t row_idx, const CsvRow &row, vector<CsvRowError> &errors) {
 	if (global.copy) {
-		const auto rank = [](const CsvRowError &error) {
+		const auto order = [](const CsvRowError &error) -> std::pair<int, idx_t> {
 			switch (error.type) {
 			case CSVErrorType::INVALID_ENCODING:
-				return 0;
-			case CSVErrorType::UNTERMINATED_QUOTES:
-				return 1;
+				return {0, 0};
 			case CSVErrorType::TOO_MANY_COLUMNS:
+				return {2, 0};
 			case CSVErrorType::TOO_FEW_COLUMNS:
-				return 2;
+				return {3, error.column + 1};
 			case CSVErrorType::CAST_ERROR:
-				return 4;
+				return {3, error.column};
 			default:
-				return error.sqlstate.empty() || error.line_error ? 1 : 3;
+				return {error.sqlstate.empty() || error.line_error || error.line_value ? 1 : 3, error.column};
 			}
 		};
 		auto chosen = &errors[0];
 		for (auto &error : errors) {
-			if (rank(error) < rank(*chosen)) {
+			if (order(error) < order(*chosen)) {
 				chosen = &error;
 			}
 		}
@@ -1506,24 +1510,23 @@ void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_
 				continue;
 			}
 			if (global.copy) {
-				if (!failed[row]) {
-					const auto value = FlatVector::GetData<string_t>(parse)[row];
-					CsvRowError row_error {CSVErrorType::CAST_ERROR, column.file_column, 0, decode_error.RawMessage()};
-					auto &extra_info = decode_error.ExtraInfo();
-					const auto extra = [&](const char *key) {
-						const auto entry = extra_info.find(key);
-						return entry == extra_info.end() ? string() : entry->second;
-					};
-					row_error.sqlstate = extra("sqlstate");
-					row_error.detail = extra("detail");
-					row_error.hint = extra("hint");
-					row_error.value = CopyPrintout(std::string_view(value.GetData(), value.GetSize()));
-					row_error.has_value = true;
-					auto csv_error = CopyRowError(LeanRow(row), row_error);
-					Report(row, csv_error, false);
+				const auto value = FlatVector::GetData<string_t>(parse)[row];
+				CsvRowError row_error {CSVErrorType::CAST_ERROR, column.file_column, 0, decode_error.RawMessage()};
+				auto &extra_info = decode_error.ExtraInfo();
+				const auto extra = [&](const char *key) {
+					const auto entry = extra_info.find(key);
+					return entry == extra_info.end() ? string() : entry->second;
+				};
+				row_error.sqlstate = extra("sqlstate");
+				row_error.detail = extra("detail");
+				row_error.hint = extra("hint");
+				row_error.value = CopyPrintout(std::string_view(value.GetData(), value.GetSize()));
+				row_error.has_value = true;
+				if (value_errors.empty()) {
+					value_errors.resize(STANDARD_VECTOR_SIZE);
 				}
-				failed[row] = true;
-				rows_failed = true;
+				value_errors[row].push_back(std::move(row_error));
+				lean_errors = true;
 				continue;
 			}
 			failed[row] = true;
@@ -1783,19 +1786,24 @@ idx_t CsvScan::LeanLinesAt(idx_t position) {
 	return reader.LinesAt(position, range == 0 ? global.start_lines : 0);
 }
 
-idx_t CsvScan::CopyEndMarker(idx_t count) {
+idx_t CsvScan::CopyEndMarker(idx_t count, idx_t &tail) {
+	if (copy_tail_reported) {
+		return 0;
+	}
 	const idx_t shift = cursor.anchor - bytes->offset;
 	idx_t rows = copy_ended ? 0 : count;
-	bool data = false;
-	for (idx_t row = 0; row < count; row++) {
+	idx_t first_data = DConstants::INVALID_INDEX;
+	for (idx_t row = 0; row < count && tail == DConstants::INVALID_INDEX; row++) {
 		const bool empty = reader.RowEnd(row) - bytes->offset == fields.rows[row] + shift;
 		if (copy_ended) {
 			if (!empty) {
-				ThrowCopyError("22P04", "end-of-copy marker is followed by data");
+				tail = row;
 			}
 			continue;
 		}
-		data = data || !empty;
+		if (!empty && first_data == DConstants::INVALID_INDEX) {
+			first_data = row;
+		}
 		if (RawField(0, row) != "\\.") {
 			continue;
 		}
@@ -1809,18 +1817,28 @@ idx_t CsvScan::CopyEndMarker(idx_t count) {
 		while (range < marker && !global.copy_marker_range.compare_exchange_weak(marker, range)) {
 		}
 		if (global.copy_data_range.load() > range) {
-			ThrowCopyError("22P04", "end-of-copy marker is followed by data");
+			tail = row;
 		}
 	}
-	if (data) {
+	if (first_data != DConstants::INVALID_INDEX) {
 		auto latest = global.copy_data_range.load();
 		while (latest < range && !global.copy_data_range.compare_exchange_weak(latest, range)) {
 		}
 		if (global.copy_marker_range.load() < range) {
-			ThrowCopyError("22P04", "end-of-copy marker is followed by data");
+			tail = first_data;
+			rows = 0;
 		}
 	}
 	return rows;
+}
+
+void CsvScan::ReportCopyTail(idx_t row) {
+	copy_tail_reported = true;
+	reader.ResetLines();
+	CsvRowError error {CSVErrorType::INVALID_STATE, 0, 0, "end-of-copy marker is followed by data"};
+	error.sqlstate = "22P04";
+	auto csv_error = CopyRowError(LeanRow(row), error);
+	Report(row, csv_error, false);
 }
 
 void CsvScan::ApplyCopyDefaults(DataChunk &output) {
@@ -2029,10 +2047,13 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 			}
 		}
 	}
-	LeanReport(0, count);
-	FlushCasts(count, output, late, false);
 	if (global.copy) {
+		FlushCasts(count, output, late, false);
+		LeanReport(0, count);
 		ApplyCopyDefaults(output);
+	} else {
+		LeanReport(0, count);
+		FlushCasts(count, output, late, false);
 	}
 	if (!late) {
 		LeanRowNumbers(count, output);
