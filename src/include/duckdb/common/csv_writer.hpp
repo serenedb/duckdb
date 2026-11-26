@@ -155,7 +155,6 @@ protected:
 	unique_ptr<CompressedPiece> separator;
 
 	CsvEncoding Encoding() const;
-	idx_t FlushSize(const CSVWriterState &local_state) const;
 	void WriteCompressed(const_data_ptr_t data, idx_t size);
 	void WritePiece(unique_ptr<CompressedPiece> piece);
 };

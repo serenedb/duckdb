@@ -135,13 +135,9 @@ void CSVWriter::WriteChunk(DataChunk &input, CSVWriterState &local_state) {
 	D_ASSERT(options.null_str.size() == 1);
 	CsvEncodeChunk(Encoding(), input, *local_state.stream, local_state.written_anything, local_state.scratch);
 
-	if (!local_state.require_manual_flush && local_state.stream->GetPosition() >= FlushSize(local_state)) {
+	if (!local_state.require_manual_flush && local_state.stream->GetPosition() >= local_state.flush_size) {
 		Flush(local_state);
 	}
-}
-
-idx_t CSVWriter::FlushSize(const CSVWriterState &local_state) const {
-	return pieced ? MaxValue(local_state.flush_size, CompressedFile::PIECE_BYTES) : local_state.flush_size;
 }
 
 void CSVWriter::WriteChunk(DataChunk &input) {
