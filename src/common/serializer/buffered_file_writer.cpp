@@ -111,6 +111,16 @@ void BufferedFileWriter::Flush() {
 	CloseWindow();
 }
 
+bool BufferedFileWriter::Hold() {
+	Flush();
+	return writer->Hold();
+}
+
+shared_ptr<InputFile> BufferedFileWriter::Input() {
+	Flush();
+	return writer->Input();
+}
+
 void BufferedFileWriter::Close() {
 	if (!writer) {
 		return;

@@ -418,6 +418,9 @@ public:
 	idx_t Size() const {
 		return size;
 	}
+	const shared_ptr<InputFile> &File() const {
+		return file;
+	}
 	//! Ends the write; a written file is published at the size appended, as the version [version_tag] of its source,
 	//! last modified at [last_modified]
 	void Finish(const string &version_tag = string(), timestamp_t last_modified = timestamp_t(0));
@@ -555,8 +558,7 @@ private:
 	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
 	//! before; ExternalFileCacheAppender fills it up to the end of the file
 	FilePin CreateBlock(InputFile &file, idx_t block);
-	//! Extends the unbacked [file] to [size] bytes once its blocks are written
-	void SetUnbackedSize(InputFile &file, idx_t size);
+	void SetAppendedSize(InputFile &file, idx_t size);
 
 	struct RunPlan {
 		idx_t first_block;
