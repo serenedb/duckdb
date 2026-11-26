@@ -612,17 +612,17 @@ void MultiFileReader::GetVirtualColumns(ClientContext &context, MultiFileReaderB
 
 // Resolves `column_id` to a Value from info known without opening the file: filename, file_index,
 // or hive partitioning columns. `hive_partitions` is a caller-owned lazy cache.
-static bool TryResolvePreOpenConstant(column_t column_id, const string &file_path, idx_t file_list_idx,
+static bool TryResolvePreOpenConstant(column_t column_id, const OpenFileInfo &file, idx_t file_list_idx,
                                       const MultiFileReaderBindData &reader_bind, const MultiFileOptions &file_options,
                                       ClientContext &context, std::map<string, string> &hive_partitions,
                                       bool &hive_partitions_parsed, Value &out_constant) {
 	if ((reader_bind.filename_idx.IsValid() && column_id == reader_bind.filename_idx.GetIndex()) ||
 	    column_id == MultiFileReader::COLUMN_IDENTIFIER_FILENAME) {
-		out_constant = Value(file_path);
+		out_constant = Value(file.path);
 		return true;
 	}
 	if (column_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-		out_constant = Value::UBIGINT(file_list_idx);
+		out_constant = Value::UBIGINT(file.file_index.IsValid() ? file.file_index.GetIndex() : file_list_idx);
 		return true;
 	}
 	auto &hive = reader_bind.hive_partitioning_indexes;
@@ -632,7 +632,7 @@ static bool TryResolvePreOpenConstant(column_t column_id, const string &file_pat
 		return false;
 	}
 	if (!hive_partitions_parsed) {
-		hive_partitions = HivePartitioning::Parse(file_path);
+		hive_partitions = HivePartitioning::Parse(file.path);
 		hive_partitions_parsed = true;
 	}
 	auto entry = hive_partitions.find(hp->value);
@@ -650,7 +650,7 @@ void MultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const Multi
                                    optional_ptr<MultiFileReaderGlobalState> global_state) {
 	// create a map of name -> column index
 	auto &local_columns = reader_data.reader->GetColumns();
-	auto &filename = reader_data.reader->GetFileName();
+	auto &file = reader_data.reader->file;
 	case_insensitive_map_t<idx_t> name_map;
 	// a column a file lacks is read as NULL when the schema is a union of the files - a schema given up front instead
 	// says what such a column is read as, which the column mapper takes care of
@@ -668,7 +668,7 @@ void MultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const Multi
 		auto global_idx = MultiFileGlobalIndex(i);
 		auto &col_id = global_column_ids[i];
 		auto column_id = col_id.GetPrimaryIndex();
-		if (TryResolvePreOpenConstant(column_id, filename, reader_data.reader->file_list_idx.GetIndex(), options,
+		if (TryResolvePreOpenConstant(column_id, file, reader_data.reader->file_list_idx.GetIndex(), options,
 		                              file_options, context, hive_partitions, hive_partitions_parsed,
 		                              pre_open_constant)) {
 			reader_data.constant_map.Add(global_idx, pre_open_constant);
@@ -1031,7 +1031,7 @@ bool MultiFileReader::CanSkipFileFromFilters(ClientContext &context, const OpenF
 		auto projection_idx = it.GetIndex().GetIndex();
 		D_ASSERT(projection_idx < global_column_ids.size());
 		auto column_id = global_column_ids[projection_idx].GetPrimaryIndex();
-		if (!TryResolvePreOpenConstant(column_id, file.path, file_list_idx, reader_bind, file_options, context,
+		if (!TryResolvePreOpenConstant(column_id, file, file_list_idx, reader_bind, file_options, context,
 		                               hive_partitions, hive_partitions_parsed, constant)) {
 			continue;
 		}

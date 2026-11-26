@@ -342,9 +342,13 @@ bool LazyMultiFileList::ExpandNextPathInternal() const {
 	if (context && context->IsInterrupted()) {
 		throw InterruptException();
 	}
+	auto file_index = expanded_files.size();
 	if (!ExpandNextPath()) {
 		all_files_expanded = true;
 		return false;
+	}
+	for (; file_index < expanded_files.size(); file_index++) {
+		expanded_files[file_index].file_index = file_index;
 	}
 	return true;
 }
@@ -425,7 +429,8 @@ bool GlobMultiFileList::ExpandNextPath() const {
 
 	// sort the files and add them to the list of files
 	std::sort(glob_files.begin(), glob_files.end());
-	expanded_files.insert(expanded_files.end(), glob_files.begin(), glob_files.end());
+	expanded_files.insert(expanded_files.end(), std::make_move_iterator(glob_files.begin()),
+	                      std::make_move_iterator(glob_files.end()));
 
 	return true;
 }

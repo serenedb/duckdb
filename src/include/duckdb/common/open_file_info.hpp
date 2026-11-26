@@ -45,6 +45,7 @@ struct OpenFileInfo {
 
 	string path;
 	shared_ptr<ExtendedOpenFileInfo> extended_info;
+	optional_idx file_index;
 
 public:
 	bool operator<(const OpenFileInfo &rhs) const {
