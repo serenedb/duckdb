@@ -24,6 +24,7 @@ struct MiniZStream {
 	static constexpr uint8_t GZIP_FOOTER_SIZE = 8;
 	static constexpr uint8_t GZIP_COMPRESSION_DEFLATE = 0x08;
 	static constexpr unsigned char GZIP_FLAG_UNSUPPORTED = 0x1 | 0x2 | 0x4 | 0x10 | 0x20;
+	static constexpr int MEMORY_LEVEL = 8;
 
 public:
 	MiniZStream() : type(MiniZStreamType::MINIZ_TYPE_NONE) {
@@ -128,7 +129,8 @@ public:
 	}
 
 	void Compress(const char *uncompressed_data, size_t uncompressed_size, char *out_data, size_t *out_size) {
-		auto mz_ret = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 1, Z_DEFAULT_STRATEGY);
+		auto mz_ret =
+		    deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, MEMORY_LEVEL, Z_DEFAULT_STRATEGY);
 		if (mz_ret != Z_OK) {
 			FormatException("Failed to initialize zlib", mz_ret);
 		}
