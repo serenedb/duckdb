@@ -54,6 +54,21 @@ public:
 	DUCKDB_API virtual string Tail() const;
 };
 
+struct PieceSpan {
+	idx_t offset = 0;
+	idx_t size = 0;
+	idx_t output_offset = 0;
+	idx_t output_size = 0;
+};
+
+class PieceDecompressor {
+public:
+	DUCKDB_API virtual ~PieceDecompressor();
+	DUCKDB_API virtual void DecompressAll(const_data_ptr_t piece, const PieceSpan &span, data_ptr_t out) = 0;
+	DUCKDB_API virtual void Begin(const_data_ptr_t piece, const PieceSpan &span) = 0;
+	DUCKDB_API virtual void Continue(data_ptr_t out, idx_t count) = 0;
+};
+
 struct StreamData {
 	// various buffers & pointers
 	bool write = false;
@@ -103,6 +118,8 @@ public:
 	DUCKDB_API virtual idx_t InBufferSize() = 0;
 	DUCKDB_API virtual idx_t OutBufferSize() = 0;
 	DUCKDB_API virtual unique_ptr<PiecedFile> CreatePieces();
+	DUCKDB_API virtual bool FindPieces(const_data_ptr_t data, idx_t size, vector<PieceSpan> &pieces);
+	DUCKDB_API virtual unique_ptr<PieceDecompressor> CreateDecompressor();
 };
 
 DUCKDB_API unique_ptr<PiecedFile> CreatePiecedFile(FileSystem &fs, const FileCompressionType &compression,

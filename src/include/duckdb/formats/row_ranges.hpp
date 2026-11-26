@@ -55,11 +55,21 @@ struct RowMemory {
 	const char *data = nullptr;
 };
 
+class RowSourceCursor {
+public:
+	virtual ~RowSourceCursor() = default;
+
+	virtual idx_t Read(char *data, idx_t count, idx_t offset) = 0;
+};
+
 class RowSource {
 public:
 	virtual ~RowSource() = default;
 
 	virtual idx_t Read(char *data, idx_t count, idx_t offset) const = 0;
+	virtual unique_ptr<RowSourceCursor> Cursor() const {
+		return nullptr;
+	}
 	virtual RowMemory Memory() const {
 		return {};
 	}
@@ -242,11 +252,14 @@ public:
 
 private:
 	void Prepare(idx_t keep_from, idx_t need);
+	idx_t ReadSource(char *data, idx_t count, idx_t offset);
 
 private:
 	shared_ptr<RowBytes> spare;
 	bool release = false;
 	idx_t wanted_to = 0;
+	unique_ptr<RowSourceCursor> cursor;
+	bool cursor_opened = false;
 };
 
 class RowLookup {

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/compressed_file_system.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
 #include "duckdb/formats/row_ranges.hpp"
 
@@ -79,6 +80,37 @@ private:
 	mutable atomic<idx_t> reported_to {0};
 };
 
+class PiecedRowSource : public RowSource {
+public:
+	static constexpr idx_t PREFETCH_BYTES = idx_t(1) << 22;
+
+	static shared_ptr<PiecedRowSource> Open(ClientContext &context, const CSVFileHandle &handle, const string &path);
+	PiecedRowSource(shared_ptr<MemoryMappedFile> mapping, CompressedFileSystem &compressed, vector<PieceSpan> pieces);
+
+	idx_t Read(char *data, idx_t count, idx_t offset) const override;
+	unique_ptr<RowSourceCursor> Cursor() const override;
+	optional_idx End() const override {
+		return size;
+	}
+	idx_t Size() const {
+		return size;
+	}
+
+private:
+	friend class PiecedRowCursor;
+
+	unique_ptr<PieceDecompressor> Take() const;
+	void Give(unique_ptr<PieceDecompressor> decompressor) const;
+
+	shared_ptr<MemoryMappedFile> mapping;
+	CompressedFileSystem &compressed;
+	vector<PieceSpan> pieces;
+	const_data_ptr_t data;
+	idx_t size;
+	mutable mutex lock;
+	mutable vector<unique_ptr<PieceDecompressor>> idle;
+};
+
 class RowInput {
 public:
 	static constexpr idx_t HOST_STREAM_BYTES = 1 << 21;
@@ -93,6 +125,9 @@ public:
 		if (host_stream) {
 			return *host_stream;
 		}
+		if (pieced) {
+			return *pieced;
+		}
 		if (mapped) {
 			return *mapped;
 		}
@@ -101,6 +136,7 @@ public:
 
 public:
 	shared_ptr<RowSource> host_stream;
+	shared_ptr<PiecedRowSource> pieced;
 	shared_ptr<MappedRowSource> mapped;
 	unique_ptr<FileRowSource> file;
 	bool stream;

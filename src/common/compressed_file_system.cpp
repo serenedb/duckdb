@@ -62,6 +62,17 @@ unique_ptr<PiecedFile> CompressedFileSystem::CreatePieces() {
 	return nullptr;
 }
 
+bool CompressedFileSystem::FindPieces(const_data_ptr_t, idx_t, vector<PieceSpan> &) {
+	return false;
+}
+
+unique_ptr<PieceDecompressor> CompressedFileSystem::CreateDecompressor() {
+	return nullptr;
+}
+
+PieceDecompressor::~PieceDecompressor() {
+}
+
 unique_ptr<PiecedFile> CreatePiecedFile(FileSystem &fs, const FileCompressionType &compression, const string &path) {
 	auto compressed = fs.GetCompressedFileSystem(compression, path);
 	return compressed ? compressed->CreatePieces() : nullptr;
