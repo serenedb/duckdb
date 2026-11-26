@@ -89,19 +89,25 @@ static CatalogType StatementObject(const SQLStatement &statement) {
 	                                                       : CatalogType::INVALID;
 }
 
-void Binder::RequireStatement(const SQLStatement &statement) {
+static const StatementRule *StatementRuleOf(const SQLStatement &statement) {
 	const auto object = StatementObject(statement);
 	const auto rule = absl::c_find_if(STATEMENT_RULES, [&](const StatementRule &rule) {
 		return rule.statement == statement.type && rule.object == object;
 	});
-	if (rule == std::end(STATEMENT_RULES)) {
+	return rule == std::end(STATEMENT_RULES) ? nullptr : rule;
+}
+
+bool Binder::MayRun(const RoleAccess &role, const SQLStatement &statement) {
+	const auto rule = StatementRuleOf(statement);
+	return !rule || role.is_superuser || (rule->option != RoleOption::None && role.Has(rule->option)) ||
+	       (rule->capability != RoleCapability::None && role.Has(rule->capability));
+}
+
+void Binder::RequireStatement(const SQLStatement &statement) {
+	if (MayRun(CheckAs(), statement)) {
 		return;
 	}
-	auto &role = CheckAs();
-	if (role.is_superuser || (rule->option != RoleOption::None && role.Has(rule->option)) ||
-	    (rule->capability != RoleCapability::None && role.Has(rule->capability))) {
-		return;
-	}
+	const auto rule = StatementRuleOf(statement);
 	const auto message =
 	    rule->named
 	        ? StringUtil::Format(rule->message, CreateInfoOf(statement)->GetQualifiedName().Name().GetIdentifierName())
