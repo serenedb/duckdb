@@ -17,13 +17,12 @@
 
 namespace duckdb {
 
-enum class MiniZStreamType { MINIZ_TYPE_NONE, MINIZ_TYPE_INFLATE, MINIZ_TYPE_DEFLATE };
+enum class MiniZStreamType { MINIZ_TYPE_NONE, MINIZ_TYPE_DEFLATE };
 
 struct MiniZStream {
 	static constexpr uint8_t GZIP_HEADER_MINSIZE = 10;
 	static constexpr uint8_t GZIP_FOOTER_SIZE = 8;
 	static constexpr uint8_t GZIP_COMPRESSION_DEFLATE = 0x08;
-	static constexpr unsigned char GZIP_FLAG_UNSUPPORTED = 0x1 | 0x2 | 0x4 | 0x10 | 0x20;
 	static constexpr int MEMORY_LEVEL = 8;
 
 public:
@@ -33,9 +32,6 @@ public:
 
 	~MiniZStream() {
 		switch (type) {
-		case MiniZStreamType::MINIZ_TYPE_INFLATE:
-			inflateEnd(&stream);
-			break;
 		case MiniZStreamType::MINIZ_TYPE_DEFLATE:
 			deflateEnd(&stream);
 			break;
@@ -51,52 +47,6 @@ public:
 	void FormatException(const char *error_msg, int mz_ret) {
 		auto err = zError(mz_ret);
 		FormatException(error_msg + std::string(": ") + (err ? err : "Unknown error code"));
-	}
-
-	void Decompress(const char *compressed_data, size_t compressed_size, char *out_data, size_t out_size) {
-		type = MiniZStreamType::MINIZ_TYPE_INFLATE;
-
-		// Loop over blocks
-		while (compressed_size > 0) {
-			// Read block header
-			if (compressed_size < GZIP_HEADER_MINSIZE) {
-				FormatException("Failed to decompress GZIP block: compressed size is less than gzip header size");
-			}
-			auto gzip_hdr = reinterpret_cast<const unsigned char *>(compressed_data);
-			if (gzip_hdr[0] != 0x1F || gzip_hdr[1] != 0x8B || gzip_hdr[2] != GZIP_COMPRESSION_DEFLATE ||
-			    gzip_hdr[3] & GZIP_FLAG_UNSUPPORTED) {
-				FormatException("Input is invalid/unsupported GZIP stream");
-			}
-			compressed_data += GZIP_HEADER_MINSIZE;
-			compressed_size -= GZIP_HEADER_MINSIZE;
-
-			// Initialize stream
-			auto mz_ret = inflateInit2(&stream, -MAX_WBITS);
-			if (mz_ret != Z_OK) {
-				FormatException("Failed to initialize zlib", mz_ret);
-			}
-
-			// Set up in/out
-			stream.next_in = reinterpret_cast<const unsigned char *>(compressed_data);
-			stream.avail_in = static_cast<unsigned int>(compressed_size);
-			stream.next_out = reinterpret_cast<unsigned char *>(out_data);
-			stream.avail_out = static_cast<unsigned int>(out_size);
-
-			// Decompress and uninitialize stream
-			mz_ret = inflate(&stream, Z_FINISH);
-			if (mz_ret != Z_OK && mz_ret != Z_STREAM_END) {
-				FormatException("Failed to decompress GZIP block", mz_ret);
-			}
-			inflateEnd(&stream);
-
-			// Update indices
-			compressed_data += GZIP_FOOTER_SIZE + stream.total_in;
-			compressed_size -= GZIP_FOOTER_SIZE + stream.total_in;
-			out_data += stream.total_out;
-			out_size -= stream.total_out;
-
-			ResetStreamInternal();
-		}
 	}
 
 	static size_t MaxCompressedLength(size_t input_size) {

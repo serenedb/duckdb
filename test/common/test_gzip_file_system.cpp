@@ -10,6 +10,9 @@ using namespace duckdb;
 
 namespace {
 
+constexpr uint8_t GZIP_FLAG_EXTRA = 0x4;
+constexpr uint8_t GZIP_FLAG_NAME = 0x8;
+
 class ShortReadFileHandle : public FileHandle {
 public:
 	ShortReadFileHandle(FileSystem &file_system, const string &path)
@@ -213,6 +216,45 @@ TEST_CASE("GZIP rejects a header whose extra field is cut short", "[file_system]
 TEST_CASE("GZIP string decompression rejects a header-only stream with FNAME", "[file_system][gzip]") {
 	const char header[] = {'\x1f', '\x8b', '\x08', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
 	REQUIRE_THROWS_AS(GZipFileSystem::UncompressGZIPString(header, sizeof(header)), IOException);
+}
+
+TEST_CASE("GZIP string decompression reads every member and checks its CRC32", "[file_system][gzip]") {
+	auto member = [](string input, int level, bool flagged) {
+		z_stream stream;
+		memset(&stream, 0, sizeof(stream));
+		REQUIRE(deflateInit2(&stream, level, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY) == Z_OK);
+		char name[] = "member.csv";
+		char comment[] = "a comment";
+		gz_header header;
+		memset(&header, 0, sizeof(header));
+		header.text = 1;
+		header.hcrc = 1;
+		header.name = reinterpret_cast<Bytef *>(name);
+		header.comment = reinterpret_cast<Bytef *>(comment);
+		if (flagged) {
+			REQUIRE(deflateSetHeader(&stream, &header) == Z_OK);
+		}
+		string output(deflateBound(&stream, NumericCast<uLong>(input.size())) + 64, '\0');
+		stream.next_in = data_ptr_cast(&input[0]);
+		stream.avail_in = NumericCast<uInt>(input.size());
+		stream.next_out = data_ptr_cast(&output[0]);
+		stream.avail_out = NumericCast<uInt>(output.size());
+		const auto result = deflate(&stream, Z_FINISH);
+		output.resize(stream.total_out);
+		deflateEnd(&stream);
+		REQUIRE(result == Z_STREAM_END);
+		return output;
+	};
+	const string first = "first member\n";
+	const string second = "second member, stored as written\n";
+	auto data = member(first, Z_DEFAULT_COMPRESSION, true) + member(second, Z_NO_COMPRESSION, false);
+	REQUIRE((data[3] & 0x1F) == 0x1B);
+	REQUIRE(GZipFileSystem::UncompressGZIPString(data) == first + second);
+
+	auto at = data.find("as written");
+	REQUIRE(at != string::npos);
+	data[at] ^= 1;
+	REQUIRE_THROWS_WITH(GZipFileSystem::UncompressGZIPString(data), Catch::Contains("incorrect data check"));
 }
 
 TEST_CASE("GZIP pieces written in any order form one member", "[file_system][gzip]") {

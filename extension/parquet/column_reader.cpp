@@ -16,7 +16,6 @@
 #include "reader/callback_column_reader.hpp"
 #include "reader/interval_column_reader.hpp"
 #include "lz4.h"
-#include "miniz_wrapper.hpp"
 #include "reader/null_column_reader.hpp"
 #include "parquet_reader.hpp"
 #include "parquet_timestamp.hpp"
@@ -33,6 +32,7 @@
 #include "parquet_crypto.hpp"
 #include "decode_utils.hpp"
 #include "duckdb/common/enums/vector_type.hpp"
+#include "duckdb/formats/block_codecs.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -578,8 +578,12 @@ void ColumnReader::DecompressInternal(CompressionCodec::type codec, const_data_p
 	case CompressionCodec::UNCOMPRESSED:
 		throw InternalException("Parquet data unexpectedly uncompressed");
 	case CompressionCodec::GZIP: {
-		MiniZStream s;
-		s.Decompress(const_char_ptr_cast(src), src_size, char_ptr_cast(dst), dst_size);
+		BlockDecompressor decompressor;
+		string error;
+		if (!decompressor.TryDecompress(BlockCodec::GZIP, src, src_size, dst, dst_size, error)) {
+			throw InvalidInputException("Failed to read file \"%s\": GZIP decompression failure: %s",
+			                            Reader().GetFileName(), error);
+		}
 		break;
 	}
 	case CompressionCodec::LZ4_RAW: {

@@ -2,6 +2,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/formats/block_codecs.hpp"
 
 #include "miniz_wrapper.hpp"
 
@@ -237,25 +238,6 @@ public:
 
 } // namespace
 
-void GZipFileSystem::VerifyGZIPHeader(uint8_t gzip_hdr[], idx_t read_count, optional_ptr<CompressedFile> source_file) {
-	// include the filename in the error message if known
-	string file_info = source_file ? ": " + source_file->path : "";
-
-	// check for incorrectly formatted files
-	if (read_count != GZIP_HEADER_MINSIZE) {
-		throw IOException("Input is not a GZIP stream" + file_info);
-	}
-	if (gzip_hdr[0] != 0x1F || gzip_hdr[1] != 0x8B) { // magic header
-		throw IOException("Input is not a GZIP stream" + file_info);
-	}
-	if (gzip_hdr[2] != GZIP_COMPRESSION_DEFLATE) { // compression method
-		throw IOException("Unsupported GZIP compression method" + file_info);
-	}
-	if (gzip_hdr[3] & GZIP_FLAG_UNSUPPORTED) {
-		throw IOException("Unsupported GZIP archive" + file_info);
-	}
-}
-
 bool GZipFileSystem::CheckIsZip(const char *data, duckdb::idx_t size) {
 	if (size < GZIP_HEADER_MINSIZE) {
 		return false;
@@ -278,66 +260,15 @@ string GZipFileSystem::UncompressGZIPString(const string &in) {
 }
 
 string GZipFileSystem::UncompressGZIPString(const char *data, idx_t size) {
-	// decompress file
-	auto body_ptr = data;
-
-	auto mz_stream_ptr = make_uniq<z_stream>();
-	memset(mz_stream_ptr.get(), 0, sizeof(z_stream));
-
-	uint8_t gzip_hdr[GZIP_HEADER_MINSIZE];
-
-	// check for incorrectly formatted files
-
-	// TODO this is mostly the same as gzip_file_system.cpp
-	if (size < GZIP_HEADER_MINSIZE) {
-		throw IOException("Input is not a GZIP stream");
+	BlockDecompressor decompressor;
+	AllocatedData decompressed;
+	idx_t decompressed_size;
+	string error;
+	if (!decompressor.TryDecompress(BlockCodec::GZIP, const_data_ptr_cast(data), size, Allocator::DefaultAllocator(), 0,
+	                                decompressed, decompressed_size, error)) {
+		throw IOException("Failed to uncompress a GZIP stream: %s", error);
 	}
-	memcpy(gzip_hdr, body_ptr, GZIP_HEADER_MINSIZE);
-	body_ptr += GZIP_HEADER_MINSIZE;
-	GZipFileSystem::VerifyGZIPHeader(gzip_hdr, GZIP_HEADER_MINSIZE, nullptr);
-
-	if (gzip_hdr[3] & GZIP_FLAG_EXTRA) {
-		throw IOException("Extra field in a GZIP stream unsupported");
-	}
-
-	if (gzip_hdr[3] & GZIP_FLAG_NAME) {
-		auto end_ptr = data + size;
-		while (body_ptr < end_ptr) {
-			if (*body_ptr++ == '\0') {
-				break;
-			}
-		}
-	}
-
-	// stream is now set to beginning of payload data
-	auto status = inflateInit2(mz_stream_ptr.get(), -MAX_WBITS);
-	if (status != Z_OK) {
-		throw InternalException("Failed to initialize miniz");
-	}
-
-	auto bytes_remaining = size - NumericCast<idx_t>(body_ptr - data);
-	mz_stream_ptr->next_in = const_uchar_ptr_cast(body_ptr);
-	mz_stream_ptr->avail_in = NumericCast<unsigned int>(bytes_remaining);
-
-	string decompressed;
-
-	while (status == Z_OK) {
-		unsigned char decompress_buffer[BUFSIZ];
-		mz_stream_ptr->next_out = decompress_buffer;
-		mz_stream_ptr->avail_out = sizeof(decompress_buffer);
-		status = inflate(mz_stream_ptr.get(), Z_NO_FLUSH);
-		if (status != Z_STREAM_END && status != Z_OK) {
-			inflateEnd(mz_stream_ptr.get());
-			throw IOException("Failed to uncompress");
-		}
-		decompressed.append(char_ptr_cast(decompress_buffer), mz_stream_ptr->total_out - decompressed.size());
-	}
-	inflateEnd(mz_stream_ptr.get());
-
-	if (decompressed.empty()) {
-		throw IOException("Failed to uncompress");
-	}
-	return decompressed;
+	return string(const_char_ptr_cast(decompressed.get()), decompressed_size);
 }
 
 unique_ptr<FileHandle> GZipFileSystem::OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle,
