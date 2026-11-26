@@ -39,13 +39,17 @@ class RowGroupReorderer {
 public:
 	//! The number of rows a scan reads from one of its partitions - asked only for some of them, as it can be costly
 	using PartitionRowCount = std::function<idx_t(idx_t partition)>;
+	struct PartitionOrderStatistics {
+		optionally_owned_ptr<const BaseStatistics> stats;
+		bool min_max_is_exact = false;
+	};
 
 	RowGroupReorderer(const RowGroupOrderOptions &options_p, TransactionData transaction_p);
 	//! The partitions (row groups) of a scan in the order the options ask for, without those OFFSET pruning skipped
 	//! and those the row limit makes unnecessary. statistics[i] holds the statistics of the order column in partition
 	//! i, nullptr when they are unknown
 	static vector<idx_t> OrderPartitions(const RowGroupOrderOptions &options,
-	                                     const vector<optional_ptr<const BaseStatistics>> &statistics,
+	                                     const vector<PartitionOrderStatistics> &statistics,
 	                                     const PartitionRowCount &row_count);
 	optional_ptr<SegmentNode<RowGroup>> GetRootSegment(RowGroupSegmentTree &row_groups);
 	optional_ptr<SegmentNode<RowGroup>> GetNextRowGroup(SegmentNode<RowGroup> &row_group);

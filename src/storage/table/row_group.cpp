@@ -24,6 +24,7 @@
 #include "duckdb/storage/table/column_data.hpp"
 #include "duckdb/storage/table/row_version_manager.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/storage/table/struct_column_data.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
@@ -2136,6 +2137,22 @@ PartitionStatistics RowGroup::GetPartitionStats(SegmentNode<RowGroup> &row_group
 	result.partition_row_group = make_shared_ptr<DuckDBPartitionRowGroup>(row_group.ReferenceNode(), is_exact);
 
 	return result;
+}
+
+bool RowGroup::MinMaxIsExact(TransactionData transaction, const StorageIndex &column_idx) {
+	if (HasUnloadedDeletes()) {
+		return false;
+	}
+	auto vinfo = GetVersionInfoIfLoaded();
+	if (vinfo && (vinfo->HasDeletes() || GetVisibleRowCount(transaction) != count)) {
+		return false;
+	}
+	reference<const ColumnData> column = GetColumn(column_idx);
+	for (auto index = &column_idx; index->HasChildren() && column.get().type.SupportsRegularUpdate();) {
+		index = &index->GetChildIndex(0);
+		column = column.get().Cast<StructColumnData>().GetChildColumn(index->GetPrimaryIndex());
+	}
+	return !column.get().HasUpdates();
 }
 
 //===--------------------------------------------------------------------===//
