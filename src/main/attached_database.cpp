@@ -266,12 +266,12 @@ static string RemoveQueryParams(const string &name) {
 	return vec[0];
 }
 
-Identifier AttachedDatabase::ExtractDatabaseName(const string &dbpath, FileSystem &fs) {
+Identifier AttachedDatabase::ExtractDatabaseName(DatabaseInstance &db, const string &dbpath) {
 	if (dbpath.empty() || dbpath == IN_MEMORY_PATH) {
 		return Identifier("memory");
 	}
-	auto name = RemoveQueryParams(fs.ExtractBaseName(dbpath));
-	if (NameIsReserved(Identifier(name))) {
+	auto name = RemoveQueryParams(FileSystem::GetFileSystem(db).ExtractBaseName(dbpath));
+	if (DatabaseManager::Get(db).IsReservedName(Identifier(name))) {
 		name += "_db";
 	}
 	return Identifier(name);

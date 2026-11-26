@@ -67,7 +67,7 @@ void CV2Instance::Attach(const string &path, const Identifier &name,
 			DBPathAndType::ExtractExtensionPrefix(info.path, options.db_type);
 		}
 		if (info.name.empty()) {
-			info.name = AttachedDatabase::ExtractDatabaseName(info.path, FileSystem::GetFileSystem(instance));
+			info.name = AttachedDatabase::ExtractDatabaseName(instance, info.path);
 		}
 		// The host opening a file is not external access: allow it the way the main database path is allowed.
 		if (options.db_type.empty() && !DBConfig::IsInMemoryDatabase(info.path.c_str()) &&
@@ -104,7 +104,7 @@ static shared_ptr<AttachedDatabase> FindAttachedDatabase(DatabaseInstance &insta
 		} catch (...) { // NOLINT(bugprone-empty-catch): an uncanonicalizable path just falls back to verbatim matching
 		}
 	}
-	const auto derived_name = AttachedDatabase::ExtractDatabaseName(stripped, fs);
+	const auto derived_name = AttachedDatabase::ExtractDatabaseName(instance, stripped);
 
 	shared_ptr<AttachedDatabase> match;
 	idx_t match_count = 0;
