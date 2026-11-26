@@ -118,6 +118,11 @@ private:
 class RowInput {
 public:
 	static constexpr idx_t HOST_STREAM_BYTES = 1 << 21;
+	static constexpr idx_t STREAM_BYTES = 1 << 23;
+
+	static idx_t StreamBytes(bool host_stream) {
+		return host_stream ? HOST_STREAM_BYTES : STREAM_BYTES;
+	}
 
 	RowInput(ClientContext &context, CSVBufferManager &manager, const string &path, bool utf8,
 	         optional_ptr<atomic<idx_t>> bytes_read);

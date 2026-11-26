@@ -32,7 +32,6 @@ namespace {
 
 constexpr idx_t JSON_MIN_RANGE_BYTES = 1024 * 1024;
 constexpr idx_t JSON_MAX_RANGE_BYTES = 8 * 1024 * 1024;
-constexpr idx_t JSON_STREAM_BYTES = 8 * 1024 * 1024;
 constexpr idx_t JSON_READ_BYTES = 8 * 1024 * 1024;
 constexpr idx_t JSON_LOOKUP_BYTES = 64 * 1024;
 constexpr idx_t JSON_PADDING = RowWindow::PADDING;
@@ -766,7 +765,7 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 	}
 	idx_t range_bytes = DConstants::INVALID_INDEX;
 	const bool split_values = (format == JSONFormat::ARRAY && !features_prefix) || format == JSONFormat::UNSTRUCTURED;
-	stream_bytes = source->HostStream() ? RowInput::HOST_STREAM_BYTES : JSON_STREAM_BYTES;
+	stream_bytes = RowInput::StreamBytes(source->HostStream());
 	if (format == JSONFormat::NEWLINE_DELIMITED && parallel && source->Stream()) {
 		range_bytes = stream_bytes;
 	} else if ((format == JSONFormat::NEWLINE_DELIMITED || split_values) && parallel && !source->Stream()) {

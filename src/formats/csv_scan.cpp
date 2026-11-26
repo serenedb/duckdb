@@ -755,7 +755,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		    RowRanges::RangeBytes(data_size, TaskScheduler::QueryThreads(context), RANGE_MIN, range_max);
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
 	} else if (stream && !source.sniffing && options.parallel) {
-		const idx_t limit = input->host_stream ? RowInput::HOST_STREAM_BYTES : RANGE_MAX;
+		const idx_t limit = RowInput::StreamBytes(input->host_stream != nullptr);
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), limit), 1);
 	}
 	ranges =
