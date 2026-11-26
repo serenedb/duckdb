@@ -23,10 +23,12 @@ struct ZstdStreamWrapper : public StreamWrapper {
 
 	CompressedFile *file = nullptr;
 	duckdb_zstd::ZSTD_DStream *zstd_stream_ptr = nullptr;
+	bool in_frame = false;
 
 public:
 	void Initialize(QueryContext context, CompressedFile &file, bool write) override;
 	bool Read(StreamData &stream_data) override;
+	void FinalizeRead(StreamData &stream_data) override;
 
 	void Close() override;
 };
@@ -76,11 +78,18 @@ bool ZstdStreamWrapper::Read(StreamData &sd) {
 	if (duckdb_zstd::ZSTD_isError(res)) {
 		throw IOException(duckdb_zstd::ZSTD_getErrorName(res));
 	}
+	in_frame = res != 0;
 
 	sd.in_buff_start = (data_ptr_t)in_buffer.src + in_buffer.pos;  // NOLINT
 	sd.in_buff_end = (data_ptr_t)in_buffer.src + in_buffer.size;   // NOLINT
 	sd.out_buff_end = (data_ptr_t)out_buffer.dst + out_buffer.pos; // NOLINT
 	return false;
+}
+
+void ZstdStreamWrapper::FinalizeRead(StreamData &) {
+	if (in_frame) {
+		throw IOException("Unexpected end of ZSTD stream: %s", file->path);
+	}
 }
 
 void ZstdStreamWrapper::Close() {
