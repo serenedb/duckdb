@@ -1,0 +1,42 @@
+# name: test/sql/copy/parquet/parquet_min_max_exactness.test
+# group: [parquet]
+
+require parquet
+
+statement ok
+COPY (SELECT {'a': 1, 'b': repeat('z', 300)} AS s, i AS x FROM range(200000) t(i)) TO '{TEST_DIR}/nested_column_exactness.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000)
+
+query II
+EXPLAIN SELECT max(x), min(x) FROM read_parquet('{TEST_DIR}/nested_column_exactness.parquet')
+----
+physical_plan	<!REGEX>:.*READ_PARQUET.*
+
+query II
+SELECT max(x), min(x) FROM read_parquet('{TEST_DIR}/nested_column_exactness.parquet')
+----
+199999	0
+
+statement ok
+COPY (SELECT {'b': repeat('z', 300), 'a': i} AS s FROM range(300000) t(i)) TO '{TEST_DIR}/nested_field_exactness.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000)
+
+query II
+EXPLAIN SELECT s.a FROM read_parquet('{TEST_DIR}/nested_field_exactness.parquet') ORDER BY s.a LIMIT 3 OFFSET 150000
+----
+physical_plan	<!REGEX>:.*Offset: 150000.*
+
+query I
+SELECT s.a FROM read_parquet('{TEST_DIR}/nested_field_exactness.parquet') ORDER BY s.a LIMIT 3 OFFSET 150000
+----
+150000
+150001
+150002
+
+query II
+SELECT max(doubles), max(floats) FROM read_parquet('{DATA_DIR}/parquet-testing/byte_stream_split.parquet', can_have_nan := true)
+----
+98.98346963218356	99.441986
+
+query II
+SELECT min(s.d), max(s.d) FROM read_parquet('{DATA_DIR}/parquet-testing/nested_no_nan_count.parquet', can_have_nan := true)
+----
+1.0	2.0
