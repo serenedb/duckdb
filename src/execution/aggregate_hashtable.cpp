@@ -669,8 +669,7 @@ optional_idx GroupedAggregateHashTable::TryAddDictionaryCombinationGroups(DataCh
 	idx_t dict_size = 1;
 	for (idx_t col_idx = 0; col_idx < column_count; col_idx++) {
 		const auto &dict_col = groups.data[col_idx];
-		if (dict_col.GetVectorType() != VectorType::DICTIONARY_VECTOR ||
-		    dict_col.GetType().InternalType() == PhysicalType::STRUCT) {
+		if (dict_col.GetVectorType() != VectorType::DICTIONARY_VECTOR) {
 			return optional_idx();
 		}
 		auto opt_dict_size = DictionaryVector::DictionarySize(dict_col);
