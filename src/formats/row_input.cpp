@@ -32,6 +32,8 @@ bool ExtendPrefix(atomic<idx_t> &prefix, idx_t &begin, idx_t end) {
 	return true;
 }
 
+} // namespace
+
 unique_ptr<MemoryMappedFile> MapForReading(ClientContext &context, const string &path, bool on_disk, idx_t size,
                                            idx_t tail) {
 	if (!on_disk || size < MAPPED_FILE_MIN_BYTES || Settings::Get<CacheLocalFilesSetting>(context) ||
@@ -56,16 +58,12 @@ unique_ptr<MemoryMappedFile> MapForReading(ClientContext &context, const string 
 	return mapping;
 }
 
-} // namespace
-
 shared_ptr<WholeFile> WholeFile::Read(ClientContext &context, FileHandle &handle) {
 	auto result = make_shared_ptr<WholeFile>();
 	result->size = handle.GetFileSize();
 	result->mapping = MapForReading(context, handle.GetPath(), handle.OnDiskFile(), result->size, 0);
 	if (result->mapping) {
-		if (!result->mapping->IsCached(0, result->size)) {
-			result->mapping->Prefetch(0, result->size);
-		}
+		result->mapping->PrefetchMissing(0, result->size);
 		handle.ReadInPlace(context, result->size, 0);
 		result->data = const_char_ptr_cast(result->mapping->GetData(0, result->size));
 		return result;
@@ -115,8 +113,8 @@ idx_t MappedRowSource::Read(char *out, idx_t count, idx_t offset) const {
 }
 
 void MappedRowSource::Fetch(idx_t begin, idx_t end) const {
-	if (ExtendPrefix(wanted_to, begin, end) && !mapping->IsCached(begin, end - begin)) {
-		mapping->Prefetch(begin, end - begin);
+	if (ExtendPrefix(wanted_to, begin, end)) {
+		mapping->PrefetchMissing(begin, end - begin);
 	}
 }
 

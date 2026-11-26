@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/file_open_flags.hpp"
+#include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/typedefs.hpp"
 
@@ -53,6 +54,7 @@ public:
 	DUCKDB_API virtual void Evict(idx_t location, idx_t nr_bytes);
 	DUCKDB_API virtual void Release(idx_t location, idx_t nr_bytes);
 	DUCKDB_API virtual bool IsCached(idx_t location, idx_t nr_bytes);
+	DUCKDB_API void PrefetchMissing(idx_t location, idx_t nr_bytes);
 
 	DUCKDB_API idx_t Size() const {
 		return size;
@@ -75,6 +77,19 @@ protected:
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
 	idx_t tail = 0;
+};
+
+class MappedRange {
+public:
+	DUCKDB_API MappedRange(shared_ptr<MemoryMappedFile> mapping, idx_t begin, idx_t end);
+	MappedRange(const MappedRange &) = delete;
+	MappedRange &operator=(const MappedRange &) = delete;
+	DUCKDB_API ~MappedRange();
+
+private:
+	shared_ptr<MemoryMappedFile> mapping;
+	idx_t begin;
+	idx_t end;
 };
 
 } // namespace duckdb

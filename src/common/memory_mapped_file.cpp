@@ -30,6 +30,20 @@ bool MemoryMappedFile::IsCached(idx_t location, idx_t nr_bytes) {
 	return false;
 }
 
+void MemoryMappedFile::PrefetchMissing(idx_t location, idx_t nr_bytes) {
+	if (!IsCached(location, nr_bytes)) {
+		Prefetch(location, nr_bytes);
+	}
+}
+
+MappedRange::MappedRange(shared_ptr<MemoryMappedFile> mapping_p, idx_t begin_p, idx_t end_p)
+    : mapping(std::move(mapping_p)), begin(begin_p), end(end_p) {
+}
+
+MappedRange::~MappedRange() {
+	mapping->Release(begin, end - begin);
+}
+
 const_data_ptr_t MemoryMappedFile::GetData(idx_t location, idx_t nr_bytes) const {
 	if (location + nr_bytes > size) {
 		throw IOException("MemoryMappedFile::GetData: out-of-bounds access in file \"%s\" "
