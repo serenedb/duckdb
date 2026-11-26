@@ -754,7 +754,7 @@ void RowWindow::Read(idx_t keep_from, idx_t piece) {
 	const idx_t want = end > read_to ? MinValue<idx_t>(piece, end - read_to) : 0;
 	Prepare(keep_from, want);
 	auto &window = *bytes;
-	const idx_t got = want ? ranges.Read(WriteAt(window, read_to), want, read_to) : 0;
+	const idx_t got = want ? ReadSource(WriteAt(window, read_to), want, read_to) : 0;
 	window.size += got;
 	read_to += got;
 	memset(WriteAt(window, read_to), 0, PADDING);
@@ -772,6 +772,14 @@ void RowWindow::Read(idx_t keep_from, idx_t piece) {
 	if (release) {
 		ranges.source.Release(read_to);
 	}
+}
+
+idx_t RowWindow::ReadSource(char *data, idx_t count, idx_t offset) {
+	if (!cursor_opened) {
+		cursor = ranges.source.Cursor();
+		cursor_opened = true;
+	}
+	return cursor ? cursor->Read(data, count, offset) : ranges.Read(data, count, offset);
 }
 
 bool RowWindow::Waits() const {

@@ -1561,6 +1561,76 @@ TEST_CASE("Ranges of a file in memory ask for the bytes ahead of their reader an
 	REQUIRE(source.reads == vector<pair<idx_t, idx_t>> {{100, 150}});
 }
 
+TEST_CASE("A row source over compressed pieces reads any span of what they decompress to", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto compressed =
+	    FileSystem::GetFileSystem(*con.context).GetCompressedFileSystem(FileCompressionType::ZSTD, "pieces.zst");
+	REQUIRE(compressed);
+	auto compressor = compressed->CreatePieces()->CreateCompressor();
+	string expected;
+	string file;
+	for (idx_t piece = 0; piece < 5; piece++) {
+		string input;
+		if (piece != 2) {
+			for (idx_t row = 0; row < 3000 * (piece + 1); row++) {
+				input += to_string(piece) + "," + to_string(row * 7919 % 100003) + "\n";
+			}
+		}
+		CompressedPiece bytes;
+		compressor->Compress(const_data_ptr_cast(input.data()), input.size(), bytes);
+		file.append(const_char_ptr_cast(bytes.data.get()), bytes.size);
+		expected += input;
+		if (piece == 1) {
+			const char skippable[] = {'\x5a', '\x2a', '\x4d', '\x18', '\x03', '\x00', '\x00', '\x00', 'a', 'b', 'c'};
+			file.append(skippable, sizeof(skippable));
+		}
+	}
+	vector<PieceSpan> pieces;
+	REQUIRE(compressed->FindPieces(const_data_ptr_cast(file.data()), file.size(), pieces));
+	REQUIRE(pieces.size() == 5);
+	REQUIRE(pieces[2].output_size == 0);
+	REQUIRE(!compressed->FindPieces(const_data_ptr_cast(file.data()), file.size() - 1, pieces));
+
+	auto mapping = make_shared_ptr<RecordingMapping>(data_ptr_cast(&file[0]), file.size());
+	REQUIRE(compressed->FindPieces(const_data_ptr_cast(file.data()), file.size(), pieces));
+	PiecedRowSource source(mapping, *compressed, pieces);
+	REQUIRE(source.Size() == expected.size());
+	REQUIRE(source.End().GetIndex() == expected.size());
+
+	std::mt19937 random(42);
+	for (idx_t read = 0; read < 300; read++) {
+		const idx_t offset = random() % (expected.size() + 1);
+		const idx_t count = random() % 40000;
+		string out(count, '\0');
+		const idx_t got = source.Read(&out[0], count, offset);
+		CAPTURE(offset, count);
+		REQUIRE(got == MinValue(count, expected.size() - offset));
+		REQUIRE(out.substr(0, got) == expected.substr(offset, got));
+	}
+	string whole(expected.size(), '\0');
+	REQUIRE(source.Read(&whole[0], whole.size(), 0) == expected.size());
+	REQUIRE(whole == expected);
+	REQUIRE(!mapping->prefetched.empty());
+
+	auto cursor = source.Cursor();
+	REQUIRE(cursor);
+	for (idx_t start : {idx_t(0), idx_t(12345), idx_t(100)}) {
+		string streamed;
+		char step[1000];
+		for (idx_t offset = start;;) {
+			const idx_t got = cursor->Read(step, sizeof(step), offset);
+			if (got == 0) {
+				break;
+			}
+			streamed.append(step, got);
+			offset += got;
+		}
+		CAPTURE(start);
+		REQUIRE(streamed == expected.substr(start));
+	}
+}
+
 TEST_CASE("A mapped row source prefetches the bytes the page cache lacks before they are read", "[csv]") {
 	string data(10000, '\0');
 	for (idx_t i = 0; i < data.size(); i++) {

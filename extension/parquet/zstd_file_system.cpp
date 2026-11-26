@@ -159,6 +159,62 @@ public:
 	}
 };
 
+class ZstdPieceDecompressor : public PieceDecompressor {
+public:
+	ZstdPieceDecompressor()
+	    : context(duckdb_zstd::ZSTD_createDCtx()),
+	      scratch(make_unsafe_uniq_array_uninitialized<data_t>(duckdb_zstd::ZSTD_DStreamOutSize())) {
+		if (!context) {
+			throw InternalException("Failed to create a ZSTD decompression context");
+		}
+	}
+	~ZstdPieceDecompressor() override {
+		duckdb_zstd::ZSTD_freeDCtx(context);
+	}
+
+	void DecompressAll(const_data_ptr_t piece, const PieceSpan &span, data_ptr_t out) override {
+		const auto written = duckdb_zstd::ZSTD_decompressDCtx(context, out, span.output_size, piece, span.size);
+		CheckZstd(written);
+		if (written != span.output_size) {
+			throw IOException("A ZSTD frame decompressed to %d bytes instead of its %d", written, span.output_size);
+		}
+	}
+
+	void Begin(const_data_ptr_t piece, const PieceSpan &span) override {
+		CheckZstd(duckdb_zstd::ZSTD_DCtx_reset(context, duckdb_zstd::ZSTD_reset_session_only));
+		input = {piece, span.size, 0};
+	}
+
+	void Continue(data_ptr_t out, idx_t count) override {
+		while (count > 0) {
+			const auto step = out ? count : MinValue<idx_t>(count, duckdb_zstd::ZSTD_DStreamOutSize());
+			duckdb_zstd::ZSTD_outBuffer output {out ? out : scratch.get(), step, 0};
+			while (output.pos < output.size) {
+				const auto produced = output.pos;
+				const auto consumed = input.pos;
+				CheckZstd(duckdb_zstd::ZSTD_decompressStream(context, &output, &input));
+				if (output.pos == produced && input.pos == consumed) {
+					throw IOException("A ZSTD frame ends before its content size");
+				}
+			}
+			count -= step;
+			if (out) {
+				out += step;
+			}
+		}
+	}
+
+private:
+	duckdb_zstd::ZSTD_DCtx *context;
+	unsafe_unique_array<data_t> scratch;
+	duckdb_zstd::ZSTD_inBuffer input {nullptr, 0, 0};
+};
+
+constexpr uint32_t ZSTD_SKIPPABLE_MAGIC = 0x184D2A50;
+constexpr uint32_t ZSTD_SKIPPABLE_MASK = 0xFFFFFFF0;
+constexpr idx_t ZSTD_SKIPPABLE_HEADER = 8;
+constexpr idx_t ZSTD_PIECE_LIMIT = idx_t(1) << 26;
+
 struct ZStdFileSystemHolder {
 	ZStdFileSystem zstd_fs;
 };
@@ -200,6 +256,40 @@ unique_ptr<StreamWrapper> ZStdFileSystem::CreateStream() {
 
 unique_ptr<PiecedFile> ZStdFileSystem::CreatePieces() {
 	return make_uniq<ZstdPiecedFile>();
+}
+
+bool ZStdFileSystem::FindPieces(const_data_ptr_t data, idx_t size, vector<PieceSpan> &pieces) {
+	pieces.clear();
+	idx_t offset = 0;
+	idx_t output = 0;
+	while (offset < size) {
+		const auto remaining = size - offset;
+		if (remaining >= ZSTD_SKIPPABLE_HEADER &&
+		    (Load<uint32_t>(data + offset) & ZSTD_SKIPPABLE_MASK) == ZSTD_SKIPPABLE_MAGIC) {
+			const auto skipped = ZSTD_SKIPPABLE_HEADER + Load<uint32_t>(data + offset + 4);
+			if (skipped > remaining) {
+				return false;
+			}
+			offset += skipped;
+			continue;
+		}
+		const auto content = duckdb_zstd::ZSTD_getFrameContentSize(data + offset, remaining);
+		if (content == ZSTD_CONTENTSIZE_UNKNOWN || content == ZSTD_CONTENTSIZE_ERROR || content > ZSTD_PIECE_LIMIT) {
+			return false;
+		}
+		const auto compressed = duckdb_zstd::ZSTD_findFrameCompressedSize(data + offset, remaining);
+		if (duckdb_zstd::ZSTD_isError(compressed)) {
+			return false;
+		}
+		pieces.push_back(PieceSpan {offset, compressed, output, content});
+		output += content;
+		offset += compressed;
+	}
+	return true;
+}
+
+unique_ptr<PieceDecompressor> ZStdFileSystem::CreateDecompressor() {
+	return make_uniq<ZstdPieceDecompressor>();
 }
 
 idx_t ZStdFileSystem::InBufferSize() {
