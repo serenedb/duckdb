@@ -775,7 +775,7 @@ public:
 		bool listed = false;
 		bool opened = false;
 		vector<PartitionStatistics> partitions;
-		vector<optionally_owned_ptr<const BaseStatistics>> statistics;
+		vector<RowGroupReorderer::PartitionOrderStatistics> statistics;
 	};
 
 	//! Open a file of a planned scan, unless the filters skip it, and list its partitions
@@ -816,8 +816,9 @@ public:
 		                              : optional_idx();
 		for (auto &partition : result.partitions) {
 			if (order_column.IsValid() && partition.partition_row_group) {
-				result.statistics.emplace_back(
-				    partition.partition_row_group->GetColumnStatistics(StorageIndex(order_column.GetIndex())));
+				const StorageIndex storage_index(order_column.GetIndex());
+				result.statistics.push_back({partition.partition_row_group->GetColumnStatistics(storage_index),
+				                             partition.partition_row_group->MinMaxIsExact(storage_index)});
 			} else {
 				result.statistics.emplace_back();
 			}
@@ -841,7 +842,7 @@ public:
 			ListFilePartitions(context, bind_data, gstate, file_idx, listed[file_idx]);
 		});
 		vector<PartitionStatistics> partitions;
-		vector<optionally_owned_ptr<const BaseStatistics>> statistics;
+		vector<RowGroupReorderer::PartitionOrderStatistics> statistics;
 		vector<idx_t> file_starts;
 		for (idx_t file_idx = 0; file_idx < listed.size(); file_idx++) {
 			auto &file = listed[file_idx];
@@ -874,11 +875,7 @@ public:
 
 		vector<idx_t> order;
 		if (bind_data.scan_order) {
-			vector<optional_ptr<const BaseStatistics>> order_statistics;
-			for (auto &entry : statistics) {
-				order_statistics.emplace_back(entry.get());
-			}
-			order = RowGroupReorderer::OrderPartitions(*bind_data.scan_order, order_statistics, [&](idx_t partition) {
+			order = RowGroupReorderer::OrderPartitions(*bind_data.scan_order, statistics, [&](idx_t partition) {
 				auto &stats = partitions[partition];
 				return stats.count_type == CountType::COUNT_EXACT ? stats.count : 0;
 			});
