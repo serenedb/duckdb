@@ -407,7 +407,7 @@ public:
 	void Append(const CompressedPiece &piece) override {
 		crc = crc32_combine(crc, piece.input_crc, UnsafeNumericCast<z_off64_t>(piece.input_size));
 		size += piece.input_size;
-		ended = ended || piece.last;
+		ended = piece.last;
 	}
 	string Tail() const override {
 		unsigned char footer[GZIP_FOOTER_SIZE];
