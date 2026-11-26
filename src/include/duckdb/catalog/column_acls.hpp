@@ -8,9 +8,9 @@
 
 #pragma once
 
+#include "duckdb/catalog/acl.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
-#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/parser/column_list.hpp"
 
 #include <absl/algorithm/container.h>
@@ -40,50 +40,6 @@ inline std::span<const AclItem> ColumnAclOf(const StandardEntry &relation, Logic
 		return relation.Cast<ViewCatalogEntry>().ColumnAcl(column.index);
 	}
 	return relation.Cast<TableCatalogEntry>().GetColumns().GetColumn(column).Acl();
-}
-
-inline bool AllowedAny(const RoleAccess &role, CatalogType type, const Permissions &permissions, AclMode privileges,
-                       AclMode grant_options, std::span<const std::span<const AclItem>> columns = {},
-                       optional_ptr<const ColumnList> all_columns = nullptr) {
-	if (role.is_superuser) {
-		return true;
-	}
-	if (privileges == AclMode::NoRights && grant_options == AclMode::NoRights) {
-		return false;
-	}
-	const auto any_column = [&](auto &&visit) {
-		for (auto acl : columns) {
-			if (visit(acl)) {
-				return true;
-			}
-		}
-		if (all_columns) {
-			for (auto &column : all_columns->Logical()) {
-				if (visit(std::span<const AclItem>(column.Acl()))) {
-					return true;
-				}
-			}
-		}
-		return false;
-	};
-	if (privileges != AclMode::NoRights &&
-	    (role.CanAny(type, permissions, privileges) || any_column([&](std::span<const AclItem> acl) {
-		     return (role.HeldModes(acl) & privileges) != AclMode::NoRights;
-	     }))) {
-		return true;
-	}
-	if (grant_options == AclMode::NoRights) {
-		return false;
-	}
-	if (role.MemberOf(permissions.owner)) {
-		return true;
-	}
-	auto held = role.GrantableModes(permissions.acl);
-	any_column([&](std::span<const AclItem> acl) {
-		held |= role.GrantableModes(acl);
-		return false;
-	});
-	return (held & grant_options) != AclMode::NoRights;
 }
 
 } // namespace duckdb
