@@ -1,4 +1,5 @@
 #include "duckdb/common/bind_helpers.hpp"
+#include "duckdb/common/compressed_file_system.hpp"
 #include "duckdb/common/csv_writer.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
@@ -254,9 +255,15 @@ static unique_ptr<AsyncFileWriter> OpenCSVFileWriter(ClientContext &context, con
 
 struct GlobalWriteCSVData : public GlobalFunctionData {
 	GlobalWriteCSVData(CSVReaderOptions &options, ClientContext &context, const string &file_path,
-	                   FileCompressionType compression_p)
-	    : file_writer(OpenCSVFileWriter(context, file_path, std::move(compression_p))), writer(options, *file_writer),
-	      compression(file_writer->GetFileCompressionType()) {
+	                   const FileCompressionType &compression_p)
+	    : pieced(CreatePiecedFile(FileSystem::GetFileSystem(context), compression_p, file_path)),
+	      file_writer(
+	          OpenCSVFileWriter(context, file_path, pieced ? FileCompressionType::UNCOMPRESSED : compression_p)),
+	      writer(options, *file_writer, pieced.get()), compression(file_writer->GetFileCompressionType()) {
+		if (pieced) {
+			auto head = pieced->Head();
+			file_writer->WriteData(const_data_ptr_cast(head.data()), head.size());
+		}
 	}
 
 	CSVWriter &GetWriter() {
@@ -264,7 +271,7 @@ struct GlobalWriteCSVData : public GlobalFunctionData {
 	}
 
 	idx_t FileSize() {
-		if (compression == FileCompressionType::UNCOMPRESSED) {
+		if (!pieced && compression == FileCompressionType::UNCOMPRESSED) {
 			return writer.BytesWritten();
 		}
 		return writer.FileSize();
@@ -295,10 +302,15 @@ struct GlobalWriteCSVData : public GlobalFunctionData {
 	}
 
 	void Close() {
+		if (pieced) {
+			auto tail = pieced->Tail();
+			file_writer->WriteData(const_data_ptr_cast(tail.data()), tail.size());
+		}
 		file_writer->Close();
 	}
 
 private:
+	unique_ptr<PiecedFile> pieced;
 	unique_ptr<AsyncFileWriter> file_writer;
 	CSVWriter writer;
 	FileCompressionType compression;
@@ -425,6 +437,7 @@ unique_ptr<PreparedBatchData> WriteCSVPrepareBatch(ClientContext &context, Funct
 	for (auto &chunk : collection->Chunks()) {
 		WriteCSVChunkInternal(global_state.GetWriter(), *batch->writer_local_state, cast_chunk, chunk, executor);
 	}
+	global_state.GetWriter().Compress(*batch->writer_local_state);
 	return std::move(batch);
 }
 

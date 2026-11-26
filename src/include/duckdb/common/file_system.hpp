@@ -554,6 +554,8 @@ public:
 
 	DUCKDB_API virtual unique_ptr<FileHandle> OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle,
 	                                                             bool write);
+	DUCKDB_API virtual optional_ptr<CompressedFileSystem>
+	GetCompressedFileSystem(const FileCompressionType &compression, const string &path);
 
 	//! Create a LocalFileSystem.
 	DUCKDB_API static unique_ptr<FileSystem> CreateLocal();

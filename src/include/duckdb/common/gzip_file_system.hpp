@@ -42,6 +42,7 @@ public:
 	unique_ptr<StreamWrapper> CreateStream() override;
 	idx_t InBufferSize() override;
 	idx_t OutBufferSize() override;
+	unique_ptr<PiecedFile> CreatePieces() override;
 };
 
 static constexpr const uint8_t GZIP_COMPRESSION_DEFLATE = 0x08;

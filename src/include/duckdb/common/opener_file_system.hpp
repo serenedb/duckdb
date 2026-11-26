@@ -265,6 +265,10 @@ public:
 	}
 
 	void RegisterCompressionFilesystem(unique_ptr<CompressedFileSystem> fs) override;
+	optional_ptr<CompressedFileSystem> GetCompressedFileSystem(const FileCompressionType &compression,
+	                                                           const string &path) override {
+		return GetFileSystem().GetCompressedFileSystem(compression, path);
+	}
 
 	void UnregisterSubSystem(const string &name) override {
 		GetFileSystem().UnregisterSubSystem(name);

@@ -38,6 +38,7 @@ public:
 	unique_ptr<StreamWrapper> CreateStream() override;
 	idx_t InBufferSize() override;
 	idx_t OutBufferSize() override;
+	unique_ptr<PiecedFile> CreatePieces() override;
 
 	static int64_t DefaultCompressionLevel();
 	static int64_t MinimumCompressionLevel();

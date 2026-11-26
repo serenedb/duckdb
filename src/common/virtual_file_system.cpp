@@ -55,8 +55,8 @@ FileSystem &VirtualFileSystem::GetDefaultFileSystem() {
 	return fs;
 }
 
-optional_ptr<FileSystem> VirtualFileSystem::FindCompressionFileSystem(const FileCompressionType &compression,
-                                                                      const string &filepath) {
+optional_ptr<CompressedFileSystem> VirtualFileSystem::FindCompressionFileSystem(const FileCompressionType &compression,
+                                                                                const string &filepath) {
 	const idx_t count = compression_system_count;
 	auto resolved = compression;
 	// For auto-detection, check whether any registered compression filesystem can handle this file.
@@ -330,6 +330,11 @@ void VirtualFileSystem::RegisterSubSystem(unique_ptr<FileSystem> fs) {
 	sub_system.file_system = fs.get();
 	sub_system.owner = std::move(fs);
 	sub_system_count = count + 1;
+}
+
+optional_ptr<CompressedFileSystem> VirtualFileSystem::GetCompressedFileSystem(const FileCompressionType &compression,
+                                                                              const string &path) {
+	return FindCompressionFileSystem(compression, path);
 }
 
 void VirtualFileSystem::RegisterCompressionFilesystem(unique_ptr<CompressedFileSystem> fs) {
