@@ -312,97 +312,99 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		    last_row_end == DConstants::INVALID_INDEX && !block_settled ? max_line_size / 2 : max_line_size;
 		return reach - prior > limit;
 	};
-	const char quote_byte = d.quote ? d.quote : '\r';
 	while (pos + CSV_BLOCK_BYTES <= end) {
-		if (!EXTRACT && !SHAPE && !(in_quotes | after_closer | after_opener)) {
-			D_ASSERT(!d.comment && !escape);
-			const idx_t run_start = pos;
-			bool need_first_term = cursor.first_term == DConstants::INVALID_INDEX;
-			idx_t last_term = DConstants::INVALID_INDEX;
-			while (pos + CSV_BLOCK_BYTES <= end) {
-				const char *block = data + (pos - base);
-				__builtin_prefetch(block + PREFETCH_BYTES);
-				const CsvVector vector(block);
-				if (vector.EqualAny('\r', quote_byte)) {
-					break;
-				}
-				const uint64_t terms = vector.Equal('\n');
-				const uint64_t delims = vector.Equal(d.delimiter);
-				const uint64_t from_delims = (delims << 1) | after_delimiter;
-				const uint64_t after_terms = (terms << 1) | after_term;
-				const bool block_settled = settles(settled);
-				const uint64_t merged = d.merge_terms && !d.empty_lines ? after_terms : 0;
-				const uint64_t row_ends = terms & ~merged;
-				const uint64_t line_ends = d.empty_lines ? row_ends & ~after_terms : row_ends;
-				const uint64_t boundaries = delims | row_ends;
-				idx_t next_phase = phase;
-				if (check_arity && boundaries) {
-					const idx_t count = std::popcount(boundaries);
+		if constexpr (!EXTRACT && !SHAPE) {
+			if (!(in_quotes | after_closer | after_opener)) {
+				D_ASSERT(!d.comment && !escape);
+				const char quote_byte = d.quote ? d.quote : '\r';
+				const idx_t run_start = pos;
+				bool need_first_term = cursor.first_term == DConstants::INVALID_INDEX;
+				idx_t last_term = DConstants::INVALID_INDEX;
+				while (pos + CSV_BLOCK_BYTES <= end) {
+					const char *block = data + (pos - base);
+					__builtin_prefetch(block + PREFETCH_BYTES);
+					const CsvVector vector(block);
+					if (vector.EqualAny('\r', quote_byte)) {
+						break;
+					}
+					const uint64_t terms = vector.Equal('\n');
+					const uint64_t delims = vector.Equal(d.delimiter);
+					const uint64_t from_delims = (delims << 1) | after_delimiter;
+					const uint64_t after_terms = (terms << 1) | after_term;
+					const bool block_settled = settles(settled);
+					const uint64_t merged = d.merge_terms && !d.empty_lines ? after_terms : 0;
+					const uint64_t row_ends = terms & ~merged;
+					const uint64_t line_ends = d.empty_lines ? row_ends & ~after_terms : row_ends;
+					const uint64_t boundaries = delims | row_ends;
+					idx_t next_phase = phase;
+					if (check_arity && boundaries) {
+						const idx_t count = std::popcount(boundaries);
 #if defined(__BMI2__)
-					const uint64_t pattern = _pext_u64(row_ends, boundaries);
+						const uint64_t pattern = _pext_u64(row_ends, boundaries);
 #else
-					uint64_t pattern = 0;
-					for (uint64_t rest = row_ends; rest; rest &= rest - 1) {
-						pattern |= uint64_t(1) << std::popcount(boundaries & (Lowest(rest) - 1));
-					}
+						uint64_t pattern = 0;
+						for (uint64_t rest = row_ends; rest; rest &= rest - 1) {
+							pattern |= uint64_t(1) << std::popcount(boundaries & (Lowest(rest) - 1));
+						}
 #endif
-					const uint64_t mask = count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
-					if (phase >= columns || ((pattern ^ expected[phase]) & mask)) {
+						const uint64_t mask = count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
+						if (phase >= columns || ((pattern ^ expected[phase]) & mask)) {
+							break;
+						}
+						next_phase = pattern ? count + std::countl_zero(pattern) - 64 : phase + count;
+						if (next_phase >= columns) {
+							break;
+						}
+					}
+					const idx_t reach = line_ends ? pos + std::countr_zero(line_ends) : pos + CSV_BLOCK_BYTES;
+					if (too_long(reach, block_settled)) {
 						break;
 					}
-					next_phase = pattern ? count + std::countl_zero(pattern) - 64 : phase + count;
-					if (next_phase >= columns) {
-						break;
+					non_ascii |= vector.NonAscii();
+					settled = block_settled;
+					phase = next_phase;
+					if (track_fields) {
+						const uint64_t field_bits = from_delims | (after_terms & ~(terms & merged));
+						if (field_bits) {
+							field_start = pos + 63 - std::countl_zero(field_bits);
+						}
+						if ((delims | terms) >> (CSV_BLOCK_BYTES - 1)) {
+							field_start = pos + CSV_BLOCK_BYTES;
+						}
+					}
+					if (line_ends) {
+						if (last_row_end == DConstants::INVALID_INDEX) {
+							cursor.first_row_end = reach;
+						}
+						last_row_end = pos + 63 - std::countl_zero(line_ends);
+					}
+					rows += std::popcount(row_ends);
+					lines += std::popcount(terms);
+					if (terms) {
+						last_term = pos + 63 - std::countl_zero(terms);
+						if (need_first_term) {
+							need_first_term = false;
+							cursor.first_term = pos + std::countr_zero(terms);
+							cursor.first_boundary = cursor.first_term + 1;
+						}
+					}
+					after_delimiter = delims >> (CSV_BLOCK_BYTES - 1);
+					after_term = terms >> (CSV_BLOCK_BYTES - 1);
+					pos += CSV_BLOCK_BYTES;
+				}
+				if (pos != run_start) {
+					const char *last_block = data + (pos - CSV_BLOCK_BYTES - base);
+					const char before_last = last_block[CSV_BLOCK_BYTES - 2];
+					start_space =
+					    (before_last == '\n' || before_last == d.delimiter) && last_block[CSV_BLOCK_BYTES - 1] == ' ';
+					if (last_term != DConstants::INVALID_INDEX) {
+						cursor.last_term = last_term;
+						cursor.last_term_cr = false;
 					}
 				}
-				const idx_t reach = line_ends ? pos + std::countr_zero(line_ends) : pos + CSV_BLOCK_BYTES;
-				if (too_long(reach, block_settled)) {
+				if (pos + CSV_BLOCK_BYTES > end) {
 					break;
 				}
-				non_ascii |= vector.NonAscii();
-				settled = block_settled;
-				phase = next_phase;
-				if (track_fields) {
-					const uint64_t field_bits = from_delims | (after_terms & ~(terms & merged));
-					if (field_bits) {
-						field_start = pos + 63 - std::countl_zero(field_bits);
-					}
-					if ((delims | terms) >> (CSV_BLOCK_BYTES - 1)) {
-						field_start = pos + CSV_BLOCK_BYTES;
-					}
-				}
-				if (line_ends) {
-					if (last_row_end == DConstants::INVALID_INDEX) {
-						cursor.first_row_end = reach;
-					}
-					last_row_end = pos + 63 - std::countl_zero(line_ends);
-				}
-				rows += std::popcount(row_ends);
-				lines += std::popcount(terms);
-				if (terms) {
-					last_term = pos + 63 - std::countl_zero(terms);
-					if (need_first_term) {
-						need_first_term = false;
-						cursor.first_term = pos + std::countr_zero(terms);
-						cursor.first_boundary = cursor.first_term + 1;
-					}
-				}
-				after_delimiter = delims >> (CSV_BLOCK_BYTES - 1);
-				after_term = terms >> (CSV_BLOCK_BYTES - 1);
-				pos += CSV_BLOCK_BYTES;
-			}
-			if (pos != run_start) {
-				const char *last_block = data + (pos - CSV_BLOCK_BYTES - base);
-				const char before_last = last_block[CSV_BLOCK_BYTES - 2];
-				start_space =
-				    (before_last == '\n' || before_last == d.delimiter) && last_block[CSV_BLOCK_BYTES - 1] == ' ';
-				if (last_term != DConstants::INVALID_INDEX) {
-					cursor.last_term = last_term;
-					cursor.last_term_cr = false;
-				}
-			}
-			if (pos + CSV_BLOCK_BYTES > end) {
-				break;
 			}
 		}
 		const char *block = data + (pos - base);
