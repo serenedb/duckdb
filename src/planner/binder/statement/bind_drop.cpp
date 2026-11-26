@@ -136,7 +136,6 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		properties.requires_valid_transaction = false;
 		break;
 	case CatalogType::SECRET_ENTRY:
-		RequireSuperuser(CheckAs());
 		//! Secrets are stored in the secret manager; they can always be dropped
 		properties.requires_valid_transaction = false;
 		break;

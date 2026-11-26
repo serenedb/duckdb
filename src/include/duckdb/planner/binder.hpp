@@ -472,7 +472,7 @@ public:
 	void BindSharedDefinition();
 	void RecordCalls(optional_ptr<RecordedCalls> calls);
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
-	void RequireStatement(StatementType type);
+	void RequireStatement(const SQLStatement &statement);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
 	bool ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found);

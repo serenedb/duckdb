@@ -11,12 +11,16 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/privileges.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/table_binding.hpp"
@@ -25,19 +29,90 @@
 
 namespace duckdb {
 
-static constexpr StatementType SUPERUSER_STATEMENTS[] = {StatementType::EXPORT_STATEMENT,
-                                                         StatementType::LOAD_STATEMENT,
-                                                         StatementType::UPDATE_EXTENSIONS_STATEMENT,
-                                                         StatementType::COPY_DATABASE_STATEMENT,
-                                                         StatementType::CONNECT_STATEMENT,
-                                                         StatementType::EXTERNAL_RESOURCE_STATEMENT,
-                                                         StatementType::DETACH_STATEMENT,
-                                                         StatementType::ATTACH_STATEMENT};
+struct StatementRule {
+	StatementType statement;
+	CatalogType object = CatalogType::INVALID;
+	RoleOption option = RoleOption::None;
+	RoleCapability capability = RoleCapability::None;
+	const char *message = "permission denied: superuser required";
+	bool named = false;
+	const char *detail = nullptr;
+	const char *hint = nullptr;
+};
 
-void Binder::RequireStatement(StatementType type) {
-	if (absl::c_linear_search(SUPERUSER_STATEMENTS, type)) {
-		RequireSuperuser(CheckAs());
+static constexpr StatementRule STATEMENT_RULES[] = {
+    {.statement = StatementType::EXPORT_STATEMENT},
+    {.statement = StatementType::LOAD_STATEMENT},
+    {.statement = StatementType::UPDATE_EXTENSIONS_STATEMENT},
+    {.statement = StatementType::COPY_DATABASE_STATEMENT},
+    {.statement = StatementType::CONNECT_STATEMENT},
+    {.statement = StatementType::EXTERNAL_RESOURCE_STATEMENT},
+    {.statement = StatementType::DETACH_STATEMENT},
+    {.statement = StatementType::ATTACH_STATEMENT},
+    {.statement = StatementType::CREATE_STATEMENT, .object = CatalogType::SECRET_ENTRY},
+    {.statement = StatementType::DROP_STATEMENT, .object = CatalogType::SECRET_ENTRY},
+    {.statement = StatementType::CREATE_STATEMENT,
+     .object = CatalogType::TABLESPACE_ENTRY,
+     .message = "permission denied to create tablespace \"%s\"",
+     .named = true,
+     .hint = "Must be superuser to create a tablespace."},
+    {.statement = StatementType::CREATE_STATEMENT,
+     .object = CatalogType::DATABASE_ENTRY,
+     .option = RoleOption::CreateDb,
+     .message = "permission denied to create database"},
+    {.statement = StatementType::CREATE_STATEMENT,
+     .object = CatalogType::SUBSCRIPTION_ENTRY,
+     .capability = RoleCapability::CreateSubscription,
+     .message = "permission denied to create subscription",
+     .detail = "Only roles with privileges of the \"pg_create_subscription\" role may create subscriptions."},
+    {.statement = StatementType::CREATE_STATEMENT,
+     .object = CatalogType::ROLE_ENTRY,
+     .option = RoleOption::CreateRole,
+     .message = "permission denied to create role",
+     .detail = "Only roles with the CREATEROLE attribute may create roles."},
+    {.statement = StatementType::DROP_STATEMENT,
+     .object = CatalogType::ROLE_ENTRY,
+     .option = RoleOption::CreateRole,
+     .message = "permission denied to drop role",
+     .detail = "Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles."},
+};
+
+static const CreateInfo *CreateInfoOf(const SQLStatement &statement) {
+	return statement.type == StatementType::CREATE_STATEMENT ? statement.Cast<CreateStatement>().info.get() : nullptr;
+}
+
+static CatalogType StatementObject(const SQLStatement &statement) {
+	if (auto info = CreateInfoOf(statement)) {
+		return info->type;
 	}
+	return statement.type == StatementType::DROP_STATEMENT ? statement.Cast<DropStatement>().info->type
+	                                                       : CatalogType::INVALID;
+}
+
+void Binder::RequireStatement(const SQLStatement &statement) {
+	const auto object = StatementObject(statement);
+	const auto rule = absl::c_find_if(STATEMENT_RULES, [&](const StatementRule &rule) {
+		return rule.statement == statement.type && rule.object == object;
+	});
+	if (rule == std::end(STATEMENT_RULES)) {
+		return;
+	}
+	auto &role = CheckAs();
+	if (role.is_superuser || (rule->option != RoleOption::None && role.Has(rule->option)) ||
+	    (rule->capability != RoleCapability::None && role.Has(rule->capability))) {
+		return;
+	}
+	const auto message =
+	    rule->named
+	        ? StringUtil::Format(rule->message, CreateInfoOf(statement)->GetQualifiedName().Name().GetIdentifierName())
+	        : string(rule->message);
+	if (rule->detail) {
+		throw PermissionException::WithDetail(rule->detail, message);
+	}
+	if (rule->hint) {
+		throw PermissionException::WithHint(rule->hint, message);
+	}
+	throw PermissionException(message);
 }
 
 const RoleAccess &Binder::CheckAs() const {

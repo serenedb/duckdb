@@ -1420,7 +1420,6 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
-		RequireSuperuser(CheckAs());
 		CatalogTransaction transaction = CatalogTransaction(Catalog::GetSystemCatalog(context), context);
 		return_type = StatementReturnType::QUERY_RESULT;
 
@@ -1516,22 +1515,13 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	case CatalogType::TABLESPACE_ENTRY: {
 		auto &info = stmt.info->Cast<CreateTablespaceInfo>();
-		auto &role = CheckAs();
-		if (!role.is_superuser) {
-			throw PermissionException::WithHint("Must be superuser to create a tablespace.",
-			                                    "permission denied to create tablespace \"%s\"",
-			                                    info.GetQualifiedName().Name().GetIdentifierName());
-		}
-		info.permissions.owner = info.owner.empty() ? role.role : BindRole(info.owner)->oid;
+		info.permissions.owner = info.owner.empty() ? CheckAs().role : BindRole(info.owner)->oid;
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
 	}
 	case CatalogType::DATABASE_ENTRY: {
 		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
 		auto &role = CheckAs();
-		if (!role.is_superuser && !role.Has(RoleOption::CreateDb)) {
-			throw PermissionException("permission denied to create database");
-		}
 		if (!info.owner.empty()) {
 			info.permissions.owner = BindRole(RoleSpec(info.owner))->oid;
 			if (!role.CanSet(info.permissions.owner)) {
@@ -1574,11 +1564,6 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		stmt.info->SetQualifiedName(
 		    QualifiedName(catalog.GetName(), Identifier(), stmt.info->GetQualifiedName().Name()));
 		if (auto &role = CheckAs(); !role.IsSystem()) {
-			if (!role.Has(RoleCapability::CreateSubscription)) {
-				throw PermissionException::WithDetail(
-				    "Only roles with privileges of the \"pg_create_subscription\" role may create subscriptions.",
-				    "permission denied to create subscription");
-			}
 			if (auto database = Catalog::GetEntry(
 			        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName())),
 			        OnEntryNotFound::RETURN_NULL)) {

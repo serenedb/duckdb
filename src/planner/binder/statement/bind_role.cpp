@@ -260,10 +260,6 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 
 void Binder::BindCreateRole(CreateRoleInfo &info) {
 	auto &caller = CheckAs();
-	if (!caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
-		throw PermissionException::WithDetail("Only roles with the CREATEROLE attribute may create roles.",
-		                                      "permission denied to create role");
-	}
 	const auto attributes =
 	    info.options & (RoleOption::Superuser | RoleOption::CreateDb | RoleOption::Replication | RoleOption::BypassRls);
 	for (auto &named : ROLE_OPTIONS) {
@@ -361,11 +357,6 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 
 void Binder::BindDropRole(const Identifier &name) {
 	auto &caller = CheckAs();
-	if (!caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
-		throw PermissionException::WithDetail(
-		    "Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.",
-		    "permission denied to drop role");
-	}
 	optional_ptr<RoleEntry> role;
 	if (!caller.IsSystem()) {
 		role = BindRole(RoleSpec(name), OnEntryNotFound::RETURN_NULL);
