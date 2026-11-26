@@ -501,7 +501,7 @@ public:
 	void RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
 	void RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info);
 	static void OwnDefinedOverloads(CreateInfo &info, idx_t defined);
-	void RequireDefinedTypeUsage(CreateInfo &info, idx_t defined, Catalog &catalog);
+	void RequireStoredTypes(const CreateInfo &info, Catalog &catalog, idx_t defined = 0);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(const Identifier &name);

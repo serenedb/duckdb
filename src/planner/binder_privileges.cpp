@@ -17,6 +17,9 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_type_info.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/statement/drop_statement.hpp"
@@ -515,15 +518,35 @@ void Binder::OwnDefinedOverloads(CreateInfo &info, idx_t defined) {
 	}
 }
 
-void Binder::RequireDefinedTypeUsage(CreateInfo &info, idx_t defined, Catalog &catalog) {
+void Binder::RequireStoredTypes(const CreateInfo &info, Catalog &catalog, idx_t defined) {
+	const auto require = [&](const LogicalType &type) {
+		RequireTypeUsage(context, CheckAs(), type, catalog);
+	};
+	switch (info.type) {
+	case CatalogType::TABLE_ENTRY:
+		for (auto &column : info.Cast<CreateTableInfo>().columns.Logical()) {
+			require(column.Type());
+		}
+		return;
+	case CatalogType::VIEW_ENTRY:
+		for (auto &type : info.Cast<CreateViewInfo>().types) {
+			require(type);
+		}
+		return;
+	case CatalogType::TYPE_ENTRY:
+		if (auto &type = info.Cast<CreateTypeInfo>().type; type.id() == LogicalTypeId::STRUCT) {
+			for (auto &attribute : StructType::GetChildTypes(type)) {
+				require(attribute.second);
+			}
+		}
+		return;
+	default:
+		break;
+	}
 	auto &macros = info.Cast<CreateMacroInfo>().macros;
 	for (idx_t i = 0; i < (defined ? defined : macros.size()); i++) {
-		for (auto &type : macros[i]->types) {
-			RequireTypeUsage(context, CheckAs(), type, catalog);
-		}
-		for (auto &type : macros[i]->return_types) {
-			RequireTypeUsage(context, CheckAs(), type, catalog);
-		}
+		absl::c_for_each(macros[i]->types, require);
+		absl::c_for_each(macros[i]->return_types, require);
 	}
 }
 

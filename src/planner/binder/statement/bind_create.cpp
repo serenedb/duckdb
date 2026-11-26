@@ -1235,9 +1235,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			}
 		}
 		BindCreateViewInfo(base);
-		for (auto &type : base.types) {
-			RequireTypeUsage(context, CheckAs(), type, schema.ParentCatalog());
-		}
+		RequireStoredTypes(base, schema.ParentCatalog());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_VIEW, std::move(stmt.info), &schema);
 		break;
 	}
@@ -1250,7 +1248,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
-		RequireDefinedTypeUsage(*stmt.info, defined, schema.ParentCatalog());
+		RequireStoredTypes(*stmt.info, schema.ParentCatalog(), defined);
 		OwnDefinedOverloads(*stmt.info, defined);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -1259,7 +1257,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::MACRO_ENTRY: {
 		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
-		RequireDefinedTypeUsage(*stmt.info, defined, schema.ParentCatalog());
+		RequireStoredTypes(*stmt.info, schema.ParentCatalog(), defined);
 		OwnDefinedOverloads(*stmt.info, defined);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -1342,9 +1340,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			QualifyUserFunctions(table_schema, create_info);
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info), table_schema);
-		for (auto &column : bound_info->Base().columns.Logical()) {
-			RequireTypeUsage(context, CheckAs(), column.Type(), bound_info->schema.ParentCatalog());
-		}
+		RequireStoredTypes(bound_info->Base(), bound_info->schema.ParentCatalog());
 		auto &base = bound_info->Base();
 		if (base.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT ||
 		    !table_schema.GetEntry(table_catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
@@ -1410,11 +1406,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			SetCatalogLookupCallback(dependency_callback);
 			// Bind the underlying type
 			BindLogicalType(create_type_info.type);
-			if (create_type_info.type.id() == LogicalTypeId::STRUCT) {
-				for (auto &attribute : StructType::GetChildTypes(create_type_info.type)) {
-					RequireTypeUsage(context, CheckAs(), attribute.second, catalog);
-				}
-			}
+			RequireStoredTypes(create_type_info, catalog);
 		}
 		break;
 	}
