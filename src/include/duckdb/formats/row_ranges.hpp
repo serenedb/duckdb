@@ -113,10 +113,15 @@ idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t be
 class RowRanges {
 public:
 	static constexpr idx_t FEED_BYTES = 1 << 20;
+	static constexpr idx_t RANGES_PER_THREAD = 4;
 
 	RowRanges(Allocator &allocator, const RowLexer &lexer, RowSource &source, idx_t start, idx_t size,
 	          idx_t range_bytes, bool file_start);
 	RowRanges(Allocator &allocator, RowSource &source, idx_t start, idx_t size, idx_t range_bytes);
+
+	static idx_t RangeBytes(idx_t data_size, idx_t threads, idx_t min_bytes, idx_t max_bytes) {
+		return MinValue(MaxValue(data_size / (MaxValue<idx_t>(threads, 1) * RANGES_PER_THREAD), min_bytes), max_bytes);
+	}
 
 	void Reset(idx_t size, idx_t range_bytes);
 	bool Claim(idx_t &range);

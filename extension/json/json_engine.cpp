@@ -770,8 +770,8 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 	if (format == JSONFormat::NEWLINE_DELIMITED && parallel && source->Stream()) {
 		range_bytes = stream_bytes;
 	} else if ((format == JSONFormat::NEWLINE_DELIMITED || split_values) && parallel && !source->Stream()) {
-		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
-		range_bytes = MinValue(JSON_MAX_RANGE_BYTES, MaxValue(JSON_MIN_RANGE_BYTES, source->Size() / threads));
+		range_bytes = RowRanges::RangeBytes(source->Size(), TaskScheduler::QueryThreads(context), JSON_MIN_RANGE_BYTES,
+		                                    JSON_MAX_RANGE_BYTES);
 	}
 	ranges = make_uniq<RowRanges>(BufferAllocator::Get(context), source->Rows(), 0, source->Size(), range_bytes);
 	ranges->path = source->Path();
