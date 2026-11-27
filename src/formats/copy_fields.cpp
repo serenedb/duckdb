@@ -42,9 +42,9 @@ static void VerifyEscapedBytes(std::string_view value) {
 	}
 }
 
-std::string_view UnescapePostgresText(std::string_view field, char *out) {
+std::string_view UnescapePostgresText(std::string_view field, char *out, bool &escaped_high_or_nul) {
 	char *const begin = out;
-	bool escaped_high_or_nul = false;
+	escaped_high_or_nul = false;
 	for (idx_t i = 0; i < field.size();) {
 		const char c = field[i++];
 		if (c != '\\') {
@@ -109,11 +109,7 @@ std::string_view UnescapePostgresText(std::string_view field, char *out) {
 			break;
 		}
 	}
-	const std::string_view result(begin, static_cast<size_t>(out - begin));
-	if (escaped_high_or_nul) {
-		VerifyEscapedBytes(result);
-	}
-	return result;
+	return {begin, static_cast<size_t>(out - begin)};
 }
 
 std::string_view UnquotePostgresCsv(std::string_view field, char quote, char escape, char *out) {
@@ -150,7 +146,14 @@ CopyFieldKind ReadCopyField(const CopyFromRules &rules, idx_t column, std::strin
 		if (options.has_default && raw == options.default_str) {
 			return CopyFieldKind::DEFAULT_VALUE;
 		}
-		value = raw.find('\\') == std::string_view::npos ? raw : UnescapePostgresText(raw, out);
+		value = raw;
+		if (raw.find('\\') != std::string_view::npos) {
+			bool escaped_high_or_nul;
+			value = UnescapePostgresText(raw, out, escaped_high_or_nul);
+			if (escaped_high_or_nul) {
+				VerifyEscapedBytes(value);
+			}
+		}
 		return CopyFieldKind::VALUE;
 	}
 	if (raw.find(options.quote) == std::string_view::npos) {

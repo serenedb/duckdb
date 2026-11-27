@@ -19,7 +19,7 @@ enum class CopyFieldKind : uint8_t { VALUE, NULL_VALUE, DEFAULT_VALUE };
 CopyFieldKind ReadCopyField(const CopyFromRules &rules, idx_t column, std::string_view raw, char *out,
                             std::string_view &value);
 
-std::string_view UnescapePostgresText(std::string_view field, char *out);
+std::string_view UnescapePostgresText(std::string_view field, char *out, bool &escaped_high_or_nul);
 
 std::string_view UnquotePostgresCsv(std::string_view field, char quote, char escape, char *out);
 

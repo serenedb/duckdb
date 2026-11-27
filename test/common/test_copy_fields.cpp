@@ -312,10 +312,18 @@ TEST_CASE("COPY fields of PostgreSQL's text format, as lexed, match its lines an
 
 TEST_CASE("COPY's text format unescapes like PostgreSQL", "[copy]") {
 	string out(64, '\0');
-	REQUIRE(UnescapePostgresText("a\\tb\\nc\\\\d", &out[0]) == "a\tb\nc\\d");
-	REQUIRE(UnescapePostgresText("\\x41\\101\\x\\q\\", &out[0]) == "AAxq\\");
-	REQUIRE(UnescapePostgresText("\\777", &out[0]) == "\xFF");
-	REQUIRE_THROWS(UnescapePostgresText("a\\.b", &out[0]));
+	bool escaped_high_or_nul;
+	REQUIRE(UnescapePostgresText("a\\tb\\nc\\\\d", &out[0], escaped_high_or_nul) == "a\tb\nc\\d");
+	REQUIRE_FALSE(escaped_high_or_nul);
+	REQUIRE(UnescapePostgresText("\\x41\\101\\x\\q\\", &out[0], escaped_high_or_nul) == "AAxq\\");
+	REQUIRE_FALSE(escaped_high_or_nul);
+	REQUIRE(UnescapePostgresText("\\777", &out[0], escaped_high_or_nul) == "\xFF");
+	REQUIRE(escaped_high_or_nul);
+	REQUIRE(UnescapePostgresText("a\\0b", &out[0], escaped_high_or_nul) == string("a\0b", 3));
+	REQUIRE(escaped_high_or_nul);
+	REQUIRE(UnescapePostgresText("\\x00", &out[0], escaped_high_or_nul) == string("\0", 1));
+	REQUIRE(escaped_high_or_nul);
+	REQUIRE_THROWS(UnescapePostgresText("a\\.b", &out[0], escaped_high_or_nul));
 }
 
 TEST_CASE("COPY takes the line break of its first line, however its input is split", "[copy]") {
@@ -577,8 +585,12 @@ TEST_CASE("COPY reads PostgreSQL's encoding names", "[copy]") {
 TEST_CASE("COPY's text format reads hex escapes of either case and stops at the first byte that is no digit",
           "[copy]") {
 	string out(64, '\0');
-	REQUIRE(UnescapePostgresText("\\x!\\xab\\xAB\\xfg\\x4", &out[0]) == string("x!\xAB\xAB\x0F") + "g\x04");
-	REQUIRE(UnescapePostgresText("\\1!", &out[0]) == "\x01!");
+	bool escaped_high_or_nul;
+	REQUIRE(UnescapePostgresText("\\x!\\xab\\xAB\\xfg\\x4", &out[0], escaped_high_or_nul) ==
+	        string("x!\xAB\xAB\x0F") + "g\x04");
+	REQUIRE(escaped_high_or_nul);
+	REQUIRE(UnescapePostgresText("\\1!", &out[0], escaped_high_or_nul) == "\x01!");
+	REQUIRE_FALSE(escaped_high_or_nul);
 }
 
 TEST_CASE("COPY's line break finder steps over the byte an escape at the end of a piece escapes", "[copy]") {
