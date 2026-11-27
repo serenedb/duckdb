@@ -1,6 +1,7 @@
 #include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/cast_helpers.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
@@ -609,6 +610,16 @@ static JSONTexts EncodeDecimals(JSONEncodeContext &ctx, const Vector &value_v, i
 	    });
 }
 
+template <class T>
+static JSONTexts EncodeDecimalTexts(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                    ArenaAllocator &text_arena, uint8_t width, uint8_t scale) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, idx_t(width) + 3, [&](char *out, T value) {
+		const auto size = UnsafeNumericCast<idx_t>(DecimalToString::DecimalLength<T>(value, width, scale));
+		DecimalToString::FormatDecimal<T>(value, width, scale, out, size);
+		return out + size;
+	});
+}
+
 template <class WRITE>
 static JSONTexts EncodeStringValues(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
                                     ArenaAllocator &text_arena, WRITE &&write) {
@@ -769,9 +780,10 @@ static JSONTexts EncodeDecimalValues(JSONEncodeContext &ctx, Vector &value_v, id
 	const auto width = DecimalType::GetWidth(type);
 	const auto scale = DecimalType::GetScale(type);
 	if (width > 15) {
-		Vector string_vector(LogicalTypeId::VARCHAR, count);
-		VectorOperations::DefaultCast(value_v, string_vector, count);
-		return EncodeRawStrings(ctx, string_vector, count, text_arena);
+		if (type.InternalType() == PhysicalType::INT64) {
+			return EncodeDecimalTexts<int64_t>(ctx, value_v, count, text_arena, width, scale);
+		}
+		return EncodeDecimalTexts<hugeint_t>(ctx, value_v, count, text_arena, width, scale);
 	}
 	switch (type.InternalType()) {
 	case PhysicalType::INT16:
@@ -1038,15 +1050,28 @@ static JSONTexts EncodeValues(JSONEncodeContext &ctx, Vector &value_v, idx_t cou
 	case LogicalTypeId::TIMESTAMP_TZ:
 	case LogicalTypeId::TIMESTAMP_TZ_NS:
 		return EncodeTimestampsTZ(ctx, value_v, count, text_arena);
+	case LogicalTypeId::TIME:
+		return EncodeQuoted<dtime_t>(ctx, value_v, count, text_arena, TimeToStringCast::MAX_LENGTH,
+		                             [](dtime_t value, char *out) { return TimeToStringCast::Write(value, out); });
+	case LogicalTypeId::TIME_NS:
+		return EncodeQuoted<dtime_ns_t>(
+		    ctx, value_v, count, text_arena, TimeToStringCast::MAX_LENGTH,
+		    [](dtime_ns_t value, char *out) { return TimeToStringCast::Write(value, out); });
+	case LogicalTypeId::INTERVAL:
+		return EncodeQuoted<interval_t>(
+		    ctx, value_v, count, text_arena, IntervalToStringCast::MAX_LENGTH,
+		    [](interval_t value, char *out) { return IntervalToStringCast::Format(value, out); });
+	case LogicalTypeId::UUID:
+		return EncodeQuoted<hugeint_t>(ctx, value_v, count, text_arena, UUID::STRING_SIZE,
+		                               [](hugeint_t value, char *out) {
+			                               UUID::ToString(value, out);
+			                               return UUID::STRING_SIZE;
+		                               });
 	case LogicalTypeId::BIT:
 	case LogicalTypeId::BLOB:
 	case LogicalTypeId::LEGACY_AGGREGATE_STATE:
 	case LogicalTypeId::ENUM:
-	case LogicalTypeId::INTERVAL:
-	case LogicalTypeId::TIME:
-	case LogicalTypeId::TIME_NS:
 	case LogicalTypeId::TIME_TZ:
-	case LogicalTypeId::UUID:
 		return EncodeCastStrings(ctx, value_v, count, text_arena);
 	case LogicalTypeId::GEOMETRY:
 		if (ctx.options.geometry_format == JSONGeometryFormat::GEOJSON) {

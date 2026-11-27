@@ -81,7 +81,7 @@ string_t StringCast::Operation(double input, StringHeap &heap) {
 
 template <>
 string_t StringCast::Operation(interval_t input, StringHeap &heap) {
-	char buffer[70] = {};
+	char buffer[IntervalToStringCast::MAX_LENGTH] = {};
 	idx_t length = IntervalToStringCast::Format(input, buffer);
 	return heap.AddString(buffer, length);
 }
@@ -114,7 +114,7 @@ duckdb::string_t StringCast::Operation(date_t input, StringHeap &heap) {
 }
 
 template <typename T>
-duckdb::string_t StringAsTime(const T input, StringHeap &heap) {
+static idx_t WriteTime(const T input, char *data) {
 	int32_t picos = 0;
 	dtime_t micros(input.value);
 	if (micros.PRECISION < input.PRECISION) {
@@ -142,18 +142,27 @@ duckdb::string_t StringAsTime(const T input, StringHeap &heap) {
 		nano_length = 6;
 		nano_length -= NumericCast<idx_t>(TimeToStringCast::FormatMicros(picos, nano_buffer));
 	}
-	const idx_t length = time_length + nano_length;
-
-	string_t result = heap.EmptyString(length);
-	auto data = result.GetDataWriteable();
+	D_ASSERT(time_length + nano_length <= TimeToStringCast::MAX_LENGTH);
 
 	TimeToStringCast::Format(data, time_length, time, micro_buffer);
-	data += time_length;
-	memcpy(data, nano_buffer, nano_length);
-	D_ASSERT(data + nano_length <= result.GetDataWriteable() + length);
+	memcpy(data + time_length, nano_buffer, nano_length);
+	return time_length + nano_length;
+}
 
-	result.Finalize();
-	return result;
+template <typename T>
+duckdb::string_t StringAsTime(const T input, StringHeap &heap) {
+	auto &allocator = heap.GetAllocator();
+	const auto data = StringVector::AllocateShrinkableBuffer(allocator, TimeToStringCast::MAX_LENGTH);
+	const auto length = WriteTime(input, char_ptr_cast(data));
+	return StringVector::FinalizeShrinkableBuffer(allocator, data, TimeToStringCast::MAX_LENGTH, length);
+}
+
+idx_t TimeToStringCast::Write(dtime_t time, char *data) {
+	return WriteTime(time, data);
+}
+
+idx_t TimeToStringCast::Write(dtime_ns_t time, char *data) {
+	return WriteTime(time, data);
 }
 
 template <>

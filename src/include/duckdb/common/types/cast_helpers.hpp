@@ -327,15 +327,21 @@ struct TimeToStringCast {
 	static void Format(char *data, idx_t length, int32_t time[], char micro_buffer[]) {
 		Format(data, length, time[0], time[1], time[2], time[3], micro_buffer);
 	}
+
+	static constexpr idx_t MAX_LENGTH = 15 + 6;
+	DUCKDB_API static idx_t Write(dtime_t time, char *data);
+	DUCKDB_API static idx_t Write(dtime_ns_t time, char *data);
 };
 
 struct TimestampToStringCast {
-	static constexpr idx_t MAX_LENGTH = DateToStringCast::MAX_LENGTH + 1 + 15 + 6 + 3;
+	static constexpr idx_t MAX_LENGTH = DateToStringCast::MAX_LENGTH + 1 + TimeToStringCast::MAX_LENGTH + 3;
 	DUCKDB_API static idx_t Write(timestamp_t timestamp, char *data);
 	DUCKDB_API static idx_t Write(timestamp_ns_t timestamp, char *data);
 };
 
 struct IntervalToStringCast {
+	static constexpr idx_t MAX_LENGTH = 70;
+
 	static void FormatSignedNumber(int64_t value, char buffer[], idx_t &length) {
 		int sign = -(value < 0);
 		auto unsigned_value = NumericCast<uint64_t>((value ^ sign) - sign);
