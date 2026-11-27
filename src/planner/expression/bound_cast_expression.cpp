@@ -99,6 +99,11 @@ unique_ptr<Expression> BoundCastExpression::AddCastToType(ClientContext &context
 	                             CastBindSource::CONTEXT);
 }
 
+unique_ptr<Expression> BoundCastExpression::AddCastToType(Binder &binder, unique_ptr<Expression> expr,
+                                                          const LogicalType &target_type, bool try_cast) {
+	return AddCastToType(binder.context, std::move(expr), target_type, try_cast, binder.BoundRole());
+}
+
 unique_ptr<Expression> BoundCastExpression::AddArrayCastToList(ClientContext &context, unique_ptr<Expression> expr) {
 	if (expr->GetReturnType().id() != LogicalTypeId::ARRAY) {
 		return expr;

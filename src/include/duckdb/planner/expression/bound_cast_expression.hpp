@@ -12,6 +12,7 @@
 #include "duckdb/function/cast/default_casts.hpp"
 
 namespace duckdb {
+class Binder;
 
 //! The BoundCastExpression has been moved to a function expression (the __cast scalar function).
 //! This class exists only as a set of helper methods.
@@ -52,6 +53,9 @@ struct BoundCastExpression {
 	DUCKDB_API static unique_ptr<Expression> AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
 	                                                       const LogicalType &target_type, bool try_cast = false,
 	                                                       optional_idx caller_role = optional_idx());
+	//! Cast an expression bound by a binder, which resolves names in the cast as the role the binder binds as
+	DUCKDB_API static unique_ptr<Expression> AddCastToType(Binder &binder, unique_ptr<Expression> expr,
+	                                                       const LogicalType &target_type, bool try_cast = false);
 
 	//! If the expression returns an array, cast it to return a list with the same child type. Otherwise do nothing.
 	DUCKDB_API static unique_ptr<Expression> AddArrayCastToList(ClientContext &context, unique_ptr<Expression> expr);

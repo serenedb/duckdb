@@ -270,8 +270,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			positional_arg = make_uniq<CastExpression>(parameter_types[param_idx], std::move(positional_arg));
 			if (bound_arguments && bound_arguments->positional[param_idx]) {
 				auto &bound = bound_arguments->positional[param_idx];
-				bound =
-				    BoundCastExpression::AddCastToType(binder.context, std::move(bound), parameter_types[param_idx]);
+				bound = BoundCastExpression::AddCastToType(binder, std::move(bound), parameter_types[param_idx]);
 			}
 		}
 	}
@@ -289,7 +288,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 				if (bound_arguments) {
 					auto bound = bound_arguments->named.find(param_name);
 					if (bound != bound_arguments->named.end()) {
-						bound->second = BoundCastExpression::AddCastToType(binder.context, std::move(bound->second),
+						bound->second = BoundCastExpression::AddCastToType(binder, std::move(bound->second),
 						                                                   parameter_types[param_idx]);
 					}
 				}

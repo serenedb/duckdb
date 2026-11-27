@@ -112,7 +112,7 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 			continue;
 		}
 		auto cast = BoundCastExpression::AddCastToType(
-		    context, make_uniq<BoundConstantExpression>(value->second.GetValue()), hint.second);
+		    *this, make_uniq<BoundConstantExpression>(value->second.GetValue()), hint.second);
 		value->second = BoundParameterData(ExpressionExecutor::EvaluateScalar(context, *cast), hint.second);
 	}
 	prepared->PopulateMissingParameterValues(context, bind_values);

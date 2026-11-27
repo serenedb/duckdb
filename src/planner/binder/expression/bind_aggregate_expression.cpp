@@ -240,7 +240,7 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 	}
 
 	if (aggr.Filter()) {
-		bound_filter = BoundCastExpression::AddCastToType(context, std::move(bound_filter_child), LogicalType::BOOLEAN);
+		bound_filter = BoundCastExpression::AddCastToType(binder, std::move(bound_filter_child), LogicalType::BOOLEAN);
 	}
 
 	// all children bound successfully - collect them (with their explicit names, if any) into the full argument list.

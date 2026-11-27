@@ -18,7 +18,7 @@ namespace duckdb {
 LogicalType ExpressionBinder::ResolveNotType(OperatorExpression &op, vector<unique_ptr<Expression>> &children) {
 	// NOT expression, cast child to BOOLEAN
 	D_ASSERT(children.size() == 1);
-	children[0] = BoundCastExpression::AddCastToType(context, std::move(children[0]), LogicalType::BOOLEAN);
+	children[0] = BoundCastExpression::AddCastToType(binder, std::move(children[0]), LogicalType::BOOLEAN);
 	return LogicalType(LogicalTypeId::BOOLEAN);
 }
 
@@ -53,7 +53,7 @@ LogicalType ExpressionBinder::ResolveCoalesceType(OperatorExpression &op, vector
 
 	// cast all children to the same type
 	for (auto &child : children) {
-		child = BoundCastExpression::AddCastToType(context, std::move(child), max_type);
+		child = BoundCastExpression::AddCastToType(binder, std::move(child), max_type);
 		if (is_in_operator) {
 			// If it's IN/NOT_IN operator, push collation functions.
 			ExpressionBinder::PushCollation(context, child, max_type, CollationType::EQUALITY_COLLATIONS);

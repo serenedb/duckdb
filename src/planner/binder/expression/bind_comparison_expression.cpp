@@ -186,9 +186,9 @@ unique_ptr<Expression> ExpressionBinder::CreateBoundComparison(ExpressionType co
 		return nullptr;
 	}
 	// add casts (if necessary)
-	left = BoundCastExpression::AddCastToType(context, std::move(left), input_type,
-	                                          input_type.id() == LogicalTypeId::ENUM);
-	right = BoundCastExpression::AddCastToType(context, std::move(right), input_type,
+	left =
+	    BoundCastExpression::AddCastToType(binder, std::move(left), input_type, input_type.id() == LogicalTypeId::ENUM);
+	right = BoundCastExpression::AddCastToType(binder, std::move(right), input_type,
 	                                           input_type.id() == LogicalTypeId::ENUM);
 
 	const auto collation_type = ComparisonCollationType(comparison_type);

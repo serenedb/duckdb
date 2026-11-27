@@ -1841,7 +1841,7 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	if (!macro_def.return_types.empty()) {
 		auto declared = macro_def.ResultType();
 		if (MacroFunction::ResultNeedsCast(result.expression->GetReturnType(), declared)) {
-			result.expression = BoundCastExpression::AddCastToType(context, std::move(result.expression), declared);
+			result.expression = BoundCastExpression::AddCastToType(binder, std::move(result.expression), declared);
 		}
 	}
 	if (constant_candidate && result.expression->IsFoldable() && !result.expression->IsVolatile()) {

@@ -144,7 +144,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 					    child = column_values[colref.Binding().column_index]->Copy();
 				    }
 			    });
-			column_values[pos] = BoundCastExpression::AddCastToType(context, std::move(bound), col.Type());
+			column_values[pos] = BoundCastExpression::AddCastToType(*this, std::move(bound), col.Type());
 		}
 		pos++;
 	}

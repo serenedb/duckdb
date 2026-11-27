@@ -409,7 +409,7 @@ BindResult BaseSelectBinder::BindWindowExpression(WindowExpression &window, idx_
 
 		// Cast all three to match
 		optional_ptr<const Expression> original_order = bound_order.get();
-		bound_order = BoundCastExpression::AddCastToType(context, std::move(bound_order), order_type);
+		bound_order = BoundCastExpression::AddCastToType(binder, std::move(bound_order), order_type);
 		if (!WindowRangeCast::Capture(*bound_order, original_order, result->SQLRangeOrderCastsMutable())) {
 			result->SQLRangeStartBoundaryMutable().reset();
 			result->SQLRangeEndBoundaryMutable().reset();
