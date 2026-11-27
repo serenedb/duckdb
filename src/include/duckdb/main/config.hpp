@@ -239,7 +239,6 @@ public:
 	create_secret_storage_t create_secret_storage = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
-	identifier_set_t builtin_relations;
 	identifier_set_t hidden_settings;
 	idx_t bootstrap_role = 0;
 	idx_t database_owner_role = 0;

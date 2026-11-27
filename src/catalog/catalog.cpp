@@ -903,21 +903,18 @@ vector<SimilarCatalogEntry> Catalog::SimilarEntriesInSchemas(ClientContext &cont
 }
 
 vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, const Identifier &catalog,
-                                             const Identifier &schema, CatalogType lookup_type = CatalogType::INVALID,
-                                             optional_ptr<const Identifier> entry_name = nullptr) {
+                                             const Identifier &schema, CatalogType lookup_type = CatalogType::INVALID) {
 	auto &context = retriever.GetContext();
 	vector<CatalogSearchEntry> entries;
 	auto &search_path = retriever.GetSearchPath();
 	if (IsInvalidCatalog(catalog) && IsInvalidSchema(schema)) {
 		// no catalog or schema provided - scan the entire search path.
-		const bool builtins_first = !entry_name || !Catalog::InRelationNamespace(lookup_type) ||
-		                            DBConfig::GetConfig(context).builtin_relations.count(*entry_name);
 		if (lookup_type == CatalogType::INVALID || lookup_type == CatalogType::TABLE_ENTRY) {
-			entries = search_path.Get(builtins_first);
+			entries = search_path.Get();
 		} else {
 			// for non-table lookups, resolve implicit catalogs that requested precedence to their default schema in
 			// place
-			entries = search_path.GetWithPrecedenceSchemas(context, builtins_first);
+			entries = search_path.GetWithPrecedenceSchemas(context);
 		}
 	} else if (IsInvalidCatalog(catalog)) {
 		auto catalogs = search_path.GetCatalogsForSchema(schema);
@@ -1388,8 +1385,7 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 		lookups.emplace_back(*catalog_entry, lookup_info);
 		return TryLookupEntry(retriever, lookups, lookup_info, if_not_found, false);
 	}
-	auto entries =
-	    GetCatalogEntries(retriever, catalog, schema, lookup_info.GetCatalogType(), lookup_info.GetEntryIdentifier());
+	auto entries = GetCatalogEntries(retriever, catalog, schema, lookup_info.GetCatalogType());
 	vector<CatalogLookup> final_lookups;
 	lookups.reserve(entries.size());
 	for (auto &entry : entries) {

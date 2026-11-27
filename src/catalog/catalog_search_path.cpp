@@ -364,10 +364,10 @@ static void ForEachInLookupOrder(const vector<CatalogSearchEntry> &paths, bool b
 	}
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::Get(bool builtins_first) const {
+vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
 	vector<CatalogSearchEntry> res;
 	res.reserve(paths.size());
-	ForEachInLookupOrder(paths, builtins_first && builtins_first_order, [&](const CatalogSearchEntry &path) {
+	ForEachInLookupOrder(paths, builtins_first_order, [&](const CatalogSearchEntry &path) {
 		auto resolved = ResolveSchema(context, path);
 		if (!resolved.empty()) {
 			res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
@@ -542,10 +542,9 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetImplicitSearchCatalogs() const 
 	return catalogs;
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context,
-                                                                       bool builtins_first) const {
+vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context) const {
 	vector<CatalogSearchEntry> res;
-	ForEachInLookupOrder(paths, builtins_first && builtins_first_order, [&](const CatalogSearchEntry &path) {
+	ForEachInLookupOrder(paths, builtins_first_order, [&](const CatalogSearchEntry &path) {
 		// Resolve implicit entries with default_schema_precedence to the catalog's default schema.
 		if (!path.GetSchema().empty()) {
 			auto resolved = ResolveSchema(context, path);
