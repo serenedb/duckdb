@@ -74,7 +74,7 @@ public:
 		used += count;
 	}
 	void Expect(idx_t size) {
-		if (allocator && Room() < size) {
+		if (allocator) {
 			Reserve(size);
 		}
 	}
@@ -86,10 +86,8 @@ public:
 		return true;
 	}
 	void Finish() {
-		if (allocator) {
-			Reserve(0);
-			memset(data + used, 0, padding);
-		}
+		Reserve(0);
+		memset(data + used, 0, padding);
 	}
 
 private:

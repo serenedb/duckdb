@@ -63,9 +63,6 @@ public:
 	BlockCompressor(const BlockCompressor &) = delete;
 	BlockCompressor &operator=(const BlockCompressor &) = delete;
 
-	BlockCodec Codec() const {
-		return codec;
-	}
 	idx_t MaxCompressedSize(idx_t size);
 	idx_t Compress(const_data_ptr_t src, idx_t size, data_ptr_t dst, idx_t capacity);
 	idx_t Compress(std::span<const std::span<const data_t>> inputs, bool finish, data_ptr_t dst, idx_t capacity);

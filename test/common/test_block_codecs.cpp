@@ -42,6 +42,17 @@ bool Decompress(BlockDecompressor &decompressor, BlockCodec codec, const string 
 	                                  data_ptr_cast(&output[0]), output.size(), error);
 }
 
+bool DecompressGrowing(BlockDecompressor &decompressor, BlockCodec codec, const string &compressed, AllocatedData &out,
+                       string &output, string &error) {
+	idx_t size = 0;
+	if (!decompressor.TryDecompress(codec, const_data_ptr_cast(compressed.data()), compressed.size(),
+	                                Allocator::DefaultAllocator(), 0, out, size, error)) {
+		return false;
+	}
+	output.assign(const_char_ptr_cast(out.get()), size);
+	return true;
+}
+
 } // namespace
 
 TEST_CASE("Block codecs decompress what they compress into its exact size and nothing else", "[formats]") {
@@ -136,4 +147,69 @@ TEST_CASE("Block codecs compress inputs in pieces, and a deflate block can stay 
 	string unused(snappy.MaxCompressedSize(input.size()), '\0');
 	REQUIRE_THROWS_AS(snappy.Compress(halves, true, data_ptr_cast(&unused[0]), unused.size()), InternalException);
 	REQUIRE_THROWS_AS(snappy.Compress(halves, false, data_ptr_cast(&unused[0]), unused.size()), InternalException);
+}
+
+TEST_CASE("Block codecs report input that is not their format", "[formats]") {
+	string garbage(64, '\xFF');
+	garbage[0] = '\x11';
+	for (auto codec : ALL_CODECS) {
+		CAPTURE(static_cast<int>(codec));
+		BlockDecompressor decompressor;
+		string error;
+		string output(1000, '\0');
+		REQUIRE_FALSE(Decompress(decompressor, codec, garbage, garbage.size(), output, error));
+		REQUIRE_FALSE(error.empty());
+		if (codec == BlockCodec::LZ4) {
+			continue;
+		}
+		error.clear();
+		AllocatedData out;
+		REQUIRE_FALSE(DecompressGrowing(decompressor, codec, garbage, out, output, error));
+		REQUIRE_FALSE(error.empty());
+	}
+}
+
+TEST_CASE("Block codecs read concatenated frames and gzip members", "[formats]") {
+	const auto input = BlockInput();
+	const auto half = input.size() / 2;
+	for (auto codec : {BlockCodec::GZIP, BlockCodec::ZSTD, BlockCodec::LZ4_FRAME}) {
+		CAPTURE(static_cast<int>(codec));
+		const auto compressed = Compress(codec, input.substr(0, half)) + Compress(codec, input.substr(half));
+		BlockDecompressor decompressor;
+		string error;
+		string output(input.size(), '\0');
+		REQUIRE(Decompress(decompressor, codec, compressed, compressed.size(), output, error));
+		REQUIRE(output == input);
+		AllocatedData out;
+		for (idx_t round = 0; round < 2; round++) {
+			output.clear();
+			REQUIRE(DecompressGrowing(decompressor, codec, compressed, out, output, error));
+			REQUIRE(output == input);
+		}
+	}
+}
+
+TEST_CASE("Block codecs grow the output for data that compresses many times over", "[formats]") {
+	string input(8 * 1024 * 1024, 'a');
+	for (idx_t i = 0; i < input.size(); i += 4096) {
+		input[i] = char('b' + i / 4096 % 20);
+	}
+	const string small(1000, 'c');
+	for (auto codec : ALL_CODECS) {
+		if (codec == BlockCodec::LZ4) {
+			continue;
+		}
+		CAPTURE(static_cast<int>(codec));
+		const auto compressed = Compress(codec, input);
+		REQUIRE(compressed.size() * 16 < input.size());
+		BlockDecompressor decompressor;
+		AllocatedData out;
+		string output;
+		string error;
+		REQUIRE(DecompressGrowing(decompressor, codec, compressed, out, output, error));
+		REQUIRE(output == input);
+		REQUIRE(DecompressGrowing(decompressor, codec, Compress(codec, small), out, output, error));
+		REQUIRE(output == small);
+		REQUIRE(out.GetSize() >= input.size());
+	}
 }
