@@ -17,6 +17,7 @@ namespace {
 constexpr idx_t FIELD_SLACK = 8;
 constexpr idx_t ROW_BASE_LIMIT = idx_t(1) << 20;
 constexpr idx_t PREFETCH_BYTES = 1024;
+constexpr idx_t PLAIN_BATCH_BLOCKS = 64;
 
 uint64_t ExpectedPattern(idx_t columns, idx_t phase) {
 	uint64_t result = 0;
@@ -320,18 +321,10 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				const idx_t run_start = pos;
 				bool need_first_term = cursor.first_term == DConstants::INVALID_INDEX;
 				idx_t last_term = DConstants::INVALID_INDEX;
-				while (pos + CSV_BLOCK_BYTES <= end) {
-					const char *block = data + (pos - base);
-					__builtin_prefetch(block + PREFETCH_BYTES);
-					const CsvVector vector(block);
-					if (vector.EqualAny('\r', quote_byte)) {
-						break;
-					}
-					const uint64_t terms = vector.Equal('\n');
-					const uint64_t delims = vector.Equal(d.delimiter);
+				const auto plain_block = [&]<bool STEADY> [[gnu::always_inline]] (uint64_t terms, uint64_t delims) {
 					const uint64_t from_delims = (delims << 1) | after_delimiter;
 					const uint64_t after_terms = (terms << 1) | after_term;
-					const bool block_settled = settles(settled);
+					const bool block_settled = STEADY || settles(settled);
 					const uint64_t merged = d.merge_terms && !d.empty_lines ? after_terms : 0;
 					const uint64_t row_ends = terms & ~merged;
 					const uint64_t line_ends = d.empty_lines ? row_ends & ~after_terms : row_ends;
@@ -349,18 +342,17 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 #endif
 						const uint64_t mask = count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
 						if (phase >= columns || ((pattern ^ expected[phase]) & mask)) {
-							break;
+							return false;
 						}
 						next_phase = pattern ? count + std::countl_zero(pattern) - 64 : phase + count;
 						if (next_phase >= columns) {
-							break;
+							return false;
 						}
 					}
 					const idx_t reach = line_ends ? pos + std::countr_zero(line_ends) : pos + CSV_BLOCK_BYTES;
-					if (too_long(reach, block_settled)) {
-						break;
+					if (STEADY ? reach - last_row_end > max_line_size : too_long(reach, block_settled)) {
+						return false;
 					}
-					non_ascii |= vector.NonAscii();
 					settled = block_settled;
 					phase = next_phase;
 					if (track_fields) {
@@ -373,7 +365,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 						}
 					}
 					if (line_ends) {
-						if (last_row_end == DConstants::INVALID_INDEX) {
+						if (!STEADY && last_row_end == DConstants::INVALID_INDEX) {
 							cursor.first_row_end = reach;
 						}
 						last_row_end = pos + 63 - std::countl_zero(line_ends);
@@ -382,7 +374,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					lines += std::popcount(terms);
 					if (terms) {
 						last_term = pos + 63 - std::countl_zero(terms);
-						if (need_first_term) {
+						if (!STEADY && need_first_term) {
 							need_first_term = false;
 							cursor.first_term = pos + std::countr_zero(terms);
 							cursor.first_boundary = cursor.first_term + 1;
@@ -391,6 +383,46 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					after_delimiter = delims >> (CSV_BLOCK_BYTES - 1);
 					after_term = terms >> (CSV_BLOCK_BYTES - 1);
 					pos += CSV_BLOCK_BYTES;
+					return true;
+				};
+				bool running = true;
+				while (running && pos + CSV_BLOCK_BYTES <= end &&
+				       !(settled && last_row_end != DConstants::INVALID_INDEX && !need_first_term)) {
+					const char *block = data + (pos - base);
+					__builtin_prefetch(block + PREFETCH_BYTES);
+					const CsvVector vector(block);
+					const bool high = vector.HasNonAscii();
+					running = !vector.ContainsAny('\r', quote_byte) &&
+					          plain_block.template operator()<false>(vector.Equal('\n'), vector.Equal(d.delimiter));
+					non_ascii |= running && high;
+				}
+				uint64_t term_masks[PLAIN_BATCH_BLOCKS];
+				uint64_t delim_masks[PLAIN_BATCH_BLOCKS];
+				while (running && pos + CSV_BLOCK_BYTES <= end) {
+					const idx_t blocks = MinValue<idx_t>(PLAIN_BATCH_BLOCKS, (end - pos) / CSV_BLOCK_BYTES);
+					idx_t classified = 0;
+					idx_t first_high = blocks;
+					for (; classified < blocks; classified++) {
+						const char *block = data + (pos + classified * CSV_BLOCK_BYTES - base);
+						__builtin_prefetch(block + PREFETCH_BYTES);
+						const CsvVector vector(block);
+						if (vector.ContainsAny('\r', quote_byte)) {
+							running = false;
+							break;
+						}
+						term_masks[classified] = vector.Equal('\n');
+						delim_masks[classified] = vector.Equal(d.delimiter);
+						if (first_high == blocks && vector.HasNonAscii()) {
+							first_high = classified;
+						}
+					}
+					idx_t consumed = 0;
+					while (consumed < classified &&
+					       plain_block.template operator()<true>(term_masks[consumed], delim_masks[consumed])) {
+						consumed++;
+					}
+					non_ascii |= first_high < consumed;
+					running = running && consumed == classified;
 				}
 				if (pos != run_start) {
 					const char *last_block = data + (pos - CSV_BLOCK_BYTES - base);
