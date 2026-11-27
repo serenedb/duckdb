@@ -36,8 +36,15 @@ bool IsEndMarkerPrefix(std::string_view bytes) {
 
 } // namespace
 
+static void VerifyEscapedBytes(std::string_view value) {
+	if (!simdutf::validate_utf8(value.data(), value.size()) || value.find('\0') != std::string_view::npos) {
+		ThrowCopyError("22021", CopyInvalidUtf8(value));
+	}
+}
+
 std::string_view UnescapePostgresText(std::string_view field, char *out) {
 	char *const begin = out;
+	bool escaped_high_or_nul = false;
 	for (idx_t i = 0; i < field.size();) {
 		const char c = field[i++];
 		if (c != '\\') {
@@ -74,6 +81,7 @@ std::string_view UnescapePostgresText(std::string_view field, char *out) {
 			for (; digits < 2 && i < field.size() && HexDigit(field[i]) >= 0; digits++, i++) {
 				value = value * 16 + HexDigit(field[i]);
 			}
+			escaped_high_or_nul |= digits > 0 && (value == 0 || value >= 0x80);
 			*out++ = digits == 0 ? 'x' : static_cast<char>(value);
 			break;
 		}
@@ -89,7 +97,9 @@ std::string_view UnescapePostgresText(std::string_view field, char *out) {
 			for (idx_t digits = 1; digits < 3 && i < field.size() && OctalDigit(field[i]); digits++, i++) {
 				value = value * 8 + (field[i] - '0');
 			}
-			*out++ = static_cast<char>(value & 0xFF);
+			value &= 0xFF;
+			escaped_high_or_nul |= value == 0 || value >= 0x80;
+			*out++ = static_cast<char>(value);
 			break;
 		}
 		case '.':
@@ -99,7 +109,11 @@ std::string_view UnescapePostgresText(std::string_view field, char *out) {
 			break;
 		}
 	}
-	return {begin, static_cast<size_t>(out - begin)};
+	const std::string_view result(begin, static_cast<size_t>(out - begin));
+	if (escaped_high_or_nul) {
+		VerifyEscapedBytes(result);
+	}
+	return result;
 }
 
 std::string_view UnquotePostgresCsv(std::string_view field, char quote, char escape, char *out) {
@@ -349,8 +363,12 @@ idx_t Utf8SequenceLength(uint8_t lead) {
 
 string CopyInvalidUtf8(std::string_view bytes) {
 	const auto checked = simdutf::validate_utf8_with_errors(bytes.data(), bytes.size());
-	const idx_t offset = checked.error == simdutf::error_code::SUCCESS ? 0 : checked.count;
-	const idx_t length = offset < bytes.size() ? Utf8SequenceLength(static_cast<uint8_t>(bytes[offset])) : 1;
+	const idx_t invalid = checked.error == simdutf::error_code::SUCCESS ? bytes.size() : checked.count;
+	const auto nul = bytes.substr(0, invalid).find('\0');
+	const idx_t offset = nul != std::string_view::npos ? nul : invalid < bytes.size() ? invalid : 0;
+	const idx_t length = nul == std::string_view::npos && offset < bytes.size()
+	                         ? Utf8SequenceLength(static_cast<uint8_t>(bytes[offset]))
+	                         : 1;
 	string message = "invalid byte sequence for encoding \"UTF8\":";
 	for (idx_t at = offset; at < MinValue<idx_t>(offset + length, bytes.size()); at++) {
 		message += StringUtil::Format(" 0x%02x", static_cast<uint8_t>(bytes[at]));

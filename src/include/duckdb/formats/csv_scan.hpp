@@ -123,6 +123,7 @@ struct LeanSource {
 	bool allow_quoted_nulls;
 	bool empty_only_null;
 	bool retry_flagged = false;
+	bool reject_nul = false;
 	const vector<string> *null_strings;
 	const string *default_marker = nullptr;
 	const vector<bool> *selected;
@@ -240,6 +241,7 @@ private:
 	void Filter(idx_t count, DataChunk &output);
 	bool DecodeValue(const CsvScanColumn &column, const CsvField &field, Vector &vector, idx_t row, CsvRowError &error);
 	bool DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, bool utf8_valid, CsvRowError &error);
+	bool TextValid(idx_t from, idx_t to) const;
 	bool ParseField(const CsvScanColumn &column, const char *value, idx_t size, bool owned, idx_t position,
 	                Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;

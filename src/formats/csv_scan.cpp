@@ -514,7 +514,8 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 			out[row] = string_t();
 			continue;
 		}
-		if (validate && !Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
+		if (validate && (!Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size)) ||
+		                 (source.reject_nul && memchr(value, '\0', size)))) {
 			retry.push_back(row);
 			out[row] = string_t();
 			continue;
@@ -1188,7 +1189,8 @@ bool CsvScan::DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &ve
                               CsvRowError &error) {
 	const auto raw = RawField(column.file_column, row);
 	const idx_t position = static_cast<idx_t>(raw.data() - bytes->data) + bytes->offset;
-	if (!utf8_valid && !Utf8Proc::IsValid(raw.data(), UnsafeNumericCast<uint32_t>(raw.size()))) {
+	if (!utf8_valid && (!Utf8Proc::IsValid(raw.data(), UnsafeNumericCast<uint32_t>(raw.size())) ||
+	                    memchr(raw.data(), '\0', raw.size()))) {
 		error = {CSVErrorType::INVALID_ENCODING, column.file_column, position, string()};
 		return false;
 	}
@@ -1626,6 +1628,7 @@ LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool
 		source.spaced = false;
 		source.pad_empty = false;
 		source.retry_flagged = true;
+		source.reject_nul = true;
 		source.allow_quoted_nulls = false;
 		source.empty_only_null = global.empty_only_null && column.match_null;
 		source.null_strings = column.match_null ? &global.null_strings : &global.no_null_strings;
@@ -2008,6 +2011,15 @@ void CsvScan::LeanRowNumbers(idx_t count, DataChunk &output) {
 	}
 }
 
+bool CsvScan::TextValid(idx_t from, idx_t to) const {
+	const auto data = bytes->data + (from - bytes->offset);
+	const auto size = to - from;
+	if (global.copy && memchr(data, '\0', size)) {
+		return false;
+	}
+	return !cursor.non_ascii || simdutf::validate_utf8(data, size);
+}
+
 bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 	output.Reset();
 	if (decoded_text_shared) {
@@ -2020,12 +2032,8 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 		scratch_chunk.Reset();
 	};
 	const idx_t columns = global.num_columns;
-	bool utf8_valid = !cursor.non_ascii;
-	if (!utf8_valid) {
-		const idx_t first = cursor.anchor + fields.rows[0];
-		const idx_t last = cursor.anchor + (fields.ends[count * columns - 1] & ROW_FIELD_MASK);
-		utf8_valid = simdutf::validate_utf8(bytes->data + (first - bytes->offset), last - first);
-	}
+	const bool utf8_valid =
+	    TextValid(cursor.anchor + fields.rows[0], cursor.anchor + (fields.ends[count * columns - 1] & ROW_FIELD_MASK));
 	const bool late = global.late_materialization;
 	for (idx_t row = 0; row < count; row++) {
 		selected[row] = true;
@@ -2067,12 +2075,8 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 
 bool CsvScan::DecodeLeanBatch(idx_t first, idx_t count, DataChunk &output) {
 	const idx_t columns = global.num_columns;
-	bool utf8_valid = !cursor.non_ascii;
-	if (!utf8_valid) {
-		const idx_t from = cursor.anchor + fields.rows[first];
-		const idx_t to = cursor.anchor + (fields.ends[(first + count) * columns - 1] & ROW_FIELD_MASK);
-		utf8_valid = simdutf::validate_utf8(bytes->data + (from - bytes->offset), to - from);
-	}
+	const bool utf8_valid = TextValid(cursor.anchor + fields.rows[first],
+	                                  cursor.anchor + (fields.ends[(first + count) * columns - 1] & ROW_FIELD_MASK));
 	const bool hold = bytes.get() != held;
 	ClearRowState(first, count);
 	for (idx_t i = 0; i < global.columns.size(); i++) {
