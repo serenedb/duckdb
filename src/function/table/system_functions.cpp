@@ -8,7 +8,6 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
-#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -38,14 +37,9 @@ static bool IsDatabaseFilter(const Expression &filter, const ColumnBinding &data
 	       substituted->IsScalar() && substituted->IsFoldable();
 }
 
-DuckDBSystemIncludeHiddenBindData::DuckDBSystemIncludeHiddenBindData(const TableFunctionBindInput &input)
-    : include_hidden(ReadParameter(input)), caller_role(input.binder ? input.binder->CallerRole() : optional_idx()) {
-}
-
 unique_ptr<FunctionData> DuckDBSystemIncludeHiddenBindData::Copy() const {
 	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
 	result->include_hidden = include_hidden;
-	result->caller_role = caller_role;
 	for (auto &filter : database_filters) {
 		result->database_filters.push_back(filter->Copy());
 	}
@@ -55,8 +49,8 @@ unique_ptr<FunctionData> DuckDBSystemIncludeHiddenBindData::Copy() const {
 
 bool DuckDBSystemIncludeHiddenBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<DuckDBSystemIncludeHiddenBindData>();
-	return include_hidden == other.include_hidden && caller_role == other.caller_role &&
-	       database_column == other.database_column && Expression::ListEquals(database_filters, other.database_filters);
+	return include_hidden == other.include_hidden && database_column == other.database_column &&
+	       Expression::ListEquals(database_filters, other.database_filters);
 }
 
 void DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters(ClientContext &context, LogicalGet &get,

@@ -49,7 +49,8 @@ static unique_ptr<FunctionData> DuckDBDatabasesBind(ClientContext &context, Tabl
 
 	names.emplace_back("options");
 	return_types.emplace_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
 	return std::move(result);
 }
 

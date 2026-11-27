@@ -3,7 +3,6 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
-#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -17,7 +16,6 @@ struct DuckDBSequencesData : public GlobalTableFunctionState {
 
 	vector<reference<SequenceCatalogEntry>> entries;
 	idx_t offset;
-	RoleAccess role;
 };
 
 static unique_ptr<FunctionData> DuckDBSequencesBind(ClientContext &context, TableFunctionBindInput &input,
@@ -70,7 +68,8 @@ static unique_ptr<FunctionData> DuckDBSequencesBind(ClientContext &context, Tabl
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
 	return std::move(result);
 }
 
@@ -79,8 +78,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context,
 
 	// scan all the schemas for tables and collect themand collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	result->role = context.CallerAccess(bind_data.caller_role);
-	auto &role = result->role;
+	auto &role = RoleAccess::System();
 	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
@@ -151,8 +149,7 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 		max_value.Append(Value::BIGINT(seq_data.max_value));
 		increment_by.Append(Value::BIGINT(seq_data.increment));
 		cycle.Append(Value::BOOLEAN(seq_data.cycle));
-		const bool readable = AllowedAny(data.role, seq, AclMode::Usage | AclMode::Select);
-		if (seq_data.usage_count == 0 || !seq_data.last_value || !readable) {
+		if (seq_data.usage_count == 0 || !seq_data.last_value) {
 			last_value.Append(Value());
 		} else {
 			last_value.Append(Value::BIGINT(seq_data.last_value.value()));
@@ -168,6 +165,7 @@ void DuckDBSequencesFun::RegisterFunction(BuiltinFunctions &set) {
 	                              DuckDBSequencesInit);
 	function.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	function.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	function.required_capability = RoleCapability::Superuser;
 	set.AddFunction(std::move(function));
 }
 

@@ -20,13 +20,13 @@ static unique_ptr<FunctionData> PragmaCollateBind(ClientContext &context, TableF
 	names.emplace_back("collname");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
+	return nullptr;
 }
 
 unique_ptr<GlobalTableFunctionState> PragmaCollateInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<PragmaCollateData>();
 
-	const auto role = context.CallerAccess(input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().caller_role);
+	auto &role = RoleAccess::System();
 	auto schemas = Catalog::GetAllSchemas(context, role);
 	unordered_set<string> listed;
 	for (auto schema : schemas) {
@@ -58,8 +58,9 @@ static void PragmaCollateFunction(ClientContext &context, TableFunctionInput &da
 }
 
 void PragmaCollations::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(
-	    TableFunction("pragma_collations", {}, PragmaCollateFunction, PragmaCollateBind, PragmaCollateInit));
+	TableFunction fn("pragma_collations", {}, PragmaCollateFunction, PragmaCollateBind, PragmaCollateInit);
+	fn.required_capability = RoleCapability::Superuser;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

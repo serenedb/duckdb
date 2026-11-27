@@ -65,15 +65,14 @@ static unique_ptr<FunctionData> DuckDBTriggersBind(ClientContext &context, Table
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
+	return make_uniq<DuckDBSystemIncludeHiddenBindData>();
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTriggersData>();
 
-	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto database_filter = bind_data.DatabaseFilter(context);
-	const auto role = context.CallerAccess(bind_data.caller_role);
+	auto database_filter = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().DatabaseFilter(context);
+	auto &role = RoleAccess::System();
 	auto schemas = Catalog::GetAllSchemas(context, role, false, [&](AttachedDatabase &database) {
 		auto &catalog = database.GetCatalog();
 		return (catalog.IsDuckCatalog() || catalog.Compatibility() == SqlCompatibility::POSTGRES) &&
@@ -151,6 +150,7 @@ void DuckDBTriggersFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn(set.SystemObjectName("triggers"), {}, DuckDBTriggersFunction, DuckDBTriggersBind,
 	                 DuckDBTriggersInit);
 	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

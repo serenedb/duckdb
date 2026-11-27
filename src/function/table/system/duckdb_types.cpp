@@ -80,14 +80,15 @@ static unique_ptr<FunctionData> DuckDBTypesBind(ClientContext &context, TableFun
 	names.emplace_back("varargs");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
 	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTypesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTypesData>();
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	const auto role = context.CallerAccess(bind_data.caller_role);
+	auto &role = RoleAccess::System();
 	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) {
@@ -272,6 +273,7 @@ void DuckDBTypesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn(set.SystemObjectName("types"), {}, DuckDBTypesFunction, DuckDBTypesBind, DuckDBTypesInit);
 	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

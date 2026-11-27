@@ -103,15 +103,17 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 	names.emplace_back("categories");
 	return_types.emplace_back(LogicalType::LIST(LogicalType::VARCHAR));
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
 	return std::move(result);
 }
 
-static void ExtractFunctionsFromSchema(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
+static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
                                        DuckDBFunctionsData &result) {
 	auto add = [&](CatalogEntry &entry) {
 		result.entries.push_back(ListedFunction {schema, entry});
 	};
+	auto &role = RoleAccess::System();
 	Catalog::ScanListedEntries(context, role, schema, CatalogType::SCALAR_FUNCTION_ENTRY, add);
 	Catalog::ScanListedEntries(context, role, schema, CatalogType::TABLE_FUNCTION_ENTRY, add);
 	Catalog::ScanListedEntries(context, role, schema, CatalogType::PRAGMA_FUNCTION_ENTRY, add);
@@ -122,10 +124,10 @@ unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context,
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	const auto role = context.CallerAccess(bind_data.caller_role);
-	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto schemas = Catalog::GetAllSchemas(context, RoleAccess::System(), bind_data.include_hidden,
+	                                      bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		ExtractFunctionsFromSchema(context, role, schema.get(), *result);
+		ExtractFunctionsFromSchema(context, schema.get(), *result);
 	};
 
 	std::sort(result->entries.begin(), result->entries.end(), [&](const ListedFunction &a, const ListedFunction &b) {
@@ -863,6 +865,7 @@ void DuckDBFunctionsFun::RegisterFunction(BuiltinFunctions &set) {
 	functions.table_scan_progress = DuckDBFunctionsProgress;
 	functions.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	functions.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	functions.required_capability = RoleCapability::Superuser;
 	set.AddFunction(functions);
 }
 
