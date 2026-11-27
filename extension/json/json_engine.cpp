@@ -5,6 +5,7 @@
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/string_cast.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/swar.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
@@ -306,15 +307,13 @@ std::string_view TrimToken(std::string_view token) {
 }
 
 bool PlainString(std::string_view content) {
-	constexpr uint64_t ONES = 0x0101010101010101ULL;
-	constexpr uint64_t HIGHS = 0x8080808080808080ULL;
 	const char *bytes = content.data();
 	idx_t remaining = content.size();
 	while (true) {
 		uint64_t word;
 		memcpy(&word, bytes, sizeof(word));
-		const uint64_t backslashes = word ^ (ONES * '\\');
-		const uint64_t found = (((backslashes - ONES) & ~backslashes) | ((word - ONES * 0x20) & ~word)) & HIGHS;
+		const uint64_t found =
+		    SwarWord::MaybeZeroBytes(word ^ SwarWord::Repeat('\\')) | SwarWord::MaybeBelow(word, 0x20);
 		if (remaining <= sizeof(word)) {
 			return (found & (remaining == sizeof(word) ? ~uint64_t(0) : (uint64_t(1) << (8 * remaining)) - 1)) == 0;
 		}

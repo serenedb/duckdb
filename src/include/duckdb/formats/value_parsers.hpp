@@ -12,6 +12,7 @@
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/double_cast_operator.hpp"
 #include "duckdb/common/operator/integer_cast_operator.hpp"
+#include "duckdb/common/swar.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -84,7 +85,7 @@ inline bool ScalarDigits(const char *value, idx_t count, uint64_t &out) {
 }
 
 [[gnu::always_inline]] inline idx_t FindByte(const char *value, idx_t size, const char *limit, char byte) {
-	const uint64_t pattern = 0x0101010101010101ULL * static_cast<uint8_t>(byte);
+	const uint64_t pattern = SwarWord::Repeat(static_cast<uint8_t>(byte));
 	for (idx_t pos = 0; pos < size; pos += 8) {
 		if (value + pos + 8 > limit) {
 			for (; pos < size; pos++) {
@@ -96,8 +97,7 @@ inline bool ScalarDigits(const char *value, idx_t count, uint64_t &out) {
 		}
 		uint64_t chunk;
 		memcpy(&chunk, value + pos, sizeof(chunk));
-		const uint64_t matched = chunk ^ pattern;
-		const uint64_t found = (matched - 0x0101010101010101ULL) & ~matched & 0x8080808080808080ULL;
+		const uint64_t found = SwarWord::MaybeZeroBytes(chunk ^ pattern);
 		if (found) {
 			return MinValue<idx_t>(pos + (std::countr_zero(found) >> 3), size);
 		}

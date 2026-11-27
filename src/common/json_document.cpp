@@ -6,6 +6,7 @@
 #include "duckdb/common/likely.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/swar.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
 #include "fast_float/fast_float.h"
 #include "simdutf.h"
@@ -1977,16 +1978,9 @@ static inline char *EscapeJSONByte(char *out, uint8_t c) {
 	return out;
 }
 
-static constexpr uint64_t JSON_ONES = 0x0101010101010101ULL;
-static constexpr uint64_t JSON_HIGH_BITS = 0x8080808080808080ULL;
-
-//! The high bit of each byte of the word that is below 0x20, a quote or a backslash (and maybe of a byte after one)
 static inline uint64_t SpecialJSONBytes(uint64_t word) {
-	const uint64_t quote = word ^ (JSON_ONES * '"');
-	const uint64_t backslash = word ^ (JSON_ONES * '\\');
-	return (((word - JSON_ONES * 0x20) & ~word) | ((quote - JSON_ONES) & ~quote) |
-	        ((backslash - JSON_ONES) & ~backslash)) &
-	       JSON_HIGH_BITS;
+	return SwarWord::MaybeBelow(word, 0x20) | SwarWord::MaybeZeroBytes(word ^ SwarWord::Repeat('"')) |
+	       SwarWord::MaybeZeroBytes(word ^ SwarWord::Repeat('\\'));
 }
 
 //! Escapes a short string eight bytes at a time, and tells whether it holds bytes beyond ASCII. Writes up to eight
@@ -1996,7 +1990,7 @@ static char *EscapeShortJSONString(char *out, std::string_view value, bool &asci
 	const idx_t size = value.size();
 	if (size < 8 && std::endian::native == std::endian::little) {
 		// padded with a letter, which needs no escape; fixed-size loads, as a memcpy of a variable length is a call
-		uint64_t word = JSON_ONES * 'a';
+		uint64_t word = SwarWord::Repeat('a');
 		if (size >= 4) {
 			uint32_t low;
 			uint32_t high;
@@ -2008,7 +2002,7 @@ static char *EscapeShortJSONString(char *out, std::string_view value, bool &asci
 			                       uint64_t(data[size - 1]) << (8 * (size - 1));
 			word = (word << (8 * size)) | bytes;
 		}
-		ascii = (word & JSON_HIGH_BITS) == 0;
+		ascii = SwarWord::IsAscii(word);
 		if (!SpecialJSONBytes(word)) {
 			memcpy(out, &word, 8);
 			return out + size;
@@ -2052,7 +2046,7 @@ static char *EscapeShortJSONString(char *out, std::string_view value, bool &asci
 		high |= data[i];
 		out = EscapeJSONByte(out, data[i]);
 	}
-	ascii = (high & JSON_HIGH_BITS) == 0;
+	ascii = SwarWord::IsAscii(high);
 	return out;
 }
 
