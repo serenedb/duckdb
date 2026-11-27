@@ -1,5 +1,6 @@
 #include "duckdb/formats/csv_encoder.hpp"
 
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/formats/csv_simd.hpp"
 
@@ -92,9 +93,14 @@ idx_t CsvSpecials::Find(std::string_view field, idx_t from) const {
 	if (i >= field.size()) {
 		return field.size();
 	}
+	const idx_t rest = field.size() - i;
+	const char *tail = field.data() + i;
 	char padded[CSV_BLOCK_BYTES] = {};
-	memcpy(padded, field.data() + i, field.size() - i);
-	const uint64_t bits = CsvVector(padded).Lookup(low, high) & ((uint64_t(1) << (field.size() - i)) - 1);
+	if (!ReadableWithinPage(tail, CSV_BLOCK_BYTES)) {
+		memcpy(padded, tail, rest);
+		tail = padded;
+	}
+	const uint64_t bits = CsvVector(tail).Lookup(low, high) & ((uint64_t(1) << rest) - 1);
 	return bits ? i + NumericCast<idx_t>(std::countr_zero(bits)) : field.size();
 }
 

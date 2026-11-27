@@ -5,6 +5,7 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/likely.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/swar.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
@@ -1113,27 +1114,8 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 	return root;
 }
 
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer) || __has_feature(memory_sanitizer) || __has_feature(thread_sanitizer)
-#define DUCKDB_JSON_SANITIZED
-#endif
-#endif
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-#define DUCKDB_JSON_SANITIZED
-#endif
-
-#ifdef DUCKDB_JSON_SANITIZED
-static constexpr bool JSON_READS_IN_PLACE = false;
-#else
-static constexpr bool JSON_READS_IN_PLACE = true;
-#endif
-
 static bool JSONPaddingReadable(const char *data, idx_t len) {
-	if (!JSON_READS_IN_PLACE || len == 0) {
-		return false;
-	}
-	const auto page = simdjson::get_page_size();
-	return reinterpret_cast<uintptr_t>(data + len - 1) % page + JSONTreeParser::PADDING < page;
+	return len != 0 && ReadableWithinPage(data + len - 1, JSONTreeParser::PADDING + 1);
 }
 
 static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len,
