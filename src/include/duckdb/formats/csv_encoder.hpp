@@ -8,15 +8,22 @@
 
 #pragma once
 
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
+#include "duckdb/formats/csv_simd.hpp"
 
 namespace duckdb {
 
 class CsvSpecials {
 public:
 	void Add(char byte);
-	bool In(std::string_view field) const;
+	bool In(std::string_view field) const {
+		if (field.size() - 1 < CSV_BLOCK_BYTES - 1 && ReadableWithinPage(field.data(), CSV_BLOCK_BYTES)) {
+			return (CsvVector(field.data()).Lookup(low, high) & ((uint64_t(1) << field.size()) - 1)) != 0;
+		}
+		return Find(field, 0) < field.size();
+	}
 	idx_t Find(std::string_view field, idx_t from) const;
 
 private:

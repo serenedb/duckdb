@@ -79,10 +79,6 @@ void CsvSpecials::Add(char byte) {
 	low[value & 0x0F] |= group;
 }
 
-bool CsvSpecials::In(std::string_view field) const {
-	return Find(field, 0) < field.size();
-}
-
 idx_t CsvSpecials::Find(std::string_view field, idx_t from) const {
 	idx_t i = from;
 	for (; i + CSV_BLOCK_BYTES <= field.size(); i += CSV_BLOCK_BYTES) {
@@ -95,8 +91,9 @@ idx_t CsvSpecials::Find(std::string_view field, idx_t from) const {
 	}
 	const idx_t rest = field.size() - i;
 	const char *tail = field.data() + i;
-	char padded[CSV_BLOCK_BYTES] = {};
+	char padded[CSV_BLOCK_BYTES];
 	if (!ReadableWithinPage(tail, CSV_BLOCK_BYTES)) {
+		memset(padded, 0, CSV_BLOCK_BYTES);
 		memcpy(padded, tail, rest);
 		tail = padded;
 	}
