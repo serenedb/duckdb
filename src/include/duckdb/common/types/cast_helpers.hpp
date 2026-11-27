@@ -249,6 +249,9 @@ struct DateToStringCast {
 	static void Format(char *data, int32_t date[], idx_t year_length, bool add_bc) {
 		Format(data, date[0], date[1], date[2], year_length, add_bc);
 	}
+
+	static constexpr idx_t MAX_LENGTH = 19;
+	DUCKDB_API static idx_t Write(date_t date, char *data);
 };
 
 struct TimeToStringCast {
@@ -327,6 +330,12 @@ struct TimeToStringCast {
 	static void Format(char *data, idx_t length, int32_t time[], char micro_buffer[]) {
 		Format(data, length, time[0], time[1], time[2], time[3], micro_buffer);
 	}
+};
+
+struct TimestampToStringCast {
+	static constexpr idx_t MAX_LENGTH = DateToStringCast::MAX_LENGTH + 1 + 15 + 6 + 3;
+	DUCKDB_API static idx_t Write(timestamp_t timestamp, char *data);
+	DUCKDB_API static idx_t Write(timestamp_ns_t timestamp, char *data);
 };
 
 struct IntervalToStringCast {

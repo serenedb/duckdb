@@ -689,9 +689,24 @@ static JSONTexts EncodeFormatted(JSONEncodeContext &ctx, Vector &value_v, idx_t 
 	return EncodeStrings(ctx, string_vector, count, text_arena);
 }
 
+template <class T, class WRITE>
+static JSONTexts EncodeQuoted(JSONEncodeContext &ctx, const Vector &value_v, idx_t count, ArenaAllocator &text_arena,
+                              idx_t max_size, WRITE &&write) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, max_size + 2, [&](char *out, T value) {
+		*out = '"';
+		out += 1 + write(value, out + 1);
+		*out = '"';
+		return out + 1;
+	});
+}
+
 static JSONTexts EncodeDates(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
 	const auto &options = ctx.options;
-	return EncodeFormatted(ctx, value_v, count, text_arena, bool(options.date_format), [&](Vector &string_vector) {
+	if (!options.date_format) {
+		return EncodeQuoted<date_t>(ctx, value_v, count, text_arena, DateToStringCast::MAX_LENGTH,
+		                            [](date_t value, char *out) { return DateToStringCast::Write(value, out); });
+	}
+	return EncodeFormatted(ctx, value_v, count, text_arena, true, [&](Vector &string_vector) {
 		options.date_format.get_mutable()->ConvertDateVector(value_v, string_vector);
 	});
 }
@@ -703,6 +718,11 @@ static JSONTexts EncodeTimestamps(JSONEncodeContext &ctx, Vector &value_v, idx_t
 		VectorOperations::DefaultCast(value_v, timestamp_vector, count);
 		return EncodeTimestamps(ctx, timestamp_vector, count, text_arena);
 	}
+	if (!options.timestamp_format && value_v.GetType().id() == LogicalTypeId::TIMESTAMP) {
+		return EncodeQuoted<timestamp_t>(
+		    ctx, value_v, count, text_arena, TimestampToStringCast::MAX_LENGTH,
+		    [](timestamp_t value, char *out) { return TimestampToStringCast::Write(value, out); });
+	}
 	return EncodeFormatted(ctx, value_v, count, text_arena, bool(options.timestamp_format), [&](Vector &string_vector) {
 		options.timestamp_format.get_mutable()->ConvertTimestampVector(value_v, string_vector);
 	});
@@ -710,7 +730,12 @@ static JSONTexts EncodeTimestamps(JSONEncodeContext &ctx, Vector &value_v, idx_t
 
 static JSONTexts EncodeTimestampsNS(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
 	const auto &options = ctx.options;
-	return EncodeFormatted(ctx, value_v, count, text_arena, bool(options.timestamp_format), [&](Vector &string_vector) {
+	if (!options.timestamp_format) {
+		return EncodeQuoted<timestamp_ns_t>(
+		    ctx, value_v, count, text_arena, TimestampToStringCast::MAX_LENGTH,
+		    [](timestamp_ns_t value, char *out) { return TimestampToStringCast::Write(value, out); });
+	}
+	return EncodeFormatted(ctx, value_v, count, text_arena, true, [&](Vector &string_vector) {
 		options.timestamp_format.get_mutable()->ConvertTimestampNSVector(value_v, string_vector);
 	});
 }
