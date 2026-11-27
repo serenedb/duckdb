@@ -262,6 +262,26 @@ private:
 	bool cursor_opened = false;
 };
 
+class RowIntake {
+public:
+	explicit RowIntake(RowWindow &window);
+	~RowIntake();
+	RowIntake(const RowIntake &) = delete;
+	RowIntake &operator=(const RowIntake &) = delete;
+
+	bool Start(idx_t range, idx_t want);
+	void Cut(idx_t end, CSVState origin = CSVState::RECORD_SEPARATOR, idx_t line_end = DConstants::INVALID_INDEX);
+	void CarryOn(const RowSearch &search);
+
+public:
+	RowClaim claim;
+	bool idle = false;
+
+private:
+	RowWindow &window;
+	bool open = false;
+};
+
 class RowLookup {
 public:
 	explicit RowLookup(RowRanges &ranges);
@@ -346,7 +366,6 @@ public:
 
 private:
 	void StartPass(bool second_pass);
-	bool ReadChunk(idx_t from);
 	void StartSearch(RowSearch &search) const;
 	idx_t CutIntake(RowSearch &search, bool idle) const;
 	void QuoteParityTerm(const RowBytes &bytes, idx_t from, idx_t read_to, bool quoted, RowCursor &last) const;

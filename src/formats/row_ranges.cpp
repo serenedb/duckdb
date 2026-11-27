@@ -844,62 +844,23 @@ void RowRangeReader::Start(idx_t range_p, bool extract_p, bool release_p, bool v
 	StartPass(false);
 }
 
-bool RowRangeReader::StartIntake(idx_t range_p, bool extract_p, bool release_p, bool validate_count_utf8_p) {
-	idx_t from;
-	if (!ranges.ClaimRead(range_p, from)) {
-		return false;
-	}
-	bool cut = false;
-	absl::Cleanup abandon = [&] {
-		if (!cut) {
-			ranges.FailIntake();
-		}
-	};
-	range = range_p;
-	intake = true;
-	extract_rows = extract_p;
-	release = release_p;
-	validate_count_utf8 = validate_count_utf8_p;
-	force_extract = false;
-	recover_pending = false;
-	const bool idle = ReadChunk(from);
-	RowClaim claim;
-	if (!ranges.ClaimCut(range, claim)) {
-		cut = true;
-		return false;
-	}
-	lex_start = claim.begin;
-	origin = claim.origin;
-	line_end = claim.line_end;
-	window.Prepend(std::move(claim.carry), claim.begin, from);
-	RowSearch search;
-	if (claim.resumed) {
-		search = claim.search;
-	} else {
-		StartSearch(search);
-	}
-	lex_stop = CutIntake(search, idle);
-	if (lex_stop == DConstants::INVALID_INDEX) {
-		const idx_t read_to = window.read_to;
-		ranges.CarryOn(std::move(window.bytes), read_to, search, idle);
-		cut = true;
-		window.read_to = lex_start;
-		FinishEmpty();
-		return true;
-	}
-	D_ASSERT(lex_stop > lex_start);
-	const auto &bytes = *window.bytes;
-	ranges.Cut(lex_stop, window.Tail(lex_stop), window.read_to, ranges.Origin(bytes, lex_stop),
-	           LineEndBefore(bytes, lex_stop, lex_start));
-	cut = true;
-	StartPass(true);
-	return true;
+RowIntake::RowIntake(RowWindow &window_p) : window(window_p) {
 }
 
-bool RowRangeReader::ReadChunk(idx_t from) {
+RowIntake::~RowIntake() {
+	if (open) {
+		window.ranges.FailIntake();
+	}
+}
+
+bool RowIntake::Start(idx_t range, idx_t want) {
+	auto &ranges = window.ranges;
+	idx_t from;
+	if (!ranges.ClaimRead(range, from)) {
+		return false;
+	}
+	open = true;
 	window.StartAhead(from);
-	const idx_t want = ranges.range_bytes;
-	bool idle = false;
 	while (window.read_to - from < want && window.read_to < ranges.Size()) {
 		if (window.Waits() && ranges.Idle(range, window.read_to)) {
 			idle = true;
@@ -908,7 +869,59 @@ bool RowRangeReader::ReadChunk(idx_t from) {
 		window.Read(window.bytes->offset, want - (window.read_to - from));
 	}
 	ranges.PassRead(window.read_to);
-	return idle;
+	if (!ranges.ClaimCut(range, claim)) {
+		open = false;
+		return false;
+	}
+	window.Prepend(std::move(claim.carry), claim.begin, from);
+	return true;
+}
+
+void RowIntake::Cut(idx_t end, CSVState origin, idx_t line_end) {
+	window.ranges.Cut(end, window.Tail(end), window.read_to, origin, line_end);
+	open = false;
+}
+
+void RowIntake::CarryOn(const RowSearch &search) {
+	const idx_t read_to = window.read_to;
+	window.ranges.CarryOn(std::move(window.bytes), read_to, search, idle);
+	window.read_to = claim.begin;
+	open = false;
+}
+
+bool RowRangeReader::StartIntake(idx_t range_p, bool extract_p, bool release_p, bool validate_count_utf8_p) {
+	range = range_p;
+	intake = true;
+	extract_rows = extract_p;
+	release = release_p;
+	validate_count_utf8 = validate_count_utf8_p;
+	force_extract = false;
+	recover_pending = false;
+	RowIntake taken(window);
+	if (!taken.Start(range, ranges.range_bytes)) {
+		return false;
+	}
+	const auto &claim = taken.claim;
+	lex_start = claim.begin;
+	origin = claim.origin;
+	line_end = claim.line_end;
+	RowSearch search;
+	if (claim.resumed) {
+		search = claim.search;
+	} else {
+		StartSearch(search);
+	}
+	lex_stop = CutIntake(search, taken.idle);
+	if (lex_stop == DConstants::INVALID_INDEX) {
+		taken.CarryOn(search);
+		FinishEmpty();
+		return true;
+	}
+	D_ASSERT(lex_stop > lex_start);
+	const auto &bytes = *window.bytes;
+	taken.Cut(lex_stop, ranges.Origin(bytes, lex_stop), LineEndBefore(bytes, lex_stop, lex_start));
+	StartPass(true);
+	return true;
 }
 
 void RowRangeReader::StartSearch(RowSearch &search) const {

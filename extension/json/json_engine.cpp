@@ -1064,31 +1064,14 @@ bool JsonScan::Claim() {
 void JsonScan::Load() {
 	auto &ranges = *global.ranges;
 	if (ranges.Intake()) {
-		idx_t from;
-		if (!ranges.ClaimRead(unit, from)) {
+		RowIntake intake(window);
+		if (!intake.Start(unit, global.stream_bytes)) {
 			claimed = false;
 			return;
 		}
-		bool cut = false;
-		absl::Cleanup abandon = [&] {
-			if (!cut) {
-				ranges.FailIntake();
-			}
-		};
-		window.StartAhead(from);
-		while (window.read_to - from < global.stream_bytes && !Last()) {
-			window.Read(window.bytes->offset, global.stream_bytes - (window.read_to - from));
-		}
-		ranges.PassRead(window.read_to);
-		RowClaim claim;
-		if (!ranges.ClaimCut(unit, claim)) {
-			cut = true;
-			claimed = false;
-			return;
-		}
+		const auto &claim = intake.claim;
 		begin = claim.begin;
 		first = begin == 0;
-		window.Prepend(std::move(claim.carry), claim.begin, from);
 		data = window.bytes->data;
 		size = window.bytes->size;
 		file_offset = window.bytes->offset;
@@ -1097,15 +1080,13 @@ void JsonScan::Load() {
 		RowSearch search;
 		search.searched_to = claim.resumed ? claim.search.searched_to : begin;
 		limit = CutRecords(search.searched_to);
-		cut = true;
 		if (limit == DConstants::INVALID_INDEX) {
-			ranges.CarryOn(std::move(window.bytes), window.read_to, search, false);
-			window.read_to = begin;
+			intake.CarryOn(search);
 			global.Finish(unit, 0);
 			claimed = false;
 			return;
 		}
-		ranges.Cut(limit, window.Tail(limit), window.read_to, CSVState::RECORD_SEPARATOR, DConstants::INVALID_INDEX);
+		intake.Cut(limit);
 		Begin();
 		return;
 	}
