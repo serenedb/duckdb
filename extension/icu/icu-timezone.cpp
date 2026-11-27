@@ -412,6 +412,32 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		return all_converted;
 	}
 
+	template <class SRC, class DST>
+	static bool CastToNaiveFixed(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &info = parameters.cast_data->Cast<CastData>().info->Cast<BindData>();
+		ICUZoneCasts::FixedShiftCast<SRC, DST>(*info.lut, source, result, count);
+		return true;
+	}
+
+	template <class SRC, class DST>
+	static unique_ptr<BaseStatistics> CastToNaiveStatistics(CastStatisticsInput &input) {
+		input.SetFunction(CastToNaive<SRC, DST>);
+		auto &info = input.CastData()->Cast<CastData>().info->Cast<BindData>();
+		if (!info.lut ||
+		    !ICUZoneCasts::FixedShiftFits<SRC>(*info.lut, input.child_stats, ICUZoneCasts::WIDENING<SRC, DST>)) {
+			return nullptr;
+		}
+		input.SetFunction(CastToNaiveFixed<SRC, DST>);
+		return ICUZoneCasts::FixedShiftStatistics<SRC, DST>(*info.lut, input.child_stats, input.target_type);
+	}
+
+	template <class SRC, class DST>
+	static BoundCastInfo NaiveCast(unique_ptr<BoundCastData> cast_data) {
+		BoundCastInfo result(CastToNaive<SRC, DST>, std::move(cast_data));
+		result.SetStatisticsCallback(CastToNaiveStatistics<SRC, DST>);
+		return result;
+	}
+
 	static BoundCastInfo BindCastToNaive(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
 		if (!input.context) {
 			throw InternalException("Missing context for TIMESTAMPTZ to %s cast.", LogicalTypeIdToString(target.id()));
@@ -428,34 +454,34 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		case LogicalTypeId::TIMESTAMP_TZ:
 			switch (target.id()) {
 			case LogicalType::TIME:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, dtime_t>(std::move(cast_data));
 			case LogicalType::TIME_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, dtime_ns_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, timestamp_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_S:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_sec_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, timestamp_sec_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_MS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ms_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, timestamp_ms_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_t, timestamp_ns_t>(std::move(cast_data));
 			default:
 				throw InternalException("Type %s not handled in BindCastToNaive", LogicalTypeIdToString(target.id()));
 			}
 		case LogicalTypeId::TIMESTAMP_TZ_NS:
 			switch (target.id()) {
 			case LogicalType::TIME:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, dtime_t>(std::move(cast_data));
 			case LogicalType::TIME_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, dtime_ns_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, timestamp_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_S:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_sec_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, timestamp_sec_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_MS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_ms_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, timestamp_ms_t>(std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
-				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_ns_t>, std::move(cast_data));
+				return NaiveCast<timestamp_tz_ns_t, timestamp_ns_t>(std::move(cast_data));
 			default:
 				throw InternalException("Type %s not handled in BindCastToNaive", LogicalTypeIdToString(target.id()));
 			}

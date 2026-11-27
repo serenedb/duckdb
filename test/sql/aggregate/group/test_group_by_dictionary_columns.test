@@ -1,0 +1,70 @@
+# name: test/sql/aggregate/group/test_group_by_dictionary_columns.test
+# description: GROUP BY several dictionary-compressed columns resolves each combination of their entries once and groups as a plain GROUP BY does, NULLs included
+# group: [group]
+
+load __TEST_DIR__/group_by_dictionary_columns.db
+
+statement ok
+CREATE TEMPORARY TABLE plain AS SELECT 'severity_' || (i % 5) AS a, CASE WHEN i % 11 = 0 THEN NULL ELSE 'scope_name_' || (i % 7) END AS b, 'third_column_value_' || (i % 3) AS c, 'wide_' || (i % 200) AS d, 'wider_' || (i % 211) AS e, i AS v FROM range(0, 100000) t(i);
+
+statement ok
+SET force_compression = 'dict_fsst';
+
+statement ok
+CREATE TABLE dict AS SELECT * FROM plain;
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) FROM (SELECT a, b, count(*) AS n, sum(v) AS s FROM dict GROUP BY a, b)
+----
+40
+
+query I
+SELECT count(*) FROM (SELECT a, b, count(*) AS n, sum(v) AS s FROM dict GROUP BY a, b EXCEPT SELECT a, b, count(*) AS n, sum(v) AS s FROM plain GROUP BY a, b)
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT b, a, c, count(*) AS n, min(v) AS lo, max(v) AS hi FROM dict GROUP BY b, a, c EXCEPT SELECT b, a, c, count(*) AS n, min(v) AS lo, max(v) AS hi FROM plain GROUP BY b, a, c)
+----
+0
+
+query IIII
+SELECT a, b, count(*), sum(v) FROM dict WHERE a = 'severity_1' GROUP BY a, b ORDER BY b NULLS FIRST
+----
+severity_1	NULL	1818	90860913
+severity_1	scope_name_0	2597	129829847
+severity_1	scope_name_1	2598	129887003
+severity_1	scope_name_2	2597	129844162
+severity_1	scope_name_3	2597	129901317
+severity_1	scope_name_4	2597	129858477
+severity_1	scope_name_5	2598	129915588
+severity_1	scope_name_6	2598	129872693
+
+query I
+SELECT count(*) FROM (SELECT a, v % 3 AS w, count(*) AS n FROM dict GROUP BY a, w EXCEPT SELECT a, v % 3 AS w, count(*) AS n FROM plain GROUP BY a, w)
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT d, e, count(*) AS n FROM dict GROUP BY d, e EXCEPT SELECT d, e, count(*) AS n FROM plain GROUP BY d, e)
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT a, b, c, d, e, v % 2 AS w2, v % 3 AS w3, v % 5 AS w5, v % 7 AS w7, count(*) AS n FROM dict GROUP BY ALL EXCEPT SELECT a, b, c, d, e, v % 2 AS w2, v % 3 AS w3, v % 5 AS w5, v % 7 AS w7, count(*) AS n FROM plain GROUP BY ALL)
+----
+0
+
+statement ok
+SET disabled_optimizers = 'filter_pushdown';
+
+query I
+SELECT count(*) FROM (SELECT a, w, count(*) AS n FROM (SELECT a, v % 3 AS w FROM dict) WHERE w <> 1 GROUP BY a, w EXCEPT SELECT a, v % 3 AS w, count(*) AS n FROM plain WHERE v % 3 <> 1 GROUP BY a, w)
+----
+0
+
+statement ok
+RESET disabled_optimizers;

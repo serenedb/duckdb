@@ -99,6 +99,9 @@ public:
 	[[gnu::always_inline]] void Advance() {
 		ahead.Advance(*this, Position());
 	}
+	[[gnu::always_inline]] void Landed() noexcept {
+		ahead.Landed(Position());
+	}
 
 private:
 	[[noreturn]] [[gnu::noinline]] void ThrowPastEnd() const {

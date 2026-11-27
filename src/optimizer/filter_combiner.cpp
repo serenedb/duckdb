@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
+#include "duckdb/execution/constant_in_list.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
@@ -702,7 +703,8 @@ FilterPushdownResult FilterCombiner::TryPushdownLikeFilter(TableFilterSet &table
 }
 
 FilterPushdownResult FilterCombiner::TryPushdownInFilter(TableFilterSet &table_filters,
-                                                         const vector<ColumnIndex> &column_ids, Expression &expr) {
+                                                         const vector<ColumnIndex> &column_ids, Expression &expr,
+                                                         bool exact_in_lists) {
 	if (expr.GetExpressionType() != ExpressionType::COMPARE_IN) {
 		return FilterPushdownResult::NO_PUSHDOWN;
 	}
@@ -763,9 +765,15 @@ FilterPushdownResult FilterCombiner::TryPushdownInFilter(TableFilterSet &table_f
 		table_filters.PushFilter(proj_index, make_uniq<ExpressionFilter>(std::move(upper_bound)));
 		return FilterPushdownResult::PUSHED_DOWN_FULLY;
 	}
+	const bool exact =
+	    exact_in_lists && in_list.size() <= ConstantInList::MAX_CONSTANTS && ConstantInList::Supports(type);
 	// if this is not a dense range we can push an optional filter for zone-map pruning
 	auto in_expr =
 	    ExpressionFilter::CreateInExpression(CreateFilterTargetExpression(*func.GetChildren()[0]), std::move(in_list));
+	if (exact) {
+		table_filters.PushFilter(proj_index, make_uniq<ExpressionFilter>(std::move(in_expr)));
+		return FilterPushdownResult::PUSHED_DOWN_FULLY;
+	}
 	table_filters.PushFilter(proj_index, CreateOptionalExpressionFilter(std::move(in_expr), type));
 	return FilterPushdownResult::PUSHED_DOWN_PARTIALLY;
 }
@@ -1088,7 +1096,8 @@ FilterPushdownResult FilterCombiner::TryPushdownTemporalCastFilter(TableFilterSe
 }
 
 FilterPushdownResult FilterCombiner::TryPushdownExpression(TableFilterSet &table_filters,
-                                                           const vector<ColumnIndex> &column_ids, Expression &expr) {
+                                                           const vector<ColumnIndex> &column_ids, Expression &expr,
+                                                           bool exact_in_lists) {
 	auto pushdown_result = TryPushdownPrefixFilter(table_filters, column_ids, expr);
 	if (pushdown_result != FilterPushdownResult::NO_PUSHDOWN) {
 		return pushdown_result;
@@ -1097,7 +1106,7 @@ FilterPushdownResult FilterCombiner::TryPushdownExpression(TableFilterSet &table
 	if (pushdown_result != FilterPushdownResult::NO_PUSHDOWN) {
 		return pushdown_result;
 	}
-	pushdown_result = TryPushdownInFilter(table_filters, column_ids, expr);
+	pushdown_result = TryPushdownInFilter(table_filters, column_ids, expr, exact_in_lists);
 	if (pushdown_result != FilterPushdownResult::NO_PUSHDOWN) {
 		return pushdown_result;
 	}
@@ -1124,7 +1133,8 @@ void FilterCombiner::TryPushdownRelaxedFilter(TableFilterSet &table_filters, con
 }
 
 TableFilterSet FilterCombiner::GenerateTableScanFilters(const vector<ColumnIndex> &column_ids,
-                                                        vector<FilterPushdownResult> &pushdown_results) {
+                                                        vector<FilterPushdownResult> &pushdown_results,
+                                                        bool exact_in_lists) {
 	TableFilterSet table_filters;
 	//! First, we figure the filters that have constant expressions that we can push down to the table scan
 	for (auto &constant_value : constant_values) {
@@ -1138,7 +1148,7 @@ TableFilterSet FilterCombiner::GenerateTableScanFilters(const vector<ColumnIndex
 	//! Here we look for LIKE or IN filters
 	for (idx_t rem_fil_idx = 0; rem_fil_idx < remaining_filters.size(); rem_fil_idx++) {
 		auto &remaining_filter = remaining_filters[rem_fil_idx];
-		auto pushdown_result = TryPushdownExpression(table_filters, column_ids, *remaining_filter);
+		auto pushdown_result = TryPushdownExpression(table_filters, column_ids, *remaining_filter, exact_in_lists);
 		if (pushdown_result == FilterPushdownResult::PUSHED_DOWN_FULLY) {
 			// the filter has been pushed down entirely - we can prune it
 			remaining_filters.erase_at(rem_fil_idx--);

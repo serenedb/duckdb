@@ -4,6 +4,7 @@
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/array.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/radix_partitioning.hpp"
@@ -524,19 +525,11 @@ GroupedAggregateHashTable::AggregateDictionaryState::AggregateDictionaryState()
     : hashes(LogicalType::HASH), new_dictionary_pointers(LogicalType::POINTER), unique_entries(STANDARD_VECTOR_SIZE) {
 }
 
-optional_idx GroupedAggregateHashTable::TryAddDictionaryGroups(DataChunk &groups, DataChunk &payload,
-                                                               const unsafe_vector<idx_t> &filter) {
-	static constexpr idx_t MAX_DICTIONARY_SIZE_THRESHOLD = 20000;
-	static constexpr idx_t DICTIONARY_THRESHOLD = 2;
-	// dictionary vector - check if this is a duplicate eliminated dictionary from the storage
-	const auto &dict_col = groups.data[0];
-	auto opt_dict_size = DictionaryVector::DictionarySize(dict_col);
-	if (!opt_dict_size.IsValid()) {
-		// dict size not known - this is not a dictionary that comes from the storage
-		return optional_idx();
-	}
-	idx_t dict_size = opt_dict_size.GetIndex();
-	auto &dictionary_id = DictionaryVector::DictionaryId(dict_col);
+template <class SLICE>
+optional_idx GroupedAggregateHashTable::AddDictionaryGroups(DataChunk &groups, DataChunk &payload,
+                                                            const unsafe_vector<idx_t> &filter, idx_t dict_size,
+                                                            const string &dictionary_id, const SelectionVector &offsets,
+                                                            const SLICE &slice) {
 	if (dictionary_id.empty()) {
 		// dictionary has no id, we can't cache across vectors
 		// only use dictionary compression if there are fewer entries than groups
@@ -552,8 +545,6 @@ optional_idx GroupedAggregateHashTable::TryAddDictionaryGroups(DataChunk &groups
 			return optional_idx();
 		}
 	}
-	const auto &dictionary_vector = DictionaryVector::Child(dict_col);
-	const auto &offsets = DictionaryVector::SelVector(dict_col);
 	auto &dict_state = state.dict_state;
 	if (dict_state.dictionary_id.empty() || dict_state.dictionary_id != dictionary_id) {
 		// new dictionary - initialize the index state
@@ -597,7 +588,7 @@ optional_idx GroupedAggregateHashTable::TryAddDictionaryGroups(DataChunk &groups
 			unique_values.InitializeEmpty(groups.GetTypes());
 		}
 		// slice the dictionary
-		unique_values.data[0].Slice(dictionary_vector, unique_entries, unique_count);
+		slice(unique_values, unique_entries, unique_count);
 		unique_values.CheckCardinality(unique_count);
 		// now we know which entries we are going to add - hash them
 		auto &hashes = dict_state.hashes;
@@ -643,6 +634,88 @@ optional_idx GroupedAggregateHashTable::TryAddDictionaryGroups(DataChunk &groups
 	UpdateAggregates(payload, filter, groups.size(), false);
 
 	return new_group_count;
+}
+
+optional_idx GroupedAggregateHashTable::TryAddDictionaryGroups(DataChunk &groups, DataChunk &payload,
+                                                               const unsafe_vector<idx_t> &filter) {
+	// dictionary vector - check if this is a duplicate eliminated dictionary from the storage
+	const auto &dict_col = groups.data[0];
+	auto opt_dict_size = DictionaryVector::DictionarySize(dict_col);
+	if (!opt_dict_size.IsValid()) {
+		// dict size not known - this is not a dictionary that comes from the storage
+		return optional_idx();
+	}
+	const auto &dictionary_vector = DictionaryVector::Child(dict_col);
+	return AddDictionaryGroups(
+	    groups, payload, filter, opt_dict_size.GetIndex(), DictionaryVector::DictionaryId(dict_col),
+	    DictionaryVector::SelVector(dict_col),
+	    [&](DataChunk &unique_values, const SelectionVector &unique_entries, idx_t unique_count) {
+		    unique_values.data[0].Slice(dictionary_vector, unique_entries, unique_count);
+	    });
+}
+
+optional_idx GroupedAggregateHashTable::TryAddDictionaryCombinationGroups(DataChunk &groups, DataChunk &payload,
+                                                                          const unsafe_vector<idx_t> &filter) {
+	static constexpr idx_t MAX_DICTIONARY_COLUMNS = 8;
+	const auto column_count = groups.ColumnCount();
+	if (column_count > MAX_DICTIONARY_COLUMNS) {
+		return optional_idx();
+	}
+	array<idx_t, MAX_DICTIONARY_COLUMNS> sizes;
+	array<idx_t, MAX_DICTIONARY_COLUMNS> strides;
+	auto &dict_state = state.dict_state;
+	auto &combined_id = dict_state.combined_id;
+	combined_id.clear();
+	idx_t dict_size = 1;
+	for (idx_t col_idx = 0; col_idx < column_count; col_idx++) {
+		const auto &dict_col = groups.data[col_idx];
+		if (dict_col.GetVectorType() != VectorType::DICTIONARY_VECTOR) {
+			return optional_idx();
+		}
+		auto opt_dict_size = DictionaryVector::DictionarySize(dict_col);
+		const auto &id = DictionaryVector::DictionaryId(dict_col);
+		if (!opt_dict_size.IsValid() || id.empty() ||
+		    dict_size > MAX_DICTIONARY_SIZE_THRESHOLD / opt_dict_size.GetIndex()) {
+			return optional_idx();
+		}
+		sizes[col_idx] = opt_dict_size.GetIndex();
+		dict_size *= sizes[col_idx];
+		combined_id += id;
+		combined_id += '\x1f';
+	}
+	strides[column_count - 1] = 1;
+	for (idx_t col_idx = column_count - 1; col_idx > 0; col_idx--) {
+		strides[col_idx - 1] = strides[col_idx] * sizes[col_idx];
+	}
+	auto &combined_entries = dict_state.combined_entries;
+	if (!combined_entries.IsSet()) {
+		combined_entries.Initialize(STANDARD_VECTOR_SIZE);
+	}
+	const auto count = groups.size();
+	const auto combined = combined_entries.data();
+	const auto &first = DictionaryVector::SelVector(groups.data[0]);
+	for (idx_t i = 0; i < count; i++) {
+		combined[i] = UnsafeNumericCast<sel_t>(first.get_index(i) * strides[0]);
+	}
+	for (idx_t col_idx = 1; col_idx < column_count; col_idx++) {
+		const auto &offsets = DictionaryVector::SelVector(groups.data[col_idx]);
+		const auto stride = strides[col_idx];
+		for (idx_t i = 0; i < count; i++) {
+			combined[i] += UnsafeNumericCast<sel_t>(offsets.get_index(i) * stride);
+		}
+	}
+	return AddDictionaryGroups(
+	    groups, payload, filter, dict_size, combined_id, combined_entries,
+	    [&](DataChunk &unique_values, const SelectionVector &unique_entries, idx_t unique_count) {
+		    for (idx_t col_idx = 0; col_idx < column_count; col_idx++) {
+			    SelectionVector column_entries(unique_count);
+			    for (idx_t i = 0; i < unique_count; i++) {
+				    column_entries.set_index(i, unique_entries.get_index(i) / strides[col_idx] % sizes[col_idx]);
+			    }
+			    unique_values.data[col_idx].Slice(DictionaryVector::Child(groups.data[col_idx]), column_entries,
+			                                      unique_count);
+		    }
+	    });
 }
 
 optional_idx GroupedAggregateHashTable::TryAddConstantGroups(DataChunk &groups, DataChunk &payload,
@@ -715,6 +788,9 @@ optional_idx GroupedAggregateHashTable::TryAddCompressedGroups(DataChunk &groups
 	if (groups.ColumnCount() == 1 && groups.data[0].GetVectorType() == VectorType::DICTIONARY_VECTOR &&
 	    groups.data[0].GetType().InternalType() != PhysicalType::STRUCT) {
 		return TryAddDictionaryGroups(groups, payload, filter);
+	}
+	if (groups.ColumnCount() > 1 && groups.data[0].GetVectorType() == VectorType::DICTIONARY_VECTOR) {
+		return TryAddDictionaryCombinationGroups(groups, payload, filter);
 	}
 	return optional_idx();
 }

@@ -46,12 +46,50 @@ void ExpressionFilterExecutor::FilterMask(Vector &vector, idx_t count, uint64_t 
 }
 
 static constexpr idx_t MASK_WORDS = STANDARD_VECTOR_SIZE / 64;
+static constexpr idx_t SPARSE_WORD_ROWS = 4;
+static constexpr idx_t MAX_STRING_IN_COMPARISONS = 4;
+
+struct BytePositions {
+	consteval BytePositions() {
+		for (idx_t byte = 0; byte < 256; byte++) {
+			idx_t count = 0;
+			for (uint8_t bit = 0; bit < 8; bit++) {
+				if ((byte >> bit) & 1) {
+					positions[byte][count++] = bit;
+				}
+			}
+		}
+	}
+
+	uint8_t positions[256][8] = {};
+};
+
+static constexpr BytePositions BYTE_POSITIONS;
 
 static idx_t MaskToSelection(const uint64_t *mask, idx_t count, sel_t *sel) {
+	const auto words = (count + 63) / 64;
 	idx_t result_count = 0;
-	for (idx_t w = 0; w < (count + 63) / 64; w++) {
-		for (auto bits = mask[w]; bits != 0; bits &= bits - 1) {
-			sel[result_count++] = UnsafeNumericCast<sel_t>(w * 64 + CountZeros<uint64_t>::Trailing(bits));
+	for (idx_t w = 0; w < words; w++) {
+		result_count += UnsafeNumericCast<idx_t>(std::popcount(mask[w]));
+	}
+	if (result_count == count) {
+		return count;
+	}
+	result_count = 0;
+	for (idx_t w = 0; w < words; w++) {
+		auto bits = mask[w];
+		if (UnsafeNumericCast<idx_t>(std::popcount(bits)) <= SPARSE_WORD_ROWS) {
+			for (; bits != 0; bits &= bits - 1) {
+				sel[result_count++] = UnsafeNumericCast<sel_t>(w * 64 + CountZeros<uint64_t>::Trailing(bits));
+			}
+			continue;
+		}
+		for (auto first = UnsafeNumericCast<sel_t>(w * 64); bits != 0; bits >>= 8, first += 8) {
+			const auto &positions = BYTE_POSITIONS.positions[bits & 0xFF];
+			for (idx_t j = 0; j < 8; j++) {
+				sel[result_count + j] = first + positions[j];
+			}
+			result_count += UnsafeNumericCast<idx_t>(std::popcount(bits & 0xFF));
 		}
 	}
 	return result_count;
@@ -71,11 +109,31 @@ public:
 
 	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
 	                      idx_t &approved_tuple_count) override {
-		for (auto &child : children) {
-			child->FilterSelection(sel, vector, scan_count, approved_tuple_count);
-			if (approved_tuple_count == 0) {
-				break;
+		idx_t child = 0;
+		if (filters_masks && !sel.IsSet() && vector.GetVectorType() == VectorType::FLAT_VECTOR &&
+		    approved_tuple_count != 0 && approved_tuple_count <= STANDARD_VECTOR_SIZE) {
+			uint64_t mask[MASK_WORDS];
+			const auto words = (approved_tuple_count + 63) / 64;
+			std::fill_n(mask, words, ~uint64_t(0));
+			for (auto rows = approved_tuple_count;
+			     child < children.size() && rows * MASKED_SHARE >= approved_tuple_count; child++) {
+				children[child]->FilterMask(vector, approved_tuple_count, mask);
+				rows = 0;
+				for (idx_t w = 0; w < words; w++) {
+					rows += UnsafeNumericCast<idx_t>(std::popcount(mask[w]));
+				}
 			}
+			if (!result_sel.IsSet()) {
+				result_sel.Initialize(STANDARD_VECTOR_SIZE);
+			}
+			const auto rows = MaskToSelection(mask, approved_tuple_count, result_sel.data());
+			if (rows != approved_tuple_count) {
+				sel.Initialize(result_sel);
+				approved_tuple_count = rows;
+			}
+		}
+		for (; child < children.size() && approved_tuple_count != 0; child++) {
+			children[child]->FilterSelection(sel, vector, scan_count, approved_tuple_count);
 		}
 		return approved_tuple_count;
 	}
@@ -104,7 +162,10 @@ public:
 	}
 
 private:
+	static constexpr idx_t MASKED_SHARE = 4;
+
 	vector<unique_ptr<ExpressionFilterExecutor>> children;
+	SelectionVector result_sel;
 	bool filters_values;
 	bool filters_masks;
 };
@@ -219,6 +280,59 @@ public:
 	}
 
 private:
+	template <class T>
+	static constexpr bool IS_WIDE = std::is_same_v<T, hugeint_t> || std::is_same_v<T, uhugeint_t>;
+
+	template <class T>
+	static constexpr bool COMPARES_ANY_BITS = std::is_arithmetic_v<T> || IS_WIDE<T>;
+
+	template <class T>
+	static bool EqualsInline(const T &left, const T &right) {
+		if constexpr (IS_WIDE<T>) {
+			return ((left.lower ^ right.lower) | (uint64_t(left.upper) ^ uint64_t(right.upper))) == 0;
+		} else {
+			return (left == right) | ((left != left) & (right != right));
+		}
+	}
+
+	template <class T>
+	static bool GreaterThanInline(const T &left, const T &right) {
+		if constexpr (IS_WIDE<T>) {
+			return (left.upper > right.upper) | ((left.upper == right.upper) & (left.lower > right.lower));
+		} else {
+			return (right == right) & ((left != left) | (left > right));
+		}
+	}
+
+	template <class T>
+	static bool GreaterThanEqualsInline(const T &left, const T &right) {
+		if constexpr (IS_WIDE<T>) {
+			return (left.upper > right.upper) | ((left.upper == right.upper) & (left.lower >= right.lower));
+		} else {
+			return !GreaterThanInline(right, left);
+		}
+	}
+
+	template <class T, class OP>
+	static bool CompareInline(const T &left, const T &right) {
+		if constexpr (!IS_WIDE<T> && !std::is_floating_point_v<T>) {
+			return OP::Operation(left, right);
+		} else if constexpr (std::is_same_v<OP, Equals>) {
+			return EqualsInline(left, right);
+		} else if constexpr (std::is_same_v<OP, NotEquals>) {
+			return !EqualsInline(left, right);
+		} else if constexpr (std::is_same_v<OP, GreaterThan>) {
+			return GreaterThanInline(left, right);
+		} else if constexpr (std::is_same_v<OP, GreaterThanEquals>) {
+			return GreaterThanEqualsInline(left, right);
+		} else if constexpr (std::is_same_v<OP, LessThan>) {
+			return GreaterThanInline(right, left);
+		} else {
+			static_assert(std::is_same_v<OP, LessThanEquals>);
+			return GreaterThanEqualsInline(right, left);
+		}
+	}
+
 	template <class T, class OP>
 	void MaskFlat(const Vector &vector, idx_t count, uint64_t *mask) const {
 		using STORED = std::conditional_t<std::is_same_v<T, bool>, uint8_t, T>;
@@ -229,15 +343,20 @@ private:
 			const auto rows = MinValue<idx_t>(64, count - first);
 			const auto in_rows = rows == 64 ? ~uint64_t(0) : (uint64_t(1) << rows) - 1;
 			const auto valid = validity ? validity[first / 64] & in_rows : in_rows;
+			auto dense = rows == 64;
+			if constexpr (!COMPARES_ANY_BITS<T>) {
+				dense = dense && valid == in_rows;
+			}
 			uint64_t bits = 0;
-			if (valid == in_rows) {
-				for (idx_t j = 0; j < rows; j++) {
-					bits |= uint64_t(OP::Operation(static_cast<T>(data[first + j]), predicate)) << j;
+			if (dense) {
+				for (idx_t j = 0; j < 64; j++) {
+					bits |= uint64_t(CompareInline<T, OP>(static_cast<T>(data[first + j]), predicate)) << j;
 				}
+				bits &= valid;
 			} else {
 				for (auto rest = valid; rest != 0; rest &= rest - 1) {
 					const auto j = std::countr_zero(rest);
-					bits |= uint64_t(OP::Operation(static_cast<T>(data[first + j]), predicate)) << j;
+					bits |= uint64_t(CompareInline<T, OP>(static_cast<T>(data[first + j]), predicate)) << j;
 				}
 			}
 			mask[first / 64] &= bits;
@@ -265,8 +384,8 @@ private:
 		if (current_capacity >= count) {
 			return;
 		}
-		result_sel.Initialize(count);
-		current_capacity = count;
+		current_capacity = AlignValue<idx_t, 8>(count);
+		result_sel.Initialize(current_capacity);
 	}
 
 	using compare_value_t = bool (*)(const_data_ptr_t value, const Value &constant);
@@ -331,6 +450,69 @@ private:
 	LogicalType column_type;
 	idx_t version = 0;
 	unique_ptr<ComparisonFilterExecutor> comparison;
+};
+
+class InFilterExecutor final : public ExpressionFilterExecutor {
+public:
+	explicit InFilterExecutor(vector<unique_ptr<ComparisonFilterExecutor>> children_p)
+	    : children(std::move(children_p)), input_sel(STANDARD_VECTOR_SIZE), result_sel(STANDARD_VECTOR_SIZE),
+	      merge_sel(STANDARD_VECTOR_SIZE) {
+	}
+
+	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
+	                      idx_t &approved_tuple_count) override {
+		if (approved_tuple_count == 0) {
+			return 0;
+		}
+		if (approved_tuple_count > input_sel.Capacity()) {
+			input_sel.Initialize(approved_tuple_count);
+			result_sel.Initialize(approved_tuple_count);
+			merge_sel.Initialize(approved_tuple_count);
+		}
+		const auto has_selection = sel.IsSet();
+		if (has_selection) {
+			for (idx_t i = 0; i < approved_tuple_count; i++) {
+				input_sel.set_index(i, sel.get_index(i));
+			}
+		}
+		idx_t result_count = 0;
+		for (auto &child : children) {
+			SelectionVector child_sel;
+			if (has_selection) {
+				child_sel.Initialize(input_sel);
+			}
+			auto child_count = approved_tuple_count;
+			child->FilterSelection(child_sel, vector, scan_count, child_count);
+			if (child_count == approved_tuple_count) {
+				if (has_selection) {
+					sel.Initialize(input_sel);
+				}
+				return approved_tuple_count;
+			}
+			idx_t left = 0;
+			idx_t right = 0;
+			idx_t merged_count = 0;
+			while (left < result_count || right < child_count) {
+				auto left_index = left < result_count ? result_sel.get_index(left) : scan_count;
+				auto right_index = right < child_count ? child_sel.get_index(right) : scan_count;
+				auto index = MinValue(left_index, right_index);
+				merge_sel.set_index(merged_count++, index);
+				left += left_index == index;
+				right += right_index == index;
+			}
+			std::swap(result_sel, merge_sel);
+			result_count = merged_count;
+		}
+		sel.Initialize(result_sel);
+		approved_tuple_count = result_count;
+		return result_count;
+	}
+
+private:
+	vector<unique_ptr<ComparisonFilterExecutor>> children;
+	SelectionVector input_sel;
+	SelectionVector result_sel;
+	SelectionVector merge_sel;
 };
 
 template <bool IS_NULL>
@@ -762,6 +944,30 @@ static unique_ptr<ExpressionFilterExecutor> TryCreateBetweenExecutor(const Bound
 	return make_uniq<ConjunctionAndFilterExecutor>(std::move(children));
 }
 
+static unique_ptr<ExpressionFilterExecutor> TryCreateInExecutor(const BoundOperatorExpression &expr) {
+	auto &expressions = expr.GetChildren();
+	if (expressions.size() < 2 || !IsColumnReferenceExpression(*expressions[0])) {
+		return nullptr;
+	}
+	const auto type = expressions[0]->GetReturnType().InternalType();
+	if (!IsSupportedComparisonType(type) ||
+	    (type == PhysicalType::VARCHAR && expressions.size() - 1 > MAX_STRING_IN_COMPARISONS)) {
+		return nullptr;
+	}
+	vector<unique_ptr<ComparisonFilterExecutor>> children;
+	for (idx_t i = 1; i < expressions.size(); i++) {
+		if (expressions[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+			return nullptr;
+		}
+		const auto &constant = expressions[i]->Cast<BoundConstantExpression>().GetValue();
+		if (constant.type().InternalType() != type) {
+			return nullptr;
+		}
+		children.push_back(make_uniq<ComparisonFilterExecutor>(ExpressionType::COMPARE_EQUAL, constant));
+	}
+	return make_uniq<InFilterExecutor>(std::move(children));
+}
+
 static unique_ptr<ExpressionFilterExecutor> TryCreateFunctionExecutor(const BoundFunctionExpression &func,
                                                                       bool inside_selectivity_optional) {
 	if (!inside_selectivity_optional && func.GetExpressionType() == ExpressionType::COMPARE_BETWEEN) {
@@ -827,6 +1033,9 @@ static unique_ptr<ExpressionFilterExecutor> TryCreateFastExecutor(const Expressi
 		return TryCreateFunctionExecutor(expression.Cast<BoundFunctionExpression>(), inside_selectivity_optional);
 	case ExpressionClass::BOUND_OPERATOR: {
 		auto &op = expression.Cast<BoundOperatorExpression>();
+		if (op.GetExpressionType() == ExpressionType::COMPARE_IN) {
+			return inside_selectivity_optional ? nullptr : TryCreateInExecutor(op);
+		}
 		if (op.GetChildren().size() != 1 || !IsColumnReferenceExpression(*op.GetChildren()[0])) {
 			return nullptr;
 		}

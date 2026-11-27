@@ -13,6 +13,7 @@ add_library_unity(
   test_checksum.cpp
   test_column_data_allocator.cpp
   test_compression_type.cpp
+  test_expression_filter_selection.cpp
   test_file_buffer_handle_group.cpp
   test_file_system.cpp
   test_fsst.cpp
@@ -21,6 +22,7 @@ add_library_unity(
   test_external_file_cache.cpp
   test_hyperlog.cpp
   test_http_body.cpp
+  test_in_filter_executor.cpp
   test_http_transport_manager.cpp
   test_literal.cpp
   test_lru_cache.cpp
@@ -50,6 +52,7 @@ add_library_unity(
   test_utf8_codepoint_oob.cpp
   test_validity_mask_count.cpp
   test_validity_mask_slice.cpp
+  test_validity_range.cpp
   test_variant_to_json.cpp
   test_variant_builder.cpp
   test_temporary_memory_manager.cpp

@@ -119,6 +119,7 @@ struct CastStatisticsInput {
 
 	//! Replace the execution function while preserving the callback for later propagation passes
 	DUCKDB_API void SetFunction(cast_function_t new_function);
+	DUCKDB_API optional_ptr<BoundCastData> CastData() const;
 
 	const LogicalType &source_type;
 	const LogicalType &target_type;

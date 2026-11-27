@@ -2239,6 +2239,125 @@ TEST_CASE("A file system opens a local file mapped, and its readers read the map
 	REQUIRE_THROWS_AS(InputFileReader(*none).Read<uint8_t>(), DataCorruptionException);
 }
 
+TEST_CASE("A read-ahead window asks ahead of where its reader lands past what was asked", "[external_file_cache]") {
+	constexpr idx_t SIZE = 64 * BLOCK;
+	constexpr idx_t PAGE = PageResidency::PAGE_SIZE;
+	LocalFileSystem fs;
+	TestFile file("read_ahead_landing.bin", SIZE);
+	auto mapped = fs.OpenInputFile(file.path, MappedFileAccess::RANDOM);
+	REQUIRE(mapped->IsMapped());
+	mapped->Evict(0, SIZE);
+	// the kernel may keep pages a request to drop them leaves: a landing on a page in memory asks nothing
+	const auto asked_at = [&](idx_t at) {
+		return PageResidency::IsResident(mapped->Data() + at, PAGE) ? idx_t(0) : InputFile::HINT_CHUNK - PAGE;
+	};
+
+	// a reader armed where its list starts and sent to a block past what was asked asks a window from there at once
+	MemoryReader reader(*mapped);
+	reader.ReadAheadUntil(SIZE, ReadAheadSteps::SKIPPING);
+	auto asked = asked_at(16 * BLOCK);
+	reader.Seek(16 * BLOCK);
+	reader.Advance();
+	REQUIRE(mapped->Warm(16 * BLOCK + PAGE, InputFile::HINT_CHUNK - PAGE) == asked);
+
+	// a step inside what was asked asks nothing more until the reader read a page
+	reader.Seek(16 * BLOCK + 2 * PAGE);
+	reader.Advance();
+	REQUIRE(mapped->Warm(16 * BLOCK + InputFile::HINT_CHUNK, PAGE) == 0);
+
+	// a landing past what was asked asks a window from there again
+	asked = asked_at(40 * BLOCK);
+	reader.Seek(40 * BLOCK);
+	reader.Advance();
+	REQUIRE(mapped->Warm(40 * BLOCK + PAGE, InputFile::HINT_CHUNK - PAGE) == asked);
+	REQUIRE(mapped->Warm(40 * BLOCK + InputFile::HINT_CHUNK, PAGE) == 0);
+
+	// a landing on a page the file knows to be in memory asks nothing
+	mapped->MarkWarm(56 * BLOCK, PAGE);
+	reader.Seek(56 * BLOCK);
+	reader.Advance();
+	REQUIRE(mapped->Warm(56 * BLOCK + PAGE, PAGE) == 0);
+
+	// a landing where its reader stops asks nothing
+	MemoryReader stopping(*mapped);
+	stopping.ReadAheadUntil(4 * PAGE, ReadAheadSteps::SKIPPING);
+	stopping.Seek(4 * PAGE);
+	stopping.Advance();
+	REQUIRE(mapped->Warm(4 * PAGE, PAGE) == 0);
+}
+
+TEST_CASE("A read-ahead window the bytes in flight leave out asks nothing more until its reader asks for blocks again",
+          "[external_file_cache]") {
+	constexpr idx_t in_flight = BlockCountOf(ExternalFileCache::MAX_FILE_IN_FLIGHT);
+	constexpr idx_t first = in_flight + 8;
+	constexpr idx_t PAGE = PageResidency::PAGE_SIZE;
+	DuckDB db(nullptr);
+	CountingSourceFileSystem fs;
+	ExternalFileCache cache(*db.instance);
+	TestFile file("read_ahead_window_rewind.bin", (first + 8) * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	fs.Hold(true);
+	cache.Prefetch(*cached, 0, in_flight * BLOCK);
+	InputFileReader reader(*cached);
+	reader.Seek(first * BLOCK);
+	reader.ReadAheadUntil((first + 8) * BLOCK, ReadAheadSteps::SKIPPING);
+	for (idx_t at = first * BLOCK + PAGE / 4; at <= first * BLOCK + PAGE; at += PAGE / 4) {
+		reader.Seek(at);
+		reader.Advance();
+	}
+	const bool window_dropped = !cache.IsCached(*cached, first * BLOCK, BLOCK);
+	fs.Hold(false);
+	for (idx_t block = 0; block < in_flight; block++) {
+		REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
+	}
+	REQUIRE(window_dropped);
+
+	for (idx_t at = first * BLOCK + PAGE + PAGE / 4; at <= first * BLOCK + 4 * PAGE; at += PAGE / 4) {
+		reader.Seek(at);
+		reader.Advance();
+	}
+	REQUIRE_FALSE(cache.IsCached(*cached, (first + 2) * BLOCK, BLOCK));
+
+	reader.Seek(first * BLOCK);
+	bool read_back = true;
+	for (idx_t offset = first * BLOCK; offset < (first + 1) * BLOCK + 8; offset += sizeof(uint64_t)) {
+		read_back = read_back && reader.Read<uint64_t>() == ExpectedValue<uint64_t>(offset);
+	}
+	REQUIRE(read_back);
+	REQUIRE(cache.IsCached(*cached, (first + 2) * BLOCK, 2 * BLOCK));
+}
+
+TEST_CASE("A read-ahead window asks nothing where its reader says it landed, and asks once the reader read a page on",
+          "[external_file_cache]") {
+	constexpr idx_t SIZE = 64 * BLOCK;
+	constexpr idx_t PAGE = PageResidency::PAGE_SIZE;
+	LocalFileSystem fs;
+	TestFile file("read_ahead_landed.bin", SIZE);
+	auto mapped = fs.OpenInputFile(file.path, MappedFileAccess::RANDOM);
+	REQUIRE(mapped->IsMapped());
+	mapped->Evict(0, SIZE);
+
+	MemoryReader reader(*mapped);
+	reader.ReadAheadUntil(SIZE, ReadAheadSteps::SKIPPING);
+	reader.Seek(16 * BLOCK);
+	reader.Landed();
+	reader.Advance();
+	REQUIRE(mapped->Warm(16 * BLOCK, InputFile::HINT_CHUNK) == 0);
+
+	for (idx_t at = 16 * BLOCK + PAGE / 4; at <= 16 * BLOCK + PAGE; at += PAGE / 4) {
+		reader.Seek(at);
+		reader.Landed();
+		reader.Advance();
+	}
+	REQUIRE(mapped->Warm(16 * BLOCK + PAGE, InputFile::HINT_CHUNK) == InputFile::HINT_CHUNK);
+
+	reader.Seek(40 * BLOCK);
+	reader.Landed();
+	reader.Advance();
+	REQUIRE(mapped->Warm(40 * BLOCK, InputFile::HINT_CHUNK) == 0);
+}
+
 TEST_CASE("A mapped file is read once a window at a time when the read is longer than the kernel is asked to hold",
           "[external_file_cache]") {
 	constexpr idx_t SIZE = 160ULL * 1024 * 1024;

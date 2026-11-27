@@ -1139,7 +1139,7 @@ private:
 
 namespace {
 
-constexpr idx_t WILL_NEED_CHUNK = 32 * 1024;
+constexpr idx_t WILL_NEED_CHUNK = 128 * 1024;
 
 } // namespace
 

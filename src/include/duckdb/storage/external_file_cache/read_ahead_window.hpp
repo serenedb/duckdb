@@ -36,6 +36,7 @@ public:
 		stop = stop_p;
 		run = 0;
 		skipped = 0;
+		first_window = first;
 		window = first;
 		asked = 0;
 	}
@@ -49,16 +50,26 @@ public:
 
 	//! The user of [reader] is at [at], where it reads next: counts what it read and what it skipped since its
 	//! step before, and asks the reader's file for the next window once the user is within half of it of the end of
-	//! what was asked, unless it skipped more than it read
+	//! what was asked, unless it skipped more than it read. A step of a page or more that lands past what was asked
+	//! starts over there and, in a mapped file whose page there is not in memory, asks the first window from there at
+	//! once: the user went to where it reads next, as a reader of a list sent to the block it needs does, and reads on
+	//! from there
 	template <class READER>
 	[[gnu::always_inline]] void Advance(const READER &reader, idx_t at) noexcept {
-		if (at > last) {
-			const auto gap = at - last;
+		const auto from = last;
+		if (at > from) {
+			const auto gap = at - from;
 			(gap < PageResidency::PAGE_SIZE ? run : skipped) += gap;
 		}
 		last = at;
 		if (at + window / 2 >= end && end < stop) [[unlikely]] {
-			Grow(*reader.File().get(), at);
+			Step(*reader.File().get(), from, at);
+		}
+	}
+	void Landed(idx_t at) noexcept {
+		if (at >= end && at >= last + PageResidency::PAGE_SIZE) {
+			last = at;
+			StartOver(at);
 		}
 	}
 	//! The reader is at [at] and reads on in order, which its caller knows: the bytes to ask for now, [least] or
@@ -90,6 +101,34 @@ public:
 	}
 
 private:
+	[[gnu::noinline]] void Step(const InputFile &file, idx_t from, idx_t at) noexcept {
+		if (at >= end && at >= from + PageResidency::PAGE_SIZE) {
+			Land(file, at);
+		} else {
+			Grow(file, at);
+		}
+	}
+	void Land(const InputFile &file, idx_t at) noexcept {
+		StartOver(at);
+		if (file.IsMapped() && !file.IsResident(at, 1)) {
+			Ask(file, Next(at, InputFile::MAX_HINT, 0));
+		}
+	}
+	void StartOver(idx_t at) noexcept {
+		end = at;
+		run = 0;
+		skipped = 0;
+		window = first_window;
+		asked = 0;
+	}
+	void Ask(const InputFile &file, FileRange range) noexcept {
+		if (range.size == 0) {
+			return;
+		}
+		if (const auto asked = file.ReadAhead(range.offset, range.size, 0); asked < range.offset + range.size) {
+			Rewind(asked);
+		}
+	}
 	FileRange Next(idx_t at, idx_t max, idx_t least) noexcept {
 		const auto from = MaxValue(at, end);
 		if (from >= stop) {
@@ -101,7 +140,7 @@ private:
 		window = MinValue(2 * size, max);
 		return {from, asked};
 	}
-	[[gnu::noinline]] void Grow(const InputFile &file, idx_t at) noexcept {
+	void Grow(const InputFile &file, idx_t at) noexcept {
 		if (window == 0 || run < PageResidency::PAGE_SIZE || 2 * run < skipped) {
 			return;
 		}
@@ -114,13 +153,7 @@ private:
 			}
 			max = ExternalFileCache::MAX_READ_AHEAD;
 		}
-		const auto range = Next(at, max, 0);
-		if (range.size == 0) {
-			return;
-		}
-		if (const auto asked = file.ReadAhead(range.offset, range.size, 0); asked < range.offset + range.size) {
-			Rewind(asked);
-		}
+		Ask(file, Next(at, max, 0));
 	}
 
 private:
@@ -135,6 +168,8 @@ private:
 	//! The bytes the next request asks for, and the bytes the last one asked for
 	idx_t window = 0;
 	idx_t asked = 0;
+	//! The bytes the window asks for first, and again after its reader lands past what was asked
+	idx_t first_window = 0;
 };
 
 } // namespace duckdb

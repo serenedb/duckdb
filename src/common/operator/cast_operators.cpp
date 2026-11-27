@@ -6,6 +6,7 @@
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/multiply.hpp"
 #include "duckdb/common/operator/add.hpp"
+#include "duckdb/common/operator/coarsen_timestamp.hpp"
 #include "duckdb/common/operator/subtract.hpp"
 
 #include "duckdb/common/exception.hpp"
@@ -1117,25 +1118,16 @@ bool TryCast::Operation(dtime_tz_t input, dtime_t &result, bool strict) {
 //===--------------------------------------------------------------------===//
 template <typename SRC, typename DST>
 static bool TryCastTimestampBase(const SRC &input, DST &result, bool strict = true) {
-	if (SRC::PRECISION == DST::PRECISION || !input.IsFinite()) {
-		result.value = input.value;
+	if constexpr (SRC::PRECISION > DST::PRECISION) {
+		result = CoarsenTimestamp<SRC, DST>(input);
 		return true;
-	} else if (SRC::PRECISION < DST::PRECISION) {
+	} else {
+		if (SRC::PRECISION == DST::PRECISION || !input.IsFinite()) {
+			result.value = input.value;
+			return true;
+		}
 		const int64_t scaling = DST::PRECISION / SRC::PRECISION;
 		return TryMultiplyOperator::Operation(input.value, scaling, result.value);
-	} else {
-		//	Round away from the epoch.
-		//	Scale first so we don't overflow.
-		const int64_t power_of_ten = SRC::PRECISION / DST::PRECISION;
-		const int64_t scaling = power_of_ten / 2;
-		result.value = input.value / scaling; // NOLINT: power_of_ten >= 10 so scaling >= 5
-		if (result.value < 0) {
-			--result.value;
-		} else {
-			++result.value;
-		}
-		result.value /= 2;
-		return true;
 	}
 }
 

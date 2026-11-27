@@ -647,6 +647,7 @@ public:
 	//! kept, and evaluates none on values of rows it does not produce - so filters behind a barrier (secure views)
 	//! can be pushed into it
 	bool ordered_filter_pushdown = false;
+	bool exact_in_filter_pushdown = false;
 	TableFunctionReturnType return_type;
 	//! The return type used when this function is invoked through a CALL statement
 	//! By default a CALL returns a query result - functions that only have side effects can use NOTHING instead
