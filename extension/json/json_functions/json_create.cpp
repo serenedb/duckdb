@@ -782,10 +782,8 @@ static JSONTexts EncodeDecimalValues(JSONEncodeContext &ctx, Vector &value_v, id
 		return EncodeDecimals<int16_t>(ctx, value_v, count, text_arena, width, scale);
 	case PhysicalType::INT32:
 		return EncodeDecimals<int32_t>(ctx, value_v, count, text_arena, width, scale);
-	case PhysicalType::INT64:
-		return EncodeDecimals<int64_t>(ctx, value_v, count, text_arena, width, scale);
 	default:
-		throw InternalException("Unexpected physical type of a DECIMAL in a JSON create function");
+		return EncodeDecimals<int64_t>(ctx, value_v, count, text_arena, width, scale);
 	}
 }
 

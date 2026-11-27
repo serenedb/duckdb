@@ -42,6 +42,11 @@ SELECT to_json(map(['a', 'b'], [1, NULL])), to_json(map([1, 2], ['x', 'y'])), to
 ----
 {"a":1,"b":null}	{"1":"x","2":"y"}	{}	NULL
 
+query III
+SELECT to_json(map([TIMESTAMP '2024-01-02 03:04:05'], [1])), to_json(map([TIMESTAMPTZ '2024-01-02 03:04:05+00'], [2])), to_json(map([TIMESTAMP_NS '2024-01-02 03:04:05.000000001'], [3]))
+----
+{"2024-01-02 03:04:05":1}	{"2024-01-02 03:04:05+00":2}	{"2024-01-02 03:04:05.000000001":3}
+
 query I
 SELECT to_json(u)
 FROM (VALUES (1, union_value(a := 1)::UNION(a INTEGER, b VARCHAR)), (2, union_value(b := 'x')::UNION(a INTEGER, b VARCHAR)), (3, NULL), (4, union_value(a := NULL)::UNION(a INTEGER, b VARCHAR))) t(i, u)
