@@ -1113,6 +1113,29 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 	return root;
 }
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(memory_sanitizer) || __has_feature(thread_sanitizer)
+#define DUCKDB_JSON_SANITIZED
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define DUCKDB_JSON_SANITIZED
+#endif
+
+#ifdef DUCKDB_JSON_SANITIZED
+static constexpr bool JSON_READS_IN_PLACE = false;
+#else
+static constexpr bool JSON_READS_IN_PLACE = true;
+#endif
+
+static bool JSONPaddingReadable(const char *data, idx_t len) {
+	if (!JSON_READS_IN_PLACE || len == 0) {
+		return false;
+	}
+	const auto page = simdjson::get_page_size();
+	return reinterpret_cast<uintptr_t>(data + len - 1) % page + JSONTreeParser::PADDING < page;
+}
+
 static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len,
                                    idx_t readable, bool append, JSONParseError &error, optional_ptr<idx_t> consumed) {
 	if (readable < len + JSONTreeParser::PADDING) {
@@ -1243,6 +1266,10 @@ static const char *PadJSONInput(JSONTreeParserState &st, const char *data, idx_t
 	memcpy(input, data, len);
 	memset(input + len, 0, JSONTreeParser::PADDING);
 	return input;
+}
+
+static const char *ReadableJSONInput(JSONTreeParserState &st, const char *data, idx_t len) {
+	return JSONPaddingReadable(data, len) ? data : PadJSONInput(st, data, len);
 }
 
 //! Starts simdjson on a padded document; rethrows the allocation failures of the buffer allocator
@@ -1438,7 +1465,7 @@ bool JSONTreeParser::Write(const char *data, idx_t len, JSONStringWriter &writer
 	auto &st = *state;
 	writer.Clear();
 	if (JSONVisitable(flags, data, len)) {
-		const char *input = PadJSONInput(st, data, len);
+		const char *input = ReadableJSONInput(st, data, len);
 		JSONWriteVisitor visitor(writer, input, len);
 		if (!VisitJSON(st, input, len, visitor)) {
 			return true;
@@ -1463,7 +1490,7 @@ bool JSONTreeParser::WritePath(const char *data, idx_t len, const vector<JSONPat
 	writer.Clear();
 	if (JSONVisitable(flags, data, len)) {
 		// as ParsePaths, but the value goes to the writer instead of nodes
-		const char *input = PadJSONInput(st, data, len);
+		const char *input = ReadableJSONInput(st, data, len);
 		ondemand::document document;
 		if (!CheckAndIterateJSON(st, flags, input, len, document)) {
 			ondemand::value value;
@@ -1494,7 +1521,7 @@ bool JSONTreeParser::WritePath(const char *data, idx_t len, const vector<JSONPat
 bool JSONTreeParser::IsValid(const char *data, idx_t len, JSONParseError &error) {
 	auto &st = *state;
 	if (JSONVisitable(flags, data, len)) {
-		const char *input = PadJSONInput(st, data, len);
+		const char *input = ReadableJSONInput(st, data, len);
 		JSONCheckVisitor checker;
 		if (!VisitJSON(st, input, len, checker)) {
 			return true;
