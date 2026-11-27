@@ -10,6 +10,7 @@
 
 #include "duckdb/common/arrow/appender/append_data.hpp"
 #include "duckdb/common/arrow/appender/scalar_data.hpp"
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/types/arrow_string_view_type.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
@@ -19,18 +20,22 @@ namespace duckdb {
 // Varchar
 //===--------------------------------------------------------------------===//
 struct ArrowVarcharConverter {
+	static constexpr idx_t WRITE_SLACK = 64;
+
 	template <class SRC>
-	static idx_t GetLength(SRC input) {
+	static idx_t GetLength(const SRC &input) {
 		return input.GetSize();
 	}
 
 	template <class SRC>
-	static void WriteData(data_ptr_t target, SRC input) {
-		memcpy(target, input.GetData(), input.GetSize());
+	static void WriteData(data_ptr_t target, const SRC &input) {
+		CopyWithSlack<WRITE_SLACK>(target, input.GetData(), input.GetSize());
 	}
 };
 
 struct ArrowUUIDConverter {
+	static constexpr idx_t WRITE_SLACK = 0;
+
 	template <class SRC>
 	static idx_t GetLength(SRC input) {
 		return UUID::STRING_SIZE;
@@ -102,12 +107,12 @@ struct ArrowVarcharData {
 			}
 			offset_data[offset_idx] = UnsafeNumericCast<BUFTYPE>(current_offset);
 
-			// resize the string buffer if required, and write the string data
-			aux_buffer.resize(current_offset);
+			aux_buffer.reserve(current_offset + OP::WRITE_SLACK);
 			OP::WriteData(aux_buffer.data() + last_offset, data[source_idx]);
 
 			last_offset = UnsafeNumericCast<BUFTYPE>(current_offset);
 		}
+		aux_buffer.resize(UnsafeNumericCast<idx_t>(last_offset));
 		append_data.row_count += size;
 	}
 
@@ -179,11 +184,12 @@ struct ArrowVarcharToStringViewData {
 				arrow_data[result_idx] = arrow_string_view_t(UnsafeNumericCast<int32_t>(string_length), string_data, 0,
 				                                             UnsafeNumericCast<int32_t>(append_data.offset));
 				auto current_offset = append_data.offset + string_length;
-				aux_buffer.resize(current_offset);
+				aux_buffer.reserve(current_offset + ArrowVarcharConverter::WRITE_SLACK);
 				ArrowVarcharConverter::WriteData(aux_buffer.data() + append_data.offset, data[source_idx]);
 				append_data.offset = current_offset;
 			}
 		}
+		aux_buffer.resize(append_data.offset);
 		append_data.row_count += size;
 	}
 

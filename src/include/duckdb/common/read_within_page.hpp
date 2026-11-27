@@ -47,4 +47,13 @@ inline void CopyPaddedWithSlack(void *out, const void *data, idx_t size) {
 	}
 }
 
+template <idx_t SLACK>
+inline void CopyWithSlack(void *out, const void *data, idx_t size) {
+	if (ReadableWithinPage(data, SLACK)) {
+		CopyPaddedWithSlack<SLACK>(out, data, size);
+	} else {
+		memcpy(out, data, size);
+	}
+}
+
 } // namespace duckdb

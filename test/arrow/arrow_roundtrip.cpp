@@ -146,6 +146,14 @@ TEST_CASE("Test Export Large", "[arrow]") {
 	TestArrowRoundtrip("SELECT '3d038406-6275-4aae-bec1-1235ccdeaade'::UUID FROM range(10000) tbl(i)", true, true);
 }
 
+TEST_CASE("Test Arrow strings of every length roundtrip", "[arrow]") {
+	const string query = "SELECT s, s::BLOB AS b FROM (SELECT CASE WHEN i % 7 = 3 THEN NULL ELSE "
+	                     "left(repeat(md5(i::VARCHAR), 10), i % 300) END AS s FROM range(5000) tbl(i))";
+	TestArrowRoundtrip(query);
+	TestArrowRoundtrip(query, true);
+	TestArrowRoundtripStringView(query);
+}
+
 TEST_CASE("Test arrow roundtrip", "[arrow]") {
 	TestArrowRoundtrip("SELECT * FROM range(10000) tbl(i) UNION ALL SELECT NULL");
 	TestArrowRoundtrip("SELECT m from (select MAP(list_value(1), list_value(2)) from range(5) tbl(i)) tbl(m)");
