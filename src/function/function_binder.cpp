@@ -33,7 +33,7 @@ static void Execute(optional_ptr<Binder> binder, ClientContext &context, const C
 	if (binder) {
 		binder->Execute(function);
 	} else {
-		Check(context, context.CurrentRole(), function, AclMode::Execute).Require();
+		Check(context, Role(context), function, AclMode::Execute).Require();
 	}
 }
 
@@ -922,7 +922,7 @@ void FunctionBinder::CastToFunctionArguments(BoundSimpleFunction &function, vect
 		// in that case we don't add a cast
 		if (cast_result == LogicalTypeComparisonResult::DIFFERENT_TYPES) {
 			children[i] = BoundCastExpression::AddCastToType(context, std::move(children[i]), target_type, false,
-			                                                 binder ? binder->CallerRole() : optional_idx());
+			                                                 binder ? binder->BoundRole() : optional_idx());
 		}
 	}
 }
@@ -1680,7 +1680,7 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(shared_ptr<const Scala
 
 	auto result_func = make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(children),
 	                                                      std::move(bind_info), is_operator);
-	result_func->BoundRoleMutable() = binder ? binder->CallerRole() : optional_idx();
+	result_func->BoundRoleMutable() = binder ? binder->BoundRole() : optional_idx();
 
 	if (binder && result_func->Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
 		// the result depends on the query it is bound in, also when the bind_expression callback folds it

@@ -128,28 +128,20 @@ void Binder::RequireStatement(const SQLStatement &statement) {
 }
 
 const RoleAccess &Binder::CheckAs() const {
-	return acting.privileges ? *acting.privileges : context.CurrentRole();
+	return acting.privileges ? *acting.privileges : duckdb::Role(context);
 }
 
-const RoleAccess &Binder::CurrentRole() const {
-	return acting.current_user ? *acting.current_user : context.CurrentRole();
+const RoleAccess &Binder::Role() const {
+	return acting.current_user ? *acting.current_user : duckdb::Role(context);
 }
 
-optional_idx Binder::CallerRole() const {
-	auto &caller = CurrentRole();
-	return &caller != &context.CurrentRole() && !caller.IsSystem() ? optional_idx(caller.role) : optional_idx();
-}
-
-const RoleAccess &Binder::AccessOf(idx_t role) {
-	auto entry = global_binder_state->role_access.try_emplace(role);
-	if (entry.second) {
-		entry.first->second = context.AccessOf(role);
-	}
-	return entry.first->second;
+optional_idx Binder::BoundRole() const {
+	auto &caller = Role();
+	return &caller != &duckdb::Role(context) && !caller.IsSystem() ? optional_idx(caller.role) : optional_idx();
 }
 
 const RoleAccess &Binder::FunctionBodyRole(optional_idx owner) {
-	return owner.IsValid() ? AccessOf(owner.GetIndex()) : CurrentRole();
+	return owner.IsValid() ? duckdb::Role(context, owner.GetIndex()) : Role();
 }
 
 void Binder::BindAsFunctionBody(const RoleAccess &role) {
@@ -168,12 +160,12 @@ void Binder::BindStoredDefinition() {
 }
 
 void Binder::Execute(const CatalogEntry &function) {
-	Check(context, CurrentRole(), function, AclMode::Execute).Require();
+	Check(context, Role(), function, AclMode::Execute).Require();
 }
 
 void Binder::Execute(const MacroCatalogEntry &function, const MacroFunction &overload) {
 	const StatementNaming procedure {"procedure", {&function.name, 1}};
-	Check(context, CurrentRole(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)
+	Check(context, Role(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)
 	    .Require(overload.is_procedure ? &procedure : nullptr);
 }
 
@@ -193,7 +185,7 @@ static bool CallsFunctions(const IndexCatalogEntry &index) {
 }
 
 void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed) {
-	auto &role = CurrentRole();
+	auto &role = Role();
 	if (role.is_superuser) {
 		return;
 	}

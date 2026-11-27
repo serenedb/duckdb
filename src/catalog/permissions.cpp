@@ -207,8 +207,8 @@ bool PrivilegeCheck::Holds(const RoleAccess &role, const PrivilegeTarget &target
 	return absl::c_all_of(target.columns, [&](LogicalIndex column) { return granted(ColumnAclOf(relation, column)); });
 }
 
-RoleAccess CallerAccess(ExpressionState &state) {
-	return state.GetContext().CallerAccess(state.expr.Cast<BoundFunctionExpression>().BoundRole());
+const RoleAccess &Role(ExpressionState &state) {
+	return Role(state.GetContext(), state.expr.Cast<BoundFunctionExpression>().BoundRole());
 }
 
 PrivilegeCheck PrivilegeCheck::Ownership(const RoleAccess &role, const PrivilegeTarget &target) {

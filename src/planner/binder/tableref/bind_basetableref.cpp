@@ -179,7 +179,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 	auto at_clause = BindAtClause(ref.at_clause);
 	auto entry_at_clause = at_clause ? at_clause.get() : entry_retriever.GetAtClause();
 	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(ref.Table()), entry_at_clause, error_context,
-	                             CallerRole(), use == TableRefUse::UTILITY_TARGET ? target : AclMode::NoRights);
+	                             BoundRole(), use == TableRefUse::UTILITY_TARGET ? target : AclMode::NoRights);
 	// resolve the catalog/schema qualification for the lookup only - the reference itself keeps the name as written,
 	// which is what name extraction and replacement scans report
 	auto bound_name = BindTableName(entry_retriever, ref.GetQualifiedName());
@@ -326,9 +326,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
 		view_binder->SetCanContainNulls(true);
 		if (!role.IsSystem() && view_catalog_entry.security_invoker) {
-			view_binder->acting.privileges = &CurrentRole();
+			view_binder->acting.privileges = &Role();
 		} else if (!role.IsSystem() && owner != 0) {
-			view_binder->acting.privileges = &AccessOf(owner);
+			view_binder->acting.privileges = &duckdb::Role(context, owner);
 		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them

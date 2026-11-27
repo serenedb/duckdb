@@ -58,7 +58,7 @@ static unique_ptr<FunctionData> DuckDBSettingsBind(ClientContext &context, Table
 	return_types.emplace_back(LogicalType::VARIANT());
 
 	auto result = make_uniq<DuckDBSettingsBindData>();
-	result->caller_role = input.binder ? input.binder->CallerRole() : optional_idx();
+	result->caller_role = input.BoundRole();
 	for (auto name : {"debug", "deprecated"}) {
 		auto it = input.named_parameters.find(name);
 		if (it != input.named_parameters.end() && it->second.IsNull()) {
@@ -87,7 +87,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 	}
 
 	auto &config = DBConfig::GetConfig(context);
-	const auto role = context.CallerAccess(bind_data.caller_role);
+	const auto &role = Role(context, bind_data.caller_role);
 	auto visible = [&](const string &name) {
 		return Settings::IsVisible(context, role, Identifier(name));
 	};

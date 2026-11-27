@@ -870,7 +870,7 @@ vector<SimilarCatalogEntry> Catalog::SimilarEntriesInSchemas(ClientContext &cont
 	vector<SimilarCatalogEntry> results;
 	for (auto schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		if (!DatabaseVisible(context, context.CurrentRole(), schema.catalog.GetAttached())) {
+		if (!DatabaseVisible(context, Role(context), schema.catalog.GetAttached())) {
 			continue;
 		}
 		SimilarCatalogEntry entry;
@@ -1109,7 +1109,7 @@ CatalogException Catalog::UnrecognizedConfigurationError(ClientContext &context,
 	// the setting is not in an extension
 	// get a list of all options
 	const auto visible = [&](const Identifier &setting) {
-		return Settings::IsVisible(context, context.CurrentRole(), setting);
+		return Settings::IsVisible(context, Role(context), setting);
 	};
 	vector<Identifier> potential_names;
 	for (auto &option : DBConfig::GetOptionNames()) {
@@ -1151,7 +1151,7 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 		}
 		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
 		    (ListingRank(database->GetCatalog()) != 1 && !search_path_catalogs.count(database->GetName())) ||
-		    !DatabaseVisible(context, context.CurrentRole(), *database)) {
+		    !DatabaseVisible(context, Role(context), *database)) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;

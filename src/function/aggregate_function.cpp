@@ -1,5 +1,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/function/aggregate_function.hpp"
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/planner/binder.hpp"
 
 #include "duckdb/execution/operator/aggregate/aggregate_object.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
@@ -195,6 +197,14 @@ Binder &BindAggregateFunctionInput::GetBinder() {
 		throw InternalException("Function %s cannot be bound without a Binder!", bound_function.GetName());
 	}
 	return *binder;
+}
+
+const RoleAccess &BindAggregateFunctionInput::Role() const {
+	return binder ? binder->Role() : duckdb::Role(GetClientContext());
+}
+
+optional_idx BindAggregateFunctionInput::BoundRole() const {
+	return binder ? binder->BoundRole() : optional_idx();
 }
 
 BindAggregateFunctionInput::BindAggregateFunctionInput(ClientContext &context_p,

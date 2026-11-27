@@ -283,7 +283,7 @@ void StatementPreprocessor::ExpandCopyDatabase(vector<unique_ptr<SQLStatement>> 
 			continue;
 		}
 		auto &copy = expanded.back()->Cast<CopyDatabaseStatement>();
-		if (copy.copy_type != CopyDatabaseType::COPY_SCHEMA || !Binder::MayRun(context.CurrentRole(), copy)) {
+		if (copy.copy_type != CopyDatabaseType::COPY_SCHEMA || !Binder::MayRun(duckdb::Role(context), copy)) {
 			continue;
 		}
 		auto &source = Catalog::GetCatalog(context, copy.from_database);

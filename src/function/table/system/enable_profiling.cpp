@@ -24,7 +24,7 @@ public:
 
 static void EnableProfiling(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto bind_data = data.bind_data->Cast<EnableProfilingBindData>();
-	const auto role = context.CallerAccess(bind_data.caller_role);
+	const auto &role = Role(context, bind_data.caller_role);
 
 	auto &client_config = ClientConfig::GetConfig(context);
 	client_config.enable_profiler = true;
@@ -98,7 +98,7 @@ static unique_ptr<FunctionData> BindEnableProfiling(ClientContext &context, Tabl
 	// The metrics are placed by position however they were passed; the overload settled pattern or list of names
 	bind_data->metrics = input.inputs[0];
 	if (input.binder) {
-		bind_data->caller_role = input.binder->CallerRole();
+		bind_data->caller_role = input.BoundRole();
 	}
 
 	return_types.emplace_back(LogicalType::BOOLEAN);

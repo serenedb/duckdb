@@ -292,7 +292,6 @@ struct GlobalBinderState {
 	identifier_map_t<BoundMacroArgument> bound_macro_arguments;
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
-	unordered_map<idx_t, RoleAccess> role_access;
 	idx_t relation_references = 0;
 	PrivilegeCheck relation_check;
 	idx_t denied_reference = 0;
@@ -462,9 +461,8 @@ public:
 
 	ActingRoles acting;
 	const RoleAccess &CheckAs() const;
-	const RoleAccess &CurrentRole() const;
-	optional_idx CallerRole() const;
-	const RoleAccess &AccessOf(idx_t role);
+	const RoleAccess &Role() const;
+	optional_idx BoundRole() const;
 	const RoleAccess &FunctionBodyRole(optional_idx owner);
 	void BindAsFunctionBody(const RoleAccess &role);
 	void BindUnchecked();

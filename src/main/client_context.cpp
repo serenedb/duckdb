@@ -1075,12 +1075,13 @@ void ClientContext::ResolveCurrentRole() {
 	}
 }
 
-RoleAccess ClientContext::AccessOf(idx_t role) const {
-	return security ? security->AccessOf(role) : RoleAccess {.role = role};
-}
-
-RoleAccess ClientContext::CallerAccess(optional_idx caller) const {
-	return caller.IsValid() ? AccessOf(caller.GetIndex()) : CurrentRole();
+const RoleAccess &Role(ClientContext &context, optional_idx bound) {
+	if (!bound.IsValid()) {
+		return *context.current_role;
+	}
+	static const RoleAccess NOBODY;
+	auto access = context.security ? context.security->Access(bound.GetIndex()) : nullptr;
+	return access ? *access : NOBODY;
 }
 
 void ClientContext::SetCurrentRole(idx_t role) {
@@ -1133,7 +1134,7 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 	const auto holds = [&](const RoleAccess &role) {
 		return role.is_superuser || (role.capabilities & sufficient) != RoleCapability::None;
 	};
-	if (!access_scope && holds(CurrentRole())) {
+	if (!access_scope && holds(*current_role)) {
 		return;
 	}
 	const auto path = DBConfig::GetConfig(*this).SanitizeAllowedPath(requested);
@@ -1156,7 +1157,7 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 	bool allowed;
 	if (access_scope) {
 		auto properties = access_scope->properties.get_mutable();
-		auto &role = access_scope->role ? *access_scope->role : CurrentRole();
+		auto &role = access_scope->role ? *access_scope->role : *current_role;
 		allowed = access_scope->catalog || (properties && stored(*properties));
 		if (!allowed && holds(role)) {
 			allowed = true;

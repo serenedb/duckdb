@@ -223,11 +223,7 @@ public:
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message, std::string_view subtype = {});
 
-	const RoleAccess &CurrentRole() const {
-		return *current_role;
-	}
-	DUCKDB_API RoleAccess AccessOf(idx_t role) const;
-	DUCKDB_API RoleAccess CallerAccess(optional_idx caller) const;
+	friend const RoleAccess &Role(ClientContext &context, optional_idx bound);
 	DUCKDB_API void SetCurrentRole(idx_t role);
 	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
 	DUCKDB_API void RefreshSecurity();

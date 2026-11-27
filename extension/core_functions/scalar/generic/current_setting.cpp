@@ -69,7 +69,7 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 	auto &context = state.GetContext();
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<FunctionSettingsBindData>();
-	const auto role = CallerAccess(state);
+	auto &role = Role(state);
 	auto &function_path = info.search_path;
 	auto names = args.data[0].Values<string_t>();
 	auto writer = FlatVector::Writer<string_t>(result, args.size());
@@ -113,7 +113,7 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key.empty()) {
 		throw ParserException("Key name for current_setting must not be empty");
 	}
-	Settings::CheckRead(context, key, input.HasBinder() ? input.GetBinder().CurrentRole() : context.CurrentRole());
+	Settings::CheckRead(context, key, input.Role());
 
 	Value val;
 	if (!FunctionSetting(function_path, key, val) && !context.TryGetCurrentSetting(key, val)) {

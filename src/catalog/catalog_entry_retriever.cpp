@@ -142,13 +142,12 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifi
 }
 
 const RoleAccess &CatalogEntryRetriever::CheckAs() const {
-	return acting && acting->lookups ? *acting->lookups : context.CurrentRole();
+	return acting && acting->lookups ? *acting->lookups : Role(context);
 }
 
 void CatalogEntryRetriever::CheckUse(CatalogEntry &entry, AclMode use) {
 	if (use != AclMode::NoRights) {
-		Check(context, acting && acting->privileges ? *acting->privileges : context.CurrentRole(), entry, use)
-		    .Require();
+		Check(context, acting && acting->privileges ? *acting->privileges : Role(context), entry, use).Require();
 	}
 }
 

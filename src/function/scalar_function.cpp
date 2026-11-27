@@ -1,10 +1,20 @@
 #include "duckdb/function/scalar_function.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/function/function_binder.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
 
 namespace duckdb {
+
+const RoleAccess &BindScalarFunctionInput::Role() const {
+	return binder ? binder->Role() : duckdb::Role(GetClientContext());
+}
+
+optional_idx BindScalarFunctionInput::BoundRole() const {
+	return binder ? binder->BoundRole() : optional_idx();
+}
 
 unique_ptr<Expression> BucketRewrite::UnbucketCore(unique_ptr<Expression> bucket) const {
 	return Unbucket(std::move(bucket));

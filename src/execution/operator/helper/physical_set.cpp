@@ -72,7 +72,7 @@ void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &na
 
 void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
                               bool check_access, optional_ptr<const RoleAccess> role) {
-	auto &checked_as = role ? *role : context.CurrentRole();
+	auto &checked_as = role ? *role : Role(context);
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
 	auto option = DBConfig::GetOptionByName(name);

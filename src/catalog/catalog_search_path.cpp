@@ -257,7 +257,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		// only schema supplied - check if this is a catalog instead
 		if (path.GetCatalog().empty()) {
 			auto catalog = Catalog::GetCatalogEntry(context, path.GetSchema());
-			if (catalog && DatabaseVisible(context, context.CurrentRole(), catalog->GetAttached())) {
+			if (catalog && DatabaseVisible(context, Role(context), catalog->GetAttached())) {
 				auto default_schema = catalog->GetDefaultSchema();
 				if (default_schema) {
 					auto schema = catalog->GetSchema(context, *default_schema, OnEntryNotFound::RETURN_NULL);
@@ -284,7 +284,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		// the catalog itself doesn't exist.
 		if (set_type != CatalogSetPathType::SET_SCHEMA) {
 			auto catalog = Catalog::GetCatalogEntry(context, path.GetCatalog());
-			if (catalog && DatabaseVisible(context, context.CurrentRole(), catalog->GetAttached())) {
+			if (catalog && DatabaseVisible(context, Role(context), catalog->GetAttached())) {
 				continue;
 			}
 		}
@@ -601,7 +601,7 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 		if (!schema) {
 			continue;
 		}
-		if (Check(context, context.CurrentRole(), *schema, AclMode::Usage)) {
+		if (Check(context, Role(context), *schema, AclMode::Usage)) {
 			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
 		}
 		skipped_unusable = true;

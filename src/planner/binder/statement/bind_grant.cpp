@@ -203,7 +203,7 @@ static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo
 	if (!role.MemberOf(granted_by)) {
 		throw PermissionException("must be member of role \"%s\"", binder.RoleName(granted_by));
 	}
-	return binder.AccessOf(granted_by);
+	return duckdb::Role(binder.context, granted_by);
 }
 
 static const RoleAccess &ResolveGrantors(Binder &binder, AlterPermissionsInfo &info) {
@@ -262,7 +262,7 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, const RoleEntry
 		    Catalog::GetEntry(context, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                      QualifiedName(entry.ParentCatalog().GetName(), Identifier(),
 		                                    Identifier(entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name)));
-		Check(context, binder.AccessOf(new_owner.oid), wrapper, AclMode::Usage).Require();
+		Check(context, duckdb::Role(binder.context, new_owner.oid), wrapper, AclMode::Usage).Require();
 	} else if (container == ObjectContainer::DATABASE) {
 		binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY,
 		                                                 QualifiedName(entry.ParentCatalog().GetName()),
@@ -273,7 +273,7 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, const RoleEntry
 	            (!Catalog::InRelationNamespace(entry.type) && entry.type != CatalogType::TYPE_ENTRY))) {
 		auto &schema = entry.ParentSchema(context);
 		if ((!reassigned_schemas || !reassigned_schemas->count(schema.oid)) &&
-		    !Check(context, binder.AccessOf(new_owner.oid), schema, AclMode::Create)) {
+		    !Check(context, duckdb::Role(binder.context, new_owner.oid), schema, AclMode::Create)) {
 			throw PermissionException("permission denied for schema %s", schema.name.GetIdentifierName());
 		}
 	}

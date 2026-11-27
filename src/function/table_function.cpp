@@ -1,10 +1,15 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/partition_stats.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/planner/binder.hpp"
 
 #include <algorithm>
 
 namespace duckdb {
+
+optional_idx TableFunctionBindInput::BoundRole() const {
+	return binder ? binder->BoundRole() : optional_idx();
+}
 
 GlobalTableFunctionState::~GlobalTableFunctionState() {
 }

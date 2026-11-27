@@ -116,12 +116,10 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 				schema_list.emplace_back("pg_catalog");
 			}
 		}
-		VisitUsableSearchPath(context, search_path,
-		                      input.HasBinder() ? input.GetBinder().CurrentRole() : context.CurrentRole(),
-		                      [&](const Identifier &schema) {
-			                      schema_list.emplace_back(schema);
-			                      return true;
-		                      });
+		VisitUsableSearchPath(context, search_path, input.Role(), [&](const Identifier &schema) {
+			schema_list.emplace_back(schema);
+			return true;
+		});
 		result_val = Value::LIST(LogicalType::VARCHAR, schema_list);
 	}
 	return make_uniq<CurrentSchemasBindData>(std::move(result_val));
@@ -139,9 +137,8 @@ unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
 	auto &search_path =
 	    SearchPathOf(context, input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath() : nullptr);
 	Value schema(LogicalType::VARCHAR);
-	const bool searched_current_catalog = VisitUsableSearchPath(
-	    context, search_path, input.HasBinder() ? input.GetBinder().CurrentRole() : context.CurrentRole(),
-	    [&](const Identifier &name) {
+	const bool searched_current_catalog =
+	    VisitUsableSearchPath(context, search_path, input.Role(), [&](const Identifier &name) {
 		    schema = Value(name);
 		    return false;
 	    });

@@ -135,6 +135,8 @@ struct TableFunctionBindInput {
 	      input_plan(input_plan) {
 	}
 
+	DUCKDB_API optional_idx BoundRole() const;
+
 	vector<Value> &inputs;
 	named_argument_map_t &named_parameters;
 	vector<LogicalType> &input_table_types;

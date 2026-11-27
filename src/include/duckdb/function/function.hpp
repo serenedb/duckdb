@@ -27,6 +27,7 @@ class ClientContext;
 class Expression;
 class ExpressionExecutor;
 class Transaction;
+struct RoleAccess;
 
 class AggregateFunction;
 class AggregateFunctionSet;

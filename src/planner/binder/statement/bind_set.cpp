@@ -40,7 +40,7 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 	Value value;
 	unique_ptr<LogicalOperator> op;
 	if (stmt.scope != SetScope::VARIABLE) {
-		CheckSetAccess(context, CurrentRole(), stmt.name, stmt.scope, "SET LOCAL");
+		CheckSetAccess(context, Role(), stmt.name, stmt.scope, "SET LOCAL");
 		ConstantBinder default_binder(*this, context, "SET value");
 		auto bound_value = default_binder.Bind(stmt.value);
 		if (bound_value->HasParameter()) {
@@ -73,7 +73,7 @@ BoundStatement Binder::Bind(ResetVariableStatement &stmt) {
 	result.names = {"Success"};
 
 	if (stmt.scope != SetScope::VARIABLE && !stmt.name.empty()) {
-		CheckSetAccess(context, CurrentRole(), stmt.name, stmt.scope, "RESET LOCAL");
+		CheckSetAccess(context, Role(), stmt.name, stmt.scope, "RESET LOCAL");
 	}
 	auto reset = make_uniq<LogicalReset>(stmt.name, stmt.scope);
 	result.plan = std::move(reset);

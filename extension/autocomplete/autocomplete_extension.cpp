@@ -421,8 +421,8 @@ static duckdb::unique_ptr<FunctionData> SQLAutoCompleteBind(ClientContext &conte
 	names.emplace_back("extra_char");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return GenerateSuggestions(context, input.binder ? input.binder->CurrentRole() : context.CurrentRole(),
-	                           StringValue::Get(input.inputs[0]), parameters);
+	return GenerateSuggestions(context, Role(context, input.BoundRole()), StringValue::Get(input.inputs[0]),
+	                           parameters);
 }
 
 unique_ptr<GlobalTableFunctionState> SQLAutoCompleteInit(ClientContext &context, TableFunctionInitInput &input) {
