@@ -48,22 +48,27 @@ ScanSamplingInfo ScanSamplingInfo::FromOptions(const SampleOptions &options, idx
 	result.is_percentage = false;
 	result.target_sample_rows = NumericCast<idx_t>(options.sample_size.GetValue<int64_t>());
 	if (options.sample_rate > 0) {
-		result.sample_rate = options.sample_rate;
-	} else if (estimated_row_count > 0) {
-		result.sample_rate = static_cast<double>(result.target_sample_rows) / static_cast<double>(estimated_row_count);
+		result.sample_rate = MinValue(1.0, options.sample_rate);
 	} else {
-		// No estimate available, use a conservative rate
-		result.sample_rate = 1.0;
+		result.SetRowCount(estimated_row_count);
 	}
-	result.sample_rate = MinValue(1.0, MaxValue(0.0, result.sample_rate));
 	RandomEngine random(options.seed.IsValid() ? static_cast<int64_t>(options.seed.GetIndex()) : -1);
 	result.sample_phase = random.NextRandom();
 	return result;
 }
 
+void ScanSamplingInfo::SetRowCount(idx_t row_count) {
+	sample_rate =
+	    row_count == 0 ? 1.0 : MinValue(1.0, static_cast<double>(target_sample_rows) / static_cast<double>(row_count));
+}
+
 bool ScanSamplingInfo::KeepsRow(idx_t row_idx) const {
-	auto before = std::floor(LossyNumericCast<double>(row_idx) * sample_rate + sample_phase);
-	auto after = std::floor(LossyNumericCast<double>(row_idx + 1) * sample_rate + sample_phase);
+	return KeepsAnyRow(row_idx, 1);
+}
+
+bool ScanSamplingInfo::KeepsAnyRow(idx_t start_row, idx_t count) const {
+	auto before = std::floor(LossyNumericCast<double>(first_row + start_row) * sample_rate + sample_phase);
+	auto after = std::floor(LossyNumericCast<double>(first_row + start_row + count) * sample_rate + sample_phase);
 	return after > before;
 }
 

@@ -700,11 +700,19 @@ public:
 		       (order && (order->row_group_offset != 0 || order->leading_null_group_offset != 0));
 	}
 
+	static bool PlansSample(const MultiFileGlobalState &gstate) {
+		return gstate.sample_options && !gstate.sample_options->is_percentage;
+	}
+
 	//! The column of an opened file the order column of the scan is read from as it is - a cast or a default would not
 	//! keep its order, so there is none then
 	static optional_idx OrderColumnOf(const MultiFileBindData &bind_data, MultiFileGlobalState &gstate,
 	                                  MultiFileReaderData &reader_data) {
 		auto &order = *bind_data.scan_order;
+		if (bind_data.file_list->GetExpandResult() == FileExpandResult::SINGLE_FILE &&
+		    bind_data.reader_bind.schema.empty()) {
+			return order.column_idx.GetPrimaryIndex();
+		}
 		if (order.column_idx.HasChildren()) {
 			return optional_idx();
 		}
@@ -778,6 +786,69 @@ public:
 		vector<RowGroupReorderer::PartitionOrderStatistics> statistics;
 	};
 
+	static bool CreatePlannedReader(ClientContext &context, const MultiFileBindData &bind_data,
+	                                MultiFileGlobalState &gstate, idx_t file_idx) {
+		auto &reader_data = *gstate.readers[file_idx];
+		if (reader_data.union_data) {
+			reader_data.reader = bind_data.multi_file_reader->CreateReader(context, *gstate.global_state,
+			                                                               *reader_data.union_data, bind_data);
+		} else {
+			reader_data.reader = bind_data.multi_file_reader->CreateReader(
+			    context, *gstate.global_state, reader_data.file_to_be_opened, file_idx, bind_data);
+		}
+		return InitializeReader(reader_data, bind_data, gstate.column_indexes, gstate.filters, context, file_idx,
+		                        gstate) != ReaderInitializeType::SKIP_READING_FILE;
+	}
+
+	static void OpenClaimedFile(ClientContext &context, const MultiFileBindData &bind_data,
+	                            MultiFileGlobalState &gstate, idx_t file_idx, unique_lock<mutex> &parallel_lock) {
+		auto &reader_data = *gstate.readers[file_idx];
+		reader_data.file_state = MultiFileFileState::OPENING;
+		parallel_lock.unlock();
+		bool opened = false;
+		try {
+			unique_lock<mutex> file_lock(*reader_data.file_mutex);
+			opened = CreatePlannedReader(context, bind_data, gstate, file_idx);
+			if (opened) {
+				reader_data.reader->SetPartitionsToScan(std::move(reader_data.planned_partitions),
+				                                        std::move(reader_data.planned_sampling));
+				reader_data.reader->PrepareReader(context, *gstate.global_state);
+				if (gstate.read_ahead) {
+					reader_data.reader->PrepareReadAhead(context, *gstate.global_state);
+				}
+			}
+			parallel_lock.lock();
+		} catch (...) {
+			parallel_lock.lock();
+			gstate.error_opening_file = true;
+			throw;
+		}
+		reader_data.file_state = opened ? MultiFileFileState::OPEN : MultiFileFileState::SKIPPED;
+		if (!opened) {
+			reader_data.reader = nullptr;
+		}
+	}
+
+	static optional_idx NextPlannedFileToOpen(ClientContext &context, const MultiFileGlobalState &gstate) {
+		const auto lookahead = TaskScheduler::QueryThreads(context);
+		idx_t files_ahead = 0;
+		for (auto claim = gstate.planned_claim + 1; claim < gstate.planned_files.size() && files_ahead < lookahead;
+		     claim++) {
+			const auto file_index = gstate.planned_files[claim];
+			switch (gstate.readers[file_index]->file_state) {
+			case MultiFileFileState::UNOPENED:
+				return file_index;
+			case MultiFileFileState::OPENING:
+			case MultiFileFileState::OPEN:
+				files_ahead++;
+				break;
+			default:
+				break;
+			}
+		}
+		return optional_idx();
+	}
+
 	//! Open a file of a planned scan, unless the filters skip it, and list its partitions
 	static void ListFilePartitions(ClientContext &context, const MultiFileBindData &bind_data,
 	                               MultiFileGlobalState &gstate, idx_t file_idx, FilePartitions &result) {
@@ -789,19 +860,10 @@ public:
 			return;
 		}
 		if (reader_data.file_state == MultiFileFileState::UNOPENED) {
-			if (reader_data.union_data) {
-				reader_data.reader = bind_data.multi_file_reader->CreateReader(context, *gstate.global_state,
-				                                                               *reader_data.union_data, bind_data);
-			} else {
-				reader_data.reader = bind_data.multi_file_reader->CreateReader(
-				    context, *gstate.global_state, reader_data.file_to_be_opened, file_idx, bind_data);
-			}
 			result.opened = true;
-			auto init_result = InitializeReader(reader_data, bind_data, gstate.column_indexes, gstate.filters, context,
-			                                    file_idx, gstate);
-			reader_data.file_state = init_result == ReaderInitializeType::SKIP_READING_FILE
-			                             ? MultiFileFileState::SKIPPED
-			                             : MultiFileFileState::OPEN;
+			reader_data.file_state = CreatePlannedReader(context, bind_data, gstate, file_idx)
+			                             ? MultiFileFileState::OPEN
+			                             : MultiFileFileState::SKIPPED;
 		}
 		if (!reader_data.reader) {
 			throw InternalException("A file of a scan that plans its partitions was released before planning");
@@ -816,13 +878,21 @@ public:
 		                              : optional_idx();
 		for (auto &partition : result.partitions) {
 			if (order_column.IsValid() && partition.partition_row_group) {
-				const StorageIndex storage_index(order_column.GetIndex());
+				auto storage_index = bind_data.scan_order->column_idx;
+				storage_index.SetIndex(order_column.GetIndex());
 				result.statistics.push_back({partition.partition_row_group->GetColumnStatistics(storage_index),
 				                             partition.partition_row_group->MinMaxIsExact(storage_index)});
 			} else {
 				result.statistics.emplace_back();
 			}
+			partition.partition_row_group.reset();
 		}
+		if (reader_data.file_state != MultiFileFileState::OPEN) {
+			reader_data.reader = nullptr;
+			return;
+		}
+		gstate.readers[file_idx] = reader_data.union_data ? make_uniq<MultiFileReaderData>(reader_data.union_data)
+		                                                  : make_uniq<MultiFileReaderData>(reader_data.reader->file);
 	}
 
 	//! Plan the partitions a scan reads (MultiFileBindData::PlansPartitions): every file is opened, the partitions of
@@ -900,6 +970,24 @@ public:
 			}
 			order = std::move(kept);
 		}
+		optional<ScanSamplingInfo> sampling;
+		vector<idx_t> partition_rows;
+		if (PlansSample(gstate)) {
+			idx_t rows = 0;
+			for (auto &partition : partitions) {
+				partition_rows.push_back(rows);
+				rows += partition.count;
+			}
+			sampling = ScanSamplingInfo::FromOptions(*gstate.sample_options, rows);
+			sampling->SetRowCount(rows);
+			vector<idx_t> sampled;
+			for (auto partition : order) {
+				if (sampling->KeepsAnyRow(partition_rows[partition], partitions[partition].count)) {
+					sampled.push_back(partition);
+				}
+			}
+			order = std::move(sampled);
+		}
 
 		vector<vector<idx_t>> file_partitions(gstate.readers.size());
 		for (auto partition : order) {
@@ -914,17 +1002,20 @@ public:
 		for (idx_t file_idx = 0; file_idx < gstate.readers.size(); file_idx++) {
 			gstate.planned_claims_left[file_idx] = file_partitions[file_idx].size();
 		}
-		ForEachFile(context, gstate.readers.size(), [&](idx_t file_idx) {
+		for (idx_t file_idx = 0; file_idx < gstate.readers.size(); file_idx++) {
 			auto &reader_data = *gstate.readers[file_idx];
-			if (reader_data.file_state != MultiFileFileState::OPEN || file_partitions[file_idx].empty()) {
+			if (reader_data.file_state != MultiFileFileState::UNOPENED || file_partitions[file_idx].empty()) {
 				// none of the partitions of this file are read
 				reader_data.file_state = MultiFileFileState::SKIPPED;
 				reader_data.reader = nullptr;
-				return;
+				continue;
 			}
-			reader_data.reader->SetPartitionsToScan(std::move(file_partitions[file_idx]));
-			reader_data.reader->PrepareReader(context, *gstate.global_state);
-		});
+			reader_data.planned_partitions = std::move(file_partitions[file_idx]);
+			if (sampling) {
+				reader_data.planned_sampling = sampling;
+				reader_data.planned_sampling->first_row = partition_rows[file_starts[file_idx]];
+			}
+		}
 		gstate.file_index = gstate.readers.size();
 		gstate.planned = true;
 	}
@@ -936,8 +1027,28 @@ public:
 	                                            ScanReadAheadJobWrapper<MultiFileScanJobState> &job,
 	                                            unique_lock<mutex> &parallel_lock) {
 		while (gstate.planned_claim < gstate.planned_files.size()) {
-			const auto file_index = gstate.planned_files[gstate.planned_claim++];
+			if (gstate.error_opening_file) {
+				return MultiFileClaimResult::EXHAUSTED;
+			}
+			const auto file_index = gstate.planned_files[gstate.planned_claim];
 			auto &reader_data = *gstate.readers[file_index];
+			if (reader_data.file_state == MultiFileFileState::UNOPENED) {
+				OpenClaimedFile(context, bind_data, gstate, file_index, parallel_lock);
+				continue;
+			}
+			if (reader_data.file_state == MultiFileFileState::OPENING) {
+				const auto ahead = NextPlannedFileToOpen(context, gstate);
+				if (ahead.IsValid()) {
+					OpenClaimedFile(context, bind_data, gstate, ahead.GetIndex(), parallel_lock);
+					continue;
+				}
+				auto &file_mutex = *reader_data.file_mutex;
+				parallel_lock.unlock();
+				unique_lock<mutex> file_lock(file_mutex);
+				parallel_lock.lock();
+				continue;
+			}
+			gstate.planned_claim++;
 			auto reader = reader_data.reader;
 			const bool claimed = reader && reader->TryInitializeScan(context, *gstate.global_state, *job.scan_state);
 			if (--gstate.planned_claims_left[file_index] == 0 && reader) {
@@ -1134,6 +1245,7 @@ public:
 		result->op = input.op;
 		result->global_state = bind_data.interface->InitializeGlobalState(context, bind_data, *result);
 		result->max_threads = TaskScheduler::QueryThreads(context);
+		const bool plans_partitions = bind_data.PlansPartitions() || PlansSample(*result);
 
 		// Ensure all readers are initialized and FileListScan is sync with readers list
 		for (auto &reader_data : result->readers) {
@@ -1156,14 +1268,14 @@ public:
 					//! File can be skipped entirely, close it and move on - planning the partitions still numbers its
 					//! partitions, and releases it afterwards
 					reader_data->file_state = MultiFileFileState::SKIPPED;
-					if (!bind_data.PlansPartitions()) {
+					if (!plans_partitions) {
 						reader_data->reader = nullptr;
 					}
 					result->file_index++;
 				}
 			}
 		}
-		if (bind_data.PlansPartitions()) {
+		if (plans_partitions) {
 			PlanPartitions(context, bind_data, *result);
 		}
 
@@ -1185,16 +1297,6 @@ public:
 		InitializeProjection(bind_data, input, result);
 		if (!repeatable_percentage_sample) {
 			InitializeReadAhead(context, bind_data, *result);
-		}
-		if (result->planned && result->read_ahead) {
-			// the files were opened while planning, before the scan was known to be read ahead
-			auto &readers = result->readers;
-			auto &global_state = *result->global_state;
-			ForEachFile(context, readers.size(), [&](idx_t file_idx) {
-				if (readers[file_idx]->file_state == MultiFileFileState::OPEN) {
-					readers[file_idx]->reader->PrepareReadAhead(context, global_state);
-				}
-			});
 		}
 		return std::move(result);
 	}

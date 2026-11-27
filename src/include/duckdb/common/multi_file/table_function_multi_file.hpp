@@ -91,6 +91,7 @@ struct TableFunctionFileInitInput {
 	//! (Optional) The only partitions of the file the function reads - indexes into what its get_partition_stats lists
 	//! - in the order it reads them in. Only set for functions whose settings declare "scans_partitions"
 	optional_ptr<const vector<idx_t>> partitions;
+	optional_ptr<const ScanSamplingInfo> sampling;
 
 	//! The multi-file input of an initialization - an empty one when the function is not read as part of a
 	//! multi-file scan
@@ -282,7 +283,7 @@ public:
 	double GetProgressInFile(ClientContext &context) override;
 	InsertionOrderPreservingMap<Value> GetMetadata() const override;
 	bool ListPartitions(ClientContext &context, vector<PartitionStatistics> &result) override;
-	void SetPartitionsToScan(vector<idx_t> partitions) override;
+	void SetPartitionsToScan(vector<idx_t> partitions, optional<ScanSamplingInfo> sampling) override;
 
 	//! Release the resources the given local state holds for the batch it scanned last
 	void FinishBatch(ClientContext &context, LocalTableFunctionState &local_state);
@@ -349,6 +350,7 @@ private:
 	unique_ptr<GlobalTableFunctionState> global_state;
 	//! (Optional) The only partitions of the file that are read, in this order - see SetPartitionsToScan
 	unique_ptr<vector<idx_t>> partitions;
+	optional<ScanSamplingInfo> sampling;
 	//! The number of row groups to scan of this file that has been collected into the state of the scan
 	idx_t collected_file_total = 0;
 	//! Set when the wrapped function has no local state - only a single thread can scan the file in that case

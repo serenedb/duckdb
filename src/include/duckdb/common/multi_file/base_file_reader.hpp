@@ -19,6 +19,8 @@
 #include "duckdb/common/open_file_info.hpp"
 #include "duckdb/function/partition_stats.hpp"
 #include "duckdb/parser/parsed_data/sample_options.hpp"
+#include "duckdb/common/optional.hpp"
+#include "duckdb/storage/table/scan_state.hpp"
 
 namespace duckdb {
 
@@ -127,7 +129,7 @@ public:
 	DUCKDB_API virtual bool ListPartitions(ClientContext &context, vector<PartitionStatistics> &result);
 	//! Read only these partitions of the file (indexes into ListPartitions), in this order - called before the
 	//! reader is prepared, and only on readers whose GetPartitionStats lists the partitions
-	DUCKDB_API virtual void SetPartitionsToScan(vector<idx_t> partitions);
+	DUCKDB_API virtual void SetPartitionsToScan(vector<idx_t> partitions, optional<ScanSamplingInfo> sampling);
 
 	virtual string GetReaderType() const = 0;
 

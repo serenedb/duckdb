@@ -230,6 +230,9 @@ TableFunctionInitInput TableFunctionFileReader::GetInitInput(TableFunctionFileIn
 	if (partitions) {
 		file_input.partitions = *partitions;
 	}
+	if (sampling) {
+		file_input.sampling = *sampling;
+	}
 	input.multi_file_input = file_input;
 	return input;
 }
@@ -401,9 +404,10 @@ bool TableFunctionFileReader::ListPartitions(ClientContext &context, vector<Part
 	return true;
 }
 
-void TableFunctionFileReader::SetPartitionsToScan(vector<idx_t> partitions_p) {
+void TableFunctionFileReader::SetPartitionsToScan(vector<idx_t> partitions_p, optional<ScanSamplingInfo> sampling_p) {
 	D_ASSERT(settings.scans_partitions && !global_state);
 	partitions = make_uniq<vector<idx_t>>(std::move(partitions_p));
+	sampling = std::move(sampling_p);
 }
 
 //===--------------------------------------------------------------------===//
@@ -804,10 +808,14 @@ static void TableFunctionMultiFileGetMetrics(TableFunctionGetMetricsInput &input
 		lock_guard<mutex> guard(gstate.lock);
 		for (auto &reader_data : gstate.readers) {
 			// a file that is still being opened has its reader assigned under its own lock - skip it until it is open
-			if (!reader_data || reader_data->file_state != MultiFileFileState::OPEN || !reader_data->reader) {
+			if (!reader_data) {
 				continue;
 			}
-			reader_data->reader->Cast<TableFunctionFileReader>().CollectMetrics(input.context, scan_state);
+			auto reader = reader_data->file_state == MultiFileFileState::OPEN ? reader_data->reader
+			                                                                  : reader_data->closed_reader.lock();
+			if (reader) {
+				reader->Cast<TableFunctionFileReader>().CollectMetrics(input.context, scan_state);
+			}
 		}
 	}
 	lock_guard<mutex> metrics_guard(scan_state.metrics_lock);
