@@ -1,0 +1,129 @@
+# name: test/sql/json/scalar/test_json_create_columns.test
+# description: to_json, json_object and COPY TO json write each column's text once and build every row from those texts: strings around the copy block sizes, NULLs at every level, constant inputs, decimals written as their doubles, and COPY's formats inside tuples
+# group: [scalar]
+
+require json
+
+query I
+SELECT to_json({'s': s, 'l': [s, NULL, s], 'm': map([coalesce(s, 'k')], [s]), 'n': s})
+FROM (VALUES (1, ''), (2, repeat('a', 15)), (3, repeat('b', 16)), (4, repeat('c', 31)), (5, repeat('d', 32)), (6, repeat('e', 33)), (7, '"' || repeat('f', 30) || '\'), (8, NULL)) t(i, s)
+ORDER BY i
+----
+{"s":"","l":["",null,""],"m":{"":""},"n":""}
+{"s":"aaaaaaaaaaaaaaa","l":["aaaaaaaaaaaaaaa",null,"aaaaaaaaaaaaaaa"],"m":{"aaaaaaaaaaaaaaa":"aaaaaaaaaaaaaaa"},"n":"aaaaaaaaaaaaaaa"}
+{"s":"bbbbbbbbbbbbbbbb","l":["bbbbbbbbbbbbbbbb",null,"bbbbbbbbbbbbbbbb"],"m":{"bbbbbbbbbbbbbbbb":"bbbbbbbbbbbbbbbb"},"n":"bbbbbbbbbbbbbbbb"}
+{"s":"ccccccccccccccccccccccccccccccc","l":["ccccccccccccccccccccccccccccccc",null,"ccccccccccccccccccccccccccccccc"],"m":{"ccccccccccccccccccccccccccccccc":"ccccccccccccccccccccccccccccccc"},"n":"ccccccccccccccccccccccccccccccc"}
+{"s":"dddddddddddddddddddddddddddddddd","l":["dddddddddddddddddddddddddddddddd",null,"dddddddddddddddddddddddddddddddd"],"m":{"dddddddddddddddddddddddddddddddd":"dddddddddddddddddddddddddddddddd"},"n":"dddddddddddddddddddddddddddddddd"}
+{"s":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","l":["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",null,"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"m":{"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"n":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+{"s":"\"ffffffffffffffffffffffffffffff\\","l":["\"ffffffffffffffffffffffffffffff\\",null,"\"ffffffffffffffffffffffffffffff\\"],"m":{"\"ffffffffffffffffffffffffffffff\\":"\"ffffffffffffffffffffffffffffff\\"},"n":"\"ffffffffffffffffffffffffffffff\\"}
+{"s":null,"l":[null,null,null],"m":{"k":null},"n":null}
+
+query I
+SELECT to_json(x)
+FROM (VALUES (1, {'a': 1, 'b': [1, 2, NULL], 'c': {'d': 'x', 'e': NULL}}), (2, NULL), (3, {'a': NULL, 'b': [], 'c': NULL}), (4, {'a': 2, 'b': NULL, 'c': {'d': NULL, 'e': [[]]}})) t(i, x)
+ORDER BY i
+----
+{"a":1,"b":[1,2,null],"c":{"d":"x","e":null}}
+NULL
+{"a":null,"b":[],"c":null}
+{"a":2,"b":null,"c":{"d":null,"e":[[]]}}
+
+query I
+SELECT to_json(x) FROM (VALUES (1, [[1, 2], [], NULL, [3]]), (2, []), (3, NULL), (4, [NULL]), (5, [[NULL, NULL]])) t(i, x) ORDER BY i
+----
+[[1,2],[],null,[3]]
+[]
+NULL
+[null]
+[[null,null]]
+
+query IIII
+SELECT to_json(map(['a', 'b'], [1, NULL])), to_json(map([1, 2], ['x', 'y'])), to_json(map([], [])::MAP(VARCHAR, INTEGER)), to_json(NULL::MAP(VARCHAR, INTEGER))
+----
+{"a":1,"b":null}	{"1":"x","2":"y"}	{}	NULL
+
+query I
+SELECT to_json(u)
+FROM (VALUES (1, union_value(a := 1)::UNION(a INTEGER, b VARCHAR)), (2, union_value(b := 'x')::UNION(a INTEGER, b VARCHAR)), (3, NULL), (4, union_value(a := NULL)::UNION(a INTEGER, b VARCHAR))) t(i, u)
+ORDER BY i
+----
+{"a":1}
+{"b":"x"}
+NULL
+{"a":null}
+
+query IIII
+SELECT to_json(array_value(1, 2, 3)), to_json(array_value({'a': 1}, NULL)), to_json(NULL::INTEGER[3]), to_json([array_value(1, 2), NULL, array_value(3, NULL)])
+----
+[1,2,3]	[{"a":1},null]	NULL	[[1,2],null,[3,null]]
+
+query I
+SELECT json_object(k, v) FROM (VALUES (1, 'a', 1), (2, 'b"', NULL), (3, repeat('k', 40), 3)) t(i, k, v) ORDER BY i
+----
+{"a":1}
+{"b\"":null}
+{"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk":3}
+
+query II
+SELECT count(DISTINCT j), any_value(j) FROM (SELECT to_json({'a': 1, 'b': 'constant', 'c': [1, 2]}) AS j FROM range(5000))
+----
+1	{"a":1,"b":"constant","c":[1,2]}
+
+# the texts of 100000 varied rows, as the JSON tree writer wrote them
+query I
+SELECT md5(string_agg(j, '|' ORDER BY i))
+FROM (
+    SELECT i, to_json({'id': i, 's': repeat('x', (i % 70)::INTEGER) || chr(((i % 31) + 1)::INTEGER), 'l': range(i % 5), 'd': (i::DOUBLE / 7)::DECIMAL(12,3), 'f': i::DOUBLE / 3, 'n': CASE WHEN i % 3 = 0 THEN NULL ELSE {'x': i % 2 = 0} END, 'm': map([i::VARCHAR], [i])}) AS j
+    FROM range(100000) r(i)
+)
+----
+b67800067ea37d5520d8e0cc62f184f7
+
+# a DECIMAL of up to 15 digits is written as the double it converts to
+query I
+SELECT to_json({'a': 17.00::DECIMAL(4,2), 'b': 0.10::DECIMAL(3,2), 'c': -0.5::DECIMAL(2,1), 'd': 0.00001::DECIMAL(15,6), 'e': 0.000000000000001::DECIMAL(15,15), 'f': 999999999999999::DECIMAL(15,0), 'g': 0::DECIMAL(15,7), 'h': 0.0001::DECIMAL(15,4), 'i': -0.00009::DECIMAL(15,5), 'j': 12345678901234567.89::DECIMAL(19,2), 'k': 1.5::DECIMAL(38,10), 'l': 99999999999999.9::DECIMAL(15,1), 'm': 1234.5678::DECIMAL(9,4), 'n': 12::DECIMAL(4,0)})
+----
+{"a":17.0,"b":0.1,"c":-0.5,"d":0.00001,"e":1e-15,"f":999999999999999.0,"g":0.0,"h":0.0001,"i":-0.00009,"j":12345678901234567.89,"k":1.5000000000,"l":99999999999999.9,"m":1234.5678,"n":12.0}
+
+query II
+SELECT count(*), count(*) FILTER (WHERE to_json(d) <> to_json(d::DOUBLE))
+FROM (SELECT (((i * 7919 + 13) % 2000000000000000 - 1000000000000000)::DOUBLE / 100)::DECIMAL(15,2) AS d FROM range(100000) r(i))
+----
+100000	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE to_json(d) <> to_json(d::DOUBLE))
+FROM (SELECT (((i * 7919 + 13) % 2000000000000000 - 1000000000000000)::DOUBLE / 1e15)::DECIMAL(15,15) AS d FROM range(100000) r(i))
+----
+100000	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE to_json(d) <> to_json(d::DOUBLE))
+FROM (SELECT (((i * 7919 + 13) % 2000000000 - 1000000000)::DOUBLE / 1e9)::DECIMAL(9,9) AS d FROM range(100000) r(i))
+----
+100000	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE to_json(d) <> to_json(d::DOUBLE))
+FROM (SELECT (((i * 7919 + 13) % 19999 - 9999)::DOUBLE / 10)::DECIMAL(4,1) AS d FROM range(30000) r(i))
+----
+30000	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE to_json(d) <> to_json(d::DOUBLE))
+FROM (SELECT ((i * 7919 + 13) % 2000000000000000 - 1000000000000000)::DOUBLE::DECIMAL(15,0) AS d FROM range(100000) r(i))
+----
+100000	0
+
+# the dates and timestamps inside tuples follow COPY's formats, as they do inside structs and lists
+statement ok
+COPY (
+    SELECT i, row(DATE '2024-01-02', TIMESTAMP '2024-01-02 03:04:05') AS t, [row(DATE '2024-01-03')] AS l, DATE '2024-01-04' AS d
+    FROM range(2) r(i)
+) TO '{TEMP_DIR}/tuple_formats.json' (FORMAT json, DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%H:%M');
+
+query I
+SELECT unnest(string_split(trim(content, chr(10)), chr(10))) AS line FROM read_text('{TEMP_DIR}/tuple_formats.json') ORDER BY line
+----
+{"i":0,"t":["02/01/2024","03:04"],"l":[["03/01/2024"]],"d":"04/01/2024"}
+{"i":1,"t":["02/01/2024","03:04"],"l":[["03/01/2024"]],"d":"04/01/2024"}

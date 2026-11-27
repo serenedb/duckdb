@@ -1566,23 +1566,52 @@ void JSONStringWriter::BeforeValue() {
 	}
 }
 
-void JSONStringWriter::PutUnsignedInteger(uint64_t value) {
-	auto out = Reserve(20);
-	used += NumericCast<idx_t>(std::to_chars(out, out + 20, value).ptr - out);
+char *JSONStringWriter::WriteSignedInteger(char *out, int64_t value) {
+	return std::to_chars(out, out + 21, value).ptr;
 }
 
-void JSONStringWriter::PutSignedInteger(int64_t value) {
-	auto out = Reserve(21);
-	used += NumericCast<idx_t>(std::to_chars(out, out + 21, value).ptr - out);
+char *JSONStringWriter::WriteUnsignedInteger(char *out, uint64_t value) {
+	return std::to_chars(out, out + 20, value).ptr;
 }
 
-void JSONStringWriter::PutDouble(double value) {
-	auto out = Reserve(MAX_DOUBLE_LENGTH);
+char *JSONStringWriter::WriteCheckedDouble(char *out, double value, JSONWriteFlags flags) {
 	auto end = WriteDouble(out, value, flags);
 	if (!end) {
 		throw SerializationException("Failed to write JSON: NaN and Infinity are not allowed");
 	}
-	used += NumericCast<idx_t>(end - out);
+	return end;
+}
+
+char *JSONStringWriter::WriteCheckedString(char *out, std::string_view value, JSONWriteFlags flags) {
+	auto end = WriteString(out, value, flags);
+	if (!end) {
+		throw SerializationException("Failed to write JSON: a string is not valid UTF-8");
+	}
+	return end;
+}
+
+char *JSONStringWriter::WriteCheckedKey(char *out, std::string_view key, JSONWriteFlags flags) {
+	auto end = WriteString(out, key, flags);
+	if (!end) {
+		throw SerializationException("Failed to write JSON: a key is not valid UTF-8");
+	}
+	*end++ = ':';
+	return end;
+}
+
+void JSONStringWriter::PutUnsignedInteger(uint64_t value) {
+	auto out = Reserve(20);
+	used += NumericCast<idx_t>(WriteUnsignedInteger(out, value) - out);
+}
+
+void JSONStringWriter::PutSignedInteger(int64_t value) {
+	auto out = Reserve(21);
+	used += NumericCast<idx_t>(WriteSignedInteger(out, value) - out);
+}
+
+void JSONStringWriter::PutDouble(double value) {
+	auto out = Reserve(MAX_DOUBLE_LENGTH);
+	used += NumericCast<idx_t>(WriteCheckedDouble(out, value, flags) - out);
 }
 
 void JSONStringWriter::PutString(std::string_view value, bool verbatim) {
@@ -1591,11 +1620,7 @@ void JSONStringWriter::PutString(std::string_view value, bool verbatim) {
 		return;
 	}
 	auto out = Reserve(MaxStringLength(value.size()));
-	auto end = WriteString(out, value, flags);
-	if (!end) {
-		throw SerializationException("Failed to write JSON: a string is not valid UTF-8");
-	}
-	used += NumericCast<idx_t>(end - out);
+	used += NumericCast<idx_t>(WriteCheckedString(out, value, flags) - out);
 }
 
 void JSONStringWriter::PutKey(std::string_view key, bool verbatim) {
@@ -1603,13 +1628,10 @@ void JSONStringWriter::PutKey(std::string_view key, bool verbatim) {
 	char *end;
 	if (verbatim) {
 		end = WriteQuoted(out, key);
+		*end++ = ':';
 	} else {
-		end = WriteString(out, key, flags);
-		if (!end) {
-			throw SerializationException("Failed to write JSON: a key is not valid UTF-8");
-		}
+		end = WriteCheckedKey(out, key, flags);
 	}
-	*end++ = ':';
 	if (pretty) {
 		*end++ = ' ';
 	}

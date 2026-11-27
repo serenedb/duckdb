@@ -35,6 +35,11 @@ SELECT to_json(['POINT(1 2)'::GEOMETRY, NULL::GEOMETRY]);
 [{"type":"Point","coordinates":[1.0,2.0]},null]
 
 query I
+SELECT to_json(row(1, 'POINT(3 4)'::GEOMETRY));
+----
+[1,{"type":"Point","coordinates":[3.0,4.0]}]
+
+query I
 SELECT json_object('g', 'LINESTRING(0 0, 1 1)'::GEOMETRY);
 ----
 {"g":{"type":"LineString","coordinates":[[0.0,0.0],[1.0,1.0]]}}

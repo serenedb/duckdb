@@ -283,6 +283,11 @@ public:
 	//! Writes a string, quoted and escaped, at out, returning its end; nullptr when it is not UTF-8 unless the flags
 	//! allow it
 	static char *WriteString(char *out, std::string_view value, JSONWriteFlags flags);
+	static char *WriteSignedInteger(char *out, int64_t value);
+	static char *WriteUnsignedInteger(char *out, uint64_t value);
+	static char *WriteCheckedDouble(char *out, double value, JSONWriteFlags flags);
+	static char *WriteCheckedString(char *out, std::string_view value, JSONWriteFlags flags);
+	static char *WriteCheckedKey(char *out, std::string_view key, JSONWriteFlags flags);
 
 private:
 	struct NodeFrame {
