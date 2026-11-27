@@ -17,11 +17,6 @@
 #include "writer/templated_column_writer.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
-#include "brotli/encode.h"
-#include "lz4.h"
-#include "miniz_wrapper.hpp"
-#include "snappy.h"
-#include "zstd.h"
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/hugeint.hpp"
 #include "duckdb/common/limits.hpp"
@@ -33,6 +28,7 @@
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/validity_mask.hpp"
 #include "duckdb/common/uhugeint.hpp"
+#include "parquet_codecs.hpp"
 #include "parquet_field_id.hpp"
 #include "parquet_shredding.hpp"
 #include "parquet_timestamp.hpp"
@@ -169,58 +165,21 @@ ColumnWriterState::~ColumnWriterState() {
 
 void ColumnWriter::CompressPage(MemoryStream &temp_writer, size_t &compressed_size, data_ptr_t &compressed_data,
                                 AllocatedData &compressed_buf) {
-	switch (writer.GetCodec()) {
-	case CompressionCodec::UNCOMPRESSED:
+	const auto codec = writer.GetCodec();
+	BlockCodec block_codec;
+	if (codec == CompressionCodec::UNCOMPRESSED) {
 		compressed_size = temp_writer.GetPosition();
 		compressed_data = temp_writer.GetData();
-		break;
-
-	case CompressionCodec::SNAPPY: {
-		compressed_size = duckdb_snappy::MaxCompressedLength(temp_writer.GetPosition());
-		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(compressed_size);
-		duckdb_snappy::RawCompress(const_char_ptr_cast(temp_writer.GetData()), temp_writer.GetPosition(),
-		                           char_ptr_cast(compressed_buf.get()), &compressed_size);
+	} else if (TryGetParquetBlockCodec(codec, block_codec)) {
+		BlockCompressor compressor(block_codec, codec == CompressionCodec::ZSTD
+		                                            ? NumericCast<int>(writer.CompressionLevel())
+		                                            : BlockCompressor::DEFAULT_LEVEL);
+		const auto bound = compressor.MaxCompressedSize(temp_writer.GetPosition());
+		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(bound);
+		compressed_size =
+		    compressor.Compress(temp_writer.GetData(), temp_writer.GetPosition(), compressed_buf.get(), bound);
 		compressed_data = compressed_buf.get();
-		D_ASSERT(compressed_size <= duckdb_snappy::MaxCompressedLength(temp_writer.GetPosition()));
-		break;
-	}
-	case CompressionCodec::LZ4_RAW: {
-		compressed_size = duckdb_lz4::LZ4_compressBound(UnsafeNumericCast<int32_t>(temp_writer.GetPosition()));
-		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(compressed_size);
-		compressed_size = duckdb_lz4::LZ4_compress_default(
-		    const_char_ptr_cast(temp_writer.GetData()), char_ptr_cast(compressed_buf.get()),
-		    UnsafeNumericCast<int32_t>(temp_writer.GetPosition()), UnsafeNumericCast<int32_t>(compressed_size));
-		compressed_data = compressed_buf.get();
-		break;
-	}
-	case CompressionCodec::GZIP: {
-		MiniZStream s;
-		compressed_size = s.MaxCompressedLength(temp_writer.GetPosition());
-		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(compressed_size);
-		s.Compress(const_char_ptr_cast(temp_writer.GetData()), temp_writer.GetPosition(),
-		           char_ptr_cast(compressed_buf.get()), &compressed_size);
-		compressed_data = compressed_buf.get();
-		break;
-	}
-	case CompressionCodec::ZSTD: {
-		compressed_size = duckdb_zstd::ZSTD_compressBound(temp_writer.GetPosition());
-		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(compressed_size);
-		compressed_size = duckdb_zstd::ZSTD_compress((void *)compressed_buf.get(), compressed_size,
-		                                             (const void *)temp_writer.GetData(), temp_writer.GetPosition(),
-		                                             UnsafeNumericCast<int32_t>(writer.CompressionLevel()));
-		compressed_data = compressed_buf.get();
-		break;
-	}
-	case CompressionCodec::BROTLI: {
-		compressed_size = duckdb_brotli::BrotliEncoderMaxCompressedSize(temp_writer.GetPosition());
-		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(compressed_size);
-		duckdb_brotli::BrotliEncoderCompress(BROTLI_DEFAULT_QUALITY, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE,
-		                                     temp_writer.GetPosition(), temp_writer.GetData(), &compressed_size,
-		                                     compressed_buf.get());
-		compressed_data = compressed_buf.get();
-		break;
-	}
-	default:
+	} else {
 		throw InternalException("Unsupported codec for Parquet Writer");
 	}
 

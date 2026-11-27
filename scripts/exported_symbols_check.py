@@ -12,7 +12,6 @@ WHITELIST = [
     'std::',
     'N6duckdb',
     'duckdb::',
-    'duckdb_miniz::',
     'duckdb_fmt::',
     'duckdb_hll::',
     'duckdb_moodycamel::',

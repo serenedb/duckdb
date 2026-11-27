@@ -12,19 +12,15 @@
 #include "parquet_statistics.hpp"
 
 #include "reader/boolean_column_reader.hpp"
-#include "brotli/decode.h"
 #include "reader/callback_column_reader.hpp"
 #include "reader/interval_column_reader.hpp"
-#include "lz4.h"
 #include "reader/null_column_reader.hpp"
 #include "parquet_reader.hpp"
 #include "parquet_timestamp.hpp"
 #include "parquet_float16.hpp"
-#include "snappy.h"
 #include "reader/string_column_reader.hpp"
 #include "reader/templated_column_reader.hpp"
 #include "reader/uuid_column_reader.hpp"
-#include "zstd.h"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
@@ -32,7 +28,7 @@
 #include "parquet_crypto.hpp"
 #include "decode_utils.hpp"
 #include "duckdb/common/enums/vector_type.hpp"
-#include "duckdb/formats/block_codecs.hpp"
+#include "parquet_codecs.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -574,80 +570,25 @@ void ColumnReader::PreparePage(PageHeader &page_hdr) {
 
 void ColumnReader::DecompressInternal(CompressionCodec::type codec, const_data_ptr_t src, idx_t src_size,
                                       data_ptr_t dst, idx_t dst_size) {
-	switch (codec) {
-	case CompressionCodec::UNCOMPRESSED:
+	if (codec == CompressionCodec::UNCOMPRESSED) {
 		throw InternalException("Parquet data unexpectedly uncompressed");
-	case CompressionCodec::GZIP: {
-		BlockDecompressor decompressor;
-		string error;
-		if (!decompressor.TryDecompress(BlockCodec::GZIP, src, src_size, dst, dst_size, error)) {
-			throw InvalidInputException("Failed to read file \"%s\": GZIP decompression failure: %s",
-			                            Reader().GetFileName(), error);
-		}
-		break;
 	}
-	case CompressionCodec::LZ4_RAW: {
-		auto res =
-		    duckdb_lz4::LZ4_decompress_safe(const_char_ptr_cast(src), char_ptr_cast(dst),
-		                                    UnsafeNumericCast<int32_t>(src_size), UnsafeNumericCast<int32_t>(dst_size));
-		if (res != NumericCast<int>(dst_size)) {
-			throw InvalidInputException("Failed to read file \"%s\": LZ4 decompression failure",
-			                            Reader().GetFileName());
-		}
-		break;
-	}
-	case CompressionCodec::SNAPPY: {
-		{
-			size_t uncompressed_size = 0;
-			auto res = duckdb_snappy::GetUncompressedLength(const_char_ptr_cast(src), src_size, &uncompressed_size);
-			if (!res) {
-				throw InvalidInputException("Failed to read file \"%s\": Snappy decompression failure",
-				                            Reader().GetFileName());
-			}
-			if (uncompressed_size != dst_size) {
-				throw InvalidInputException(
-				    "Failed to read file \"%s\": Snappy decompression failure: Uncompressed data size mismatch",
-				    Reader().GetFileName());
-			}
-		}
-		auto res = duckdb_snappy::RawUncompress(const_char_ptr_cast(src), src_size, char_ptr_cast(dst));
-		if (!res) {
-			throw InvalidInputException("Failed to read file \"%s\": Snappy decompression failure",
-			                            Reader().GetFileName());
-		}
-		break;
-	}
-	case CompressionCodec::ZSTD: {
-		auto res = duckdb_zstd::ZSTD_decompress(dst, dst_size, src, src_size);
-		if (duckdb_zstd::ZSTD_isError(res) || res != dst_size) {
-			throw InvalidInputException("Failed to read file \"%s\": ZSTD Decompression failure",
-			                            Reader().GetFileName());
-		}
-		break;
-	}
-	case CompressionCodec::BROTLI: {
-		auto state = duckdb_brotli::BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
-		size_t total_out = 0;
-		auto src_size_size_t = NumericCast<size_t>(src_size);
-		auto dst_size_size_t = NumericCast<size_t>(dst_size);
-
-		auto res = duckdb_brotli::BrotliDecoderDecompressStream(state, &src_size_size_t, &src, &dst_size_size_t, &dst,
-		                                                        &total_out);
-		if (res != duckdb_brotli::BROTLI_DECODER_RESULT_SUCCESS) {
-			throw InvalidInputException("Failed to read file \"%s\": Brotli Decompression failure",
-			                            Reader().GetFileName());
-		}
-		duckdb_brotli::BrotliDecoderDestroyInstance(state);
-		break;
-	}
-
-	default: { // LCOV_EXCL_START
-		duckdb::stringstream codec_name;
-		codec_name << codec;
+	auto codec_name = [codec]() {
+		duckdb::stringstream name;
+		name << codec;
+		return name.str();
+	};
+	BlockCodec block_codec;
+	if (!TryGetParquetBlockCodec(codec, block_codec)) { // LCOV_EXCL_START
 		throw InvalidInputException("Failed to read file \"%s\": Unsupported compression codec \"%s\". Supported "
 		                            "options are uncompressed, brotli, gzip, lz4_raw, snappy or zstd",
-		                            Reader().GetFileName(), codec_name.str());
+		                            Reader().GetFileName(), codec_name());
 	} // LCOV_EXCL_STOP
+	BlockDecompressor decompressor;
+	string error;
+	if (!decompressor.TryDecompress(block_codec, src, src_size, dst, dst_size, error)) {
+		throw InvalidInputException("Failed to read file \"%s\": %s decompression failure: %s", Reader().GetFileName(),
+		                            codec_name(), error);
 	}
 }
 

@@ -16,8 +16,6 @@
 
 #include "fsst.h"
 
-#include "miniz_wrapper.hpp"
-
 namespace duckdb {
 struct FSSTScanState;
 

@@ -10,6 +10,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/formats/block_codecs.hpp"
 #include "duckdb/common/shared_ptr_ipp.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -107,13 +108,7 @@ void CheckZstd(size_t result) {
 
 class ZstdPieceCompressor : public PieceCompressor {
 public:
-	ZstdPieceCompressor() : context(duckdb_zstd::ZSTD_createCCtx()) {
-		if (!context) {
-			throw InternalException("Failed to create a ZSTD compression context");
-		}
-	}
-	~ZstdPieceCompressor() override {
-		duckdb_zstd::ZSTD_freeCCtx(context);
+	ZstdPieceCompressor() : compressor(BlockCodec::ZSTD) {
 	}
 
 	void Compress(std::span<const std::span<const data_t>> inputs, bool last, CompressedPiece &piece) override {
@@ -122,43 +117,14 @@ public:
 			total += input.size();
 		}
 		piece.size = 0;
-		piece.Reserve(duckdb_zstd::ZSTD_compressBound(total));
+		piece.Reserve(compressor.MaxCompressedSize(total));
+		piece.size = compressor.Compress(inputs, true, piece.data.get(), piece.capacity);
 		piece.input_size = total;
 		piece.last = last;
-		if (inputs.size() == 1) {
-			const auto written = duckdb_zstd::ZSTD_compress2(context, piece.data.get(), piece.capacity,
-			                                                 inputs[0].data(), inputs[0].size());
-			CheckZstd(written);
-			piece.size = written;
-			return;
-		}
-		CheckZstd(duckdb_zstd::ZSTD_CCtx_reset(context, duckdb_zstd::ZSTD_reset_session_only));
-		CheckZstd(duckdb_zstd::ZSTD_CCtx_setPledgedSrcSize(context, total));
-		for (idx_t i = 0; i < inputs.size(); i++) {
-			Stream(inputs[i], i + 1 == inputs.size() ? duckdb_zstd::ZSTD_e_end : duckdb_zstd::ZSTD_e_continue, piece);
-		}
-		if (inputs.empty()) {
-			Stream({}, duckdb_zstd::ZSTD_e_end, piece);
-		}
 	}
 
 private:
-	void Stream(std::span<const data_t> input, duckdb_zstd::ZSTD_EndDirective mode, CompressedPiece &piece) {
-		duckdb_zstd::ZSTD_inBuffer in_buffer {input.data(), input.size(), 0};
-		while (true) {
-			duckdb_zstd::ZSTD_outBuffer out_buffer {piece.data.get() + piece.size, piece.capacity - piece.size, 0};
-			const auto remaining = duckdb_zstd::ZSTD_compressStream2(context, &out_buffer, &in_buffer, mode);
-			CheckZstd(remaining);
-			piece.size += out_buffer.pos;
-			const auto done = mode == duckdb_zstd::ZSTD_e_end ? remaining == 0 : in_buffer.pos == in_buffer.size;
-			if (done) {
-				return;
-			}
-			piece.Reserve(MaxValue<idx_t>(remaining, duckdb_zstd::ZSTD_CStreamOutSize()));
-		}
-	}
-
-	duckdb_zstd::ZSTD_CCtx *context;
+	BlockCompressor compressor;
 };
 
 class ZstdPiecedFile : public PiecedFile {
@@ -171,25 +137,28 @@ public:
 class ZstdPieceDecompressor : public PieceDecompressor {
 public:
 	ZstdPieceDecompressor()
-	    : context(duckdb_zstd::ZSTD_createDCtx()),
-	      scratch(make_unsafe_uniq_array_uninitialized<data_t>(duckdb_zstd::ZSTD_DStreamOutSize())) {
-		if (!context) {
-			throw InternalException("Failed to create a ZSTD decompression context");
-		}
+	    : scratch(make_unsafe_uniq_array_uninitialized<data_t>(duckdb_zstd::ZSTD_DStreamOutSize())) {
 	}
 	~ZstdPieceDecompressor() override {
-		duckdb_zstd::ZSTD_freeDCtx(context);
+		if (context) {
+			duckdb_zstd::ZSTD_freeDCtx(context);
+		}
 	}
 
 	void DecompressAll(const_data_ptr_t piece, const PieceSpan &span, data_ptr_t out) override {
-		const auto written = duckdb_zstd::ZSTD_decompressDCtx(context, out, span.output_size, piece, span.size);
-		CheckZstd(written);
-		if (written != span.output_size) {
-			throw IOException("A ZSTD frame decompressed to %d bytes instead of its %d", written, span.output_size);
+		string error;
+		if (!decompressor.TryDecompress(BlockCodec::ZSTD, piece, span.size, out, span.output_size, error)) {
+			throw IOException("Failed to decode a ZSTD frame: %s", error);
 		}
 	}
 
 	void Begin(const_data_ptr_t piece, const PieceSpan &span) override {
+		if (!context) {
+			context = duckdb_zstd::ZSTD_createDCtx();
+			if (!context) {
+				throw OutOfMemoryException("Failed to create a ZSTD decompression context");
+			}
+		}
 		CheckZstd(duckdb_zstd::ZSTD_DCtx_reset(context, duckdb_zstd::ZSTD_reset_session_only));
 		input = {piece, span.size, 0};
 	}
@@ -214,9 +183,10 @@ public:
 	}
 
 private:
-	duckdb_zstd::ZSTD_DCtx *context;
+	duckdb_zstd::ZSTD_DCtx *context = nullptr;
 	unsafe_unique_array<data_t> scratch;
 	duckdb_zstd::ZSTD_inBuffer input {nullptr, 0, 0};
+	BlockDecompressor decompressor;
 };
 
 constexpr uint32_t ZSTD_SKIPPABLE_MAGIC = 0x184D2A50;

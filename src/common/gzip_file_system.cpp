@@ -4,7 +4,8 @@
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/formats/block_codecs.hpp"
 
-#include "miniz_wrapper.hpp"
+#define ZLIB_CONST
+#include <zlib.h>
 
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -120,21 +121,10 @@ void MiniZStreamWrapper::Close() {
 
 class GZipPieceCompressor : public PieceCompressor {
 public:
-	GZipPieceCompressor() {
-		memset(&stream, 0, sizeof(stream));
-		if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, MEMORY_LEVEL, Z_DEFAULT_STRATEGY) !=
-		    Z_OK) {
-			throw InternalException("Failed to initialize the GZIP compressor");
-		}
-	}
-	~GZipPieceCompressor() override {
-		deflateEnd(&stream);
+	GZipPieceCompressor() : compressor(BlockCodec::DEFLATE) {
 	}
 
 	void Compress(std::span<const std::span<const data_t>> inputs, bool last, CompressedPiece &piece) override {
-		if (deflateReset(&stream) != Z_OK) {
-			throw InternalException("Failed to reset the GZIP compressor");
-		}
 		idx_t total = 0;
 		auto crc = crc32_z(0, nullptr, 0);
 		for (auto &input : inputs) {
@@ -142,53 +132,15 @@ public:
 			crc = crc32_z(crc, input.data(), input.size());
 		}
 		piece.size = 0;
-		piece.Reserve(deflateBound(&stream, total) + FLUSH_BYTES);
-		const auto flush = last ? Z_FINISH : Z_SYNC_FLUSH;
-		for (idx_t i = 0; i < inputs.size(); i++) {
-			Deflate(inputs[i], i + 1 == inputs.size() ? flush : Z_NO_FLUSH, piece);
-		}
-		if (inputs.empty()) {
-			Deflate({}, flush, piece);
-		}
+		piece.Reserve(compressor.MaxCompressedSize(total));
+		piece.size = compressor.Compress(inputs, last, piece.data.get(), piece.capacity);
 		piece.input_size = total;
 		piece.input_crc = UnsafeNumericCast<uint32_t>(crc);
 		piece.last = last;
 	}
 
 private:
-	static constexpr int MEMORY_LEVEL = 8;
-	static constexpr idx_t FLUSH_BYTES = 16;
-
-	void Deflate(std::span<const data_t> input, int flush, CompressedPiece &piece) {
-		auto data = input.data();
-		auto remaining = input.size();
-		while (true) {
-			const auto step = MinValue<idx_t>(remaining, NumericLimits<uInt>::Maximum());
-			stream.next_in = data;
-			stream.avail_in = UnsafeNumericCast<uInt>(step);
-			const auto last = step == remaining;
-			do {
-				const auto room = MinValue<idx_t>(piece.capacity - piece.size, NumericLimits<uInt>::Maximum());
-				stream.next_out = piece.data.get() + piece.size;
-				stream.avail_out = UnsafeNumericCast<uInt>(room);
-				const auto result = deflate(&stream, last ? flush : Z_NO_FLUSH);
-				if (result != Z_OK && result != Z_BUF_ERROR && result != Z_STREAM_END) {
-					throw InternalException("Failed to compress GZIP block");
-				}
-				piece.size += room - stream.avail_out;
-				if (stream.avail_out == 0) {
-					piece.Reserve(MaxValue<idx_t>(stream.avail_in, FLUSH_BYTES));
-				}
-			} while (stream.avail_in > 0 || stream.avail_out == 0);
-			data += step;
-			remaining -= step;
-			if (last) {
-				return;
-			}
-		}
-	}
-
-	z_stream stream;
+	BlockCompressor compressor;
 };
 
 class GZipPiecedFile : public PiecedFile {
@@ -197,8 +149,8 @@ public:
 		return make_uniq<GZipPieceCompressor>();
 	}
 	string Head() const override {
-		unsigned char header[GZIP_HEADER_MINSIZE];
-		MiniZStream::InitializeGZIPHeader(header);
+		const unsigned char header[GZIP_HEADER_MINSIZE] = {0x1F, 0x8B, GZIP_COMPRESSION_DEFLATE, 0, 0, 0, 0, 0,
+		                                                   0,    0xFF};
 		return string(const_char_ptr_cast(header), GZIP_HEADER_MINSIZE);
 	}
 	void Append(const CompressedPiece &piece) override {
@@ -208,7 +160,10 @@ public:
 	}
 	string Tail() const override {
 		unsigned char footer[GZIP_FOOTER_SIZE];
-		MiniZStream::InitializeGZIPFooter(footer, crc, size);
+		for (idx_t i = 0; i < sizeof(uint32_t); i++) {
+			footer[i] = static_cast<unsigned char>(crc >> (8 * i));
+			footer[sizeof(uint32_t) + i] = static_cast<unsigned char>(size >> (8 * i));
+		}
 		string tail = ended ? string() : string(const_char_ptr_cast(FINAL_BLOCK), sizeof(FINAL_BLOCK));
 		return tail + string(const_char_ptr_cast(footer), GZIP_FOOTER_SIZE);
 	}

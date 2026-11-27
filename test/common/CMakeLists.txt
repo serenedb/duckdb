@@ -6,6 +6,7 @@ add_library_unity(
   test_buffer_manager_pins.cpp
   test_managed_async_task_queue.cpp
   test_bit_utils.cpp
+  test_block_codecs.cpp
   test_memory_file_system.cpp
   test_memory_stream.cpp
   test_cast.cpp
