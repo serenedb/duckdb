@@ -1072,9 +1072,6 @@ static bool ColumnArrowToDuckDBFlat(Vector &vector, ArrowArray &array, idx_t chu
 					continue;
 				}
 				auto bptr = cdata + (offset + rows[row_idx]) * blob_len;
-				if (utf8) {
-					VerifyUtf8(bptr, blob_len);
-				}
 				result[row_idx] = string_t(bptr, UnsafeNumericCast<uint32_t>(blob_len));
 			}
 		}
