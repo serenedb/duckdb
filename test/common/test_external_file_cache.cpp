@@ -2286,6 +2286,48 @@ TEST_CASE("A read-ahead window asks ahead of where its reader lands past what wa
 	REQUIRE(mapped->Warm(4 * PAGE, PAGE) == 0);
 }
 
+TEST_CASE("A read-ahead window the bytes in flight leave out asks nothing more until its reader asks for blocks again",
+          "[external_file_cache]") {
+	constexpr idx_t in_flight = BlockCountOf(ExternalFileCache::MAX_FILE_IN_FLIGHT);
+	constexpr idx_t first = in_flight + 8;
+	constexpr idx_t PAGE = PageResidency::PAGE_SIZE;
+	DuckDB db(nullptr);
+	CountingSourceFileSystem fs;
+	ExternalFileCache cache(*db.instance);
+	TestFile file("read_ahead_window_rewind.bin", (first + 8) * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	fs.Hold(true);
+	cache.Prefetch(*cached, 0, in_flight * BLOCK);
+	InputFileReader reader(*cached);
+	reader.Seek(first * BLOCK);
+	reader.ReadAheadUntil((first + 8) * BLOCK, ReadAheadSteps::SKIPPING);
+	for (idx_t at = first * BLOCK + PAGE / 4; at <= first * BLOCK + PAGE; at += PAGE / 4) {
+		reader.Seek(at);
+		reader.Advance();
+	}
+	const bool window_dropped = !cache.IsCached(*cached, first * BLOCK, BLOCK);
+	fs.Hold(false);
+	for (idx_t block = 0; block < in_flight; block++) {
+		REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
+	}
+	REQUIRE(window_dropped);
+
+	for (idx_t at = first * BLOCK + PAGE + PAGE / 4; at <= first * BLOCK + 4 * PAGE; at += PAGE / 4) {
+		reader.Seek(at);
+		reader.Advance();
+	}
+	REQUIRE_FALSE(cache.IsCached(*cached, (first + 2) * BLOCK, BLOCK));
+
+	reader.Seek(first * BLOCK);
+	bool read_back = true;
+	for (idx_t offset = first * BLOCK; offset < (first + 1) * BLOCK + 8; offset += sizeof(uint64_t)) {
+		read_back = read_back && reader.Read<uint64_t>() == ExpectedValue<uint64_t>(offset);
+	}
+	REQUIRE(read_back);
+	REQUIRE(cache.IsCached(*cached, (first + 2) * BLOCK, 2 * BLOCK));
+}
+
 TEST_CASE("A read-ahead window asks nothing where its reader says it landed, and asks once the reader read a page on",
           "[external_file_cache]") {
 	constexpr idx_t SIZE = 64 * BLOCK;
