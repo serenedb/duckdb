@@ -1,3 +1,4 @@
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/cast_helpers.hpp"
 #include "duckdb/common/vector/array_vector.hpp"
@@ -435,12 +436,7 @@ static constexpr idx_t JSON_TEXT_SLACK = 32;
 static constexpr char JSON_COMMA[JSON_TEXT_SLACK + 1] = ",";
 
 static inline char *CopyText(char *out, const char *text, idx_t size) {
-	if (size <= JSON_TEXT_SLACK) {
-		memcpy(out, text, 16);
-		memcpy(out + 16, text + 16, 16);
-	} else {
-		memcpy(out, text, size);
-	}
+	CopyPaddedWithSlack<JSON_TEXT_SLACK>(out, text, size);
 	return out + size;
 }
 
@@ -788,7 +784,8 @@ static JSONTexts EncodeDecimalValues(JSONEncodeContext &ctx, Vector &value_v, id
 }
 
 static std::string_view EncodeKey(JSONEncodeContext &ctx, const string &name, bool first) {
-	const auto key = char_ptr_cast(ctx.arena.Allocate(JSONStringWriter::MaxStringLength(name.size()) + 2));
+	const auto key =
+	    char_ptr_cast(ctx.arena.Allocate(JSONStringWriter::MaxStringLength(name.size()) + 2 + JSON_TEXT_SLACK));
 	auto out = key;
 	if (!first) {
 		*out++ = ',';
