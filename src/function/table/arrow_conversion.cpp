@@ -11,10 +11,15 @@
 #include "duckdb/common/operator/multiply.hpp"
 #include "duckdb/common/types/arrow_aux_data.hpp"
 #include "duckdb/common/types/arrow_string_view_type.hpp"
+#include "duckdb/common/types/blob.hpp"
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 
 #include "duckdb/common/bswap.hpp"
+
+#include "simdutf.h"
+
+#include <algorithm>
 
 namespace duckdb {
 
@@ -419,8 +424,41 @@ static void ArrowToDuckDBMapVerify(const Vector &vector, idx_t count) {
 	}
 }
 
+static void VerifyUtf8(const char *data, idx_t size) {
+	if (!simdutf::validate_utf8(data, size)) {
+		throw InvalidInputException("Invalid string encoding found in Arrow data: value \"%s\" is not valid UTF8!",
+		                            Blob::ToString(string_t(data, UnsafeNumericCast<uint32_t>(size))));
+	}
+}
+
+template <class T>
+static bool IsUtf8Run(const char *cdata, const T *offsets, idx_t size) {
+	const T begin = offsets[0];
+	const T end = offsets[size];
+	if (end < begin) {
+		return false;
+	}
+	const auto ascii = simdutf::validate_ascii_with_errors(cdata + begin, end - begin);
+	if (ascii.error == simdutf::error_code::SUCCESS) {
+		return true;
+	}
+	const T first = begin + UnsafeNumericCast<T>(ascii.count);
+	if (!simdutf::validate_utf8(cdata + first, end - first)) {
+		return false;
+	}
+	for (auto offset = std::upper_bound(offsets + 1, offsets + size, first); offset < offsets + size; offset++) {
+		if (*offset < end && (static_cast<uint8_t>(cdata[*offset]) & 0xC0) == 0x80) {
+			return false;
+		}
+	}
+	return true;
+}
+
 template <class T, class ROWS>
-static void SetVectorString(Vector &vector, idx_t size, char *cdata, T *offsets, const ROWS &rows) {
+static void SetVectorString(Vector &vector, idx_t size, char *cdata, T *offsets, const ROWS &rows, bool utf8) {
+	if (utf8 && !ROWS::SELECTED && size > 0 && IsUtf8Run(cdata, offsets, size)) {
+		utf8 = false;
+	}
 	auto strings = FlatVector::GetDataMutable<string_t>(vector);
 	for (idx_t row_idx = 0; row_idx < size; row_idx++) {
 		if (FlatVector::IsNull(vector, row_idx)) {
@@ -432,12 +470,16 @@ static void SetVectorString(Vector &vector, idx_t size, char *cdata, T *offsets,
 		if (str_len > NumericLimits<uint32_t>::Maximum()) { // LCOV_EXCL_START
 			throw ConversionException("Strings over 4GB are not supported");
 		} // LCOV_EXCL_STOP
+		if (utf8) {
+			VerifyUtf8(cptr, str_len);
+		}
 		strings[row_idx] = string_t(cptr, UnsafeNumericCast<uint32_t>(str_len));
 	}
 }
 
 template <class ROWS>
-static void SetVectorStringView(Vector &vector, idx_t size, ArrowArray &array, idx_t current_pos, const ROWS &rows) {
+static void SetVectorStringView(Vector &vector, idx_t size, ArrowArray &array, idx_t current_pos, const ROWS &rows,
+                                bool utf8) {
 	auto strings = FlatVector::Writer<string_t>(vector, size);
 	auto arrow_string = ArrowBufferData<arrow_string_view_t>(array, 1) + current_pos;
 
@@ -448,12 +490,13 @@ static void SetVectorStringView(Vector &vector, idx_t size, ArrowArray &array, i
 		}
 		auto &source = arrow_string[rows[row_idx]];
 		auto length = UnsafeNumericCast<uint32_t>(source.Length());
+		const char *data;
 		if (source.IsInline()) {
 			//	This string is inlined
 			//  | Bytes 0-3  | Bytes 4-15                            |
 			//  |------------|---------------------------------------|
 			//  | length     | data (padded with 0)                  |
-			strings.WriteStringRef(string_t(source.GetInlineData(), length));
+			data = source.GetInlineData();
 		} else {
 			//  This string is not inlined, we have to check a different buffer and offsets
 			//  | Bytes 0-3  | Bytes 4-7  | Bytes 8-11 | Bytes 12-15 |
@@ -462,9 +505,12 @@ static void SetVectorStringView(Vector &vector, idx_t size, ArrowArray &array, i
 			auto buffer_index = UnsafeNumericCast<uint32_t>(source.GetBufferIndex());
 			int32_t offset = source.GetOffset();
 			D_ASSERT(array.n_buffers > 2 + buffer_index);
-			auto c_data = ArrowBufferData<char>(array, 2 + buffer_index);
-			strings.WriteStringRef(string_t(&c_data[offset], length));
+			data = ArrowBufferData<char>(array, 2 + buffer_index) + offset;
 		}
+		if (utf8) {
+			VerifyUtf8(data, length);
+		}
+		strings.WriteStringRef(string_t(data, length));
 	}
 }
 
@@ -989,25 +1035,27 @@ static bool ColumnArrowToDuckDBFlat(Vector &vector, ArrowArray &array, idx_t chu
 	case LogicalTypeId::VARCHAR: {
 		auto &string_info = arrow_type.GetTypeInfo<ArrowStringInfo>();
 		auto size_type = string_info.GetSizeType();
+		const auto utf8 = vector.GetType().id() == LogicalTypeId::VARCHAR;
 		switch (size_type) {
 		case ArrowVariableSizeType::SUPER_SIZE: {
 			auto cdata = ArrowBufferData<char>(array, 2);
 			auto offsets = ArrowBufferData<uint64_t>(array, 1) +
 			               GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			SetVectorString(vector, size, cdata, offsets, rows);
+			SetVectorString(vector, size, cdata, offsets, rows, utf8);
 			break;
 		}
 		case ArrowVariableSizeType::NORMAL: {
 			auto cdata = ArrowBufferData<char>(array, 2);
 			auto offsets = ArrowBufferData<uint32_t>(array, 1) +
 			               GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset);
-			SetVectorString(vector, size, cdata, offsets, rows);
+			SetVectorString(vector, size, cdata, offsets, rows, utf8);
 			break;
 		}
 		case ArrowVariableSizeType::VIEW: {
 			SetVectorStringView(
 			    vector, size, array,
-			    GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset), rows);
+			    GetEffectiveOffset(array, NumericCast<int64_t>(parent_offset), chunk_offset, nested_offset), rows,
+			    utf8);
 			break;
 		}
 		case ArrowVariableSizeType::FIXED_SIZE: {
@@ -1024,6 +1072,9 @@ static bool ColumnArrowToDuckDBFlat(Vector &vector, ArrowArray &array, idx_t chu
 					continue;
 				}
 				auto bptr = cdata + (offset + rows[row_idx]) * blob_len;
+				if (utf8) {
+					VerifyUtf8(bptr, blob_len);
+				}
 				result[row_idx] = string_t(bptr, UnsafeNumericCast<uint32_t>(blob_len));
 			}
 		}
