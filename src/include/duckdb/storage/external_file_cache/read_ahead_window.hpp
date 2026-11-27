@@ -36,6 +36,7 @@ public:
 		stop = stop_p;
 		run = 0;
 		skipped = 0;
+		first_window = first;
 		window = first;
 		asked = 0;
 	}
@@ -49,12 +50,20 @@ public:
 
 	//! The user of [reader] is at [at], where it reads next: counts what it read and what it skipped since its
 	//! step before, and asks the reader's file for the next window once the user is within half of it of the end of
-	//! what was asked, unless it skipped more than it read
+	//! what was asked, unless it skipped more than it read. A step of a page or more that lands past what was asked
+	//! starts over there and, in a mapped file, asks the first window from there at once: the user went to where it
+	//! reads next, as a reader of a list sent to the block it needs does, and reads on from there
 	template <class READER>
 	[[gnu::always_inline]] void Advance(const READER &reader, idx_t at) noexcept {
 		if (at > last) {
 			const auto gap = at - last;
-			(gap < PageResidency::PAGE_SIZE ? run : skipped) += gap;
+			if (gap < PageResidency::PAGE_SIZE) {
+				run += gap;
+			} else if (at >= end) [[unlikely]] {
+				Land(*reader.File().get(), at);
+			} else {
+				skipped += gap;
+			}
 		}
 		last = at;
 		if (at + window / 2 >= end && end < stop) [[unlikely]] {
@@ -90,6 +99,24 @@ public:
 	}
 
 private:
+	[[gnu::noinline]] void Land(const InputFile &file, idx_t at) noexcept {
+		end = at;
+		run = 0;
+		skipped = 0;
+		window = first_window;
+		asked = 0;
+		if (file.IsMapped()) {
+			Ask(file, Next(at, InputFile::MAX_HINT, 0));
+		}
+	}
+	void Ask(const InputFile &file, FileRange range) noexcept {
+		if (range.size == 0) {
+			return;
+		}
+		if (const auto asked = file.ReadAhead(range.offset, range.size, 0); asked < range.offset + range.size) {
+			Rewind(asked);
+		}
+	}
 	FileRange Next(idx_t at, idx_t max, idx_t least) noexcept {
 		const auto from = MaxValue(at, end);
 		if (from >= stop) {
@@ -114,13 +141,7 @@ private:
 			}
 			max = ExternalFileCache::MAX_READ_AHEAD;
 		}
-		const auto range = Next(at, max, 0);
-		if (range.size == 0) {
-			return;
-		}
-		if (const auto asked = file.ReadAhead(range.offset, range.size, 0); asked < range.offset + range.size) {
-			Rewind(asked);
-		}
+		Ask(file, Next(at, max, 0));
 	}
 
 private:
@@ -135,6 +156,8 @@ private:
 	//! The bytes the next request asks for, and the bytes the last one asked for
 	idx_t window = 0;
 	idx_t asked = 0;
+	//! The bytes the window asks for first, and again after its reader lands past what was asked
+	idx_t first_window = 0;
 };
 
 } // namespace duckdb

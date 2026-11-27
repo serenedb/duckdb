@@ -2239,6 +2239,33 @@ TEST_CASE("A file system opens a local file mapped, and its readers read the map
 	REQUIRE_THROWS_AS(InputFileReader(*none).Read<uint8_t>(), DataCorruptionException);
 }
 
+TEST_CASE("A read-ahead window asks ahead of where its reader lands past what was asked", "[external_file_cache]") {
+	constexpr idx_t SIZE = 64 * BLOCK;
+	constexpr idx_t PAGE = PageResidency::PAGE_SIZE;
+	LocalFileSystem fs;
+	TestFile file("read_ahead_landing.bin", SIZE);
+	auto mapped = fs.OpenInputFile(file.path, MappedFileAccess::RANDOM);
+	REQUIRE(mapped->IsMapped());
+
+	// a reader armed where its list starts and sent to a block past what was asked asks a window from there at once
+	MemoryReader reader(*mapped);
+	reader.ReadAheadUntil(SIZE, ReadAheadSteps::SKIPPING);
+	reader.Seek(16 * BLOCK);
+	reader.Advance();
+	REQUIRE(mapped->Warm(16 * BLOCK, InputFile::HINT_CHUNK) == InputFile::HINT_CHUNK);
+
+	// a step inside what was asked asks nothing more until the reader read a page
+	reader.Seek(16 * BLOCK + 2 * PAGE);
+	reader.Advance();
+	REQUIRE(mapped->Warm(16 * BLOCK + InputFile::HINT_CHUNK, PAGE) == 0);
+
+	// a landing past what was asked asks a window from there again
+	reader.Seek(40 * BLOCK);
+	reader.Advance();
+	REQUIRE(mapped->Warm(40 * BLOCK, InputFile::HINT_CHUNK) == InputFile::HINT_CHUNK);
+	REQUIRE(mapped->Warm(40 * BLOCK + InputFile::HINT_CHUNK, PAGE) == 0);
+}
+
 TEST_CASE("A mapped file is read once a window at a time when the read is longer than the kernel is asked to hold",
           "[external_file_cache]") {
 	constexpr idx_t SIZE = 160ULL * 1024 * 1024;
