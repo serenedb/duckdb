@@ -72,14 +72,14 @@ unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, 
 	auto result = make_uniq<DuckDBTriggersData>();
 
 	auto database_filter = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().DatabaseFilter(context);
-	auto &role = RoleAccess::System();
-	auto schemas = Catalog::GetAllSchemas(context, role, false, [&](AttachedDatabase &database) {
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever, false, [&](AttachedDatabase &database) {
 		auto &catalog = database.GetCatalog();
 		return (catalog.IsDuckCatalog() || catalog.Compatibility() == SqlCompatibility::POSTGRES) &&
 		       (!database_filter || database_filter(database));
 	});
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
 				return;
 			}

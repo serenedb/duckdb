@@ -88,10 +88,10 @@ static unique_ptr<FunctionData> DuckDBTypesBind(ClientContext &context, TableFun
 unique_ptr<GlobalTableFunctionState> DuckDBTypesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTypesData>();
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto &role = RoleAccess::System();
-	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) {
 			result->entries.push_back(DuckDBTypesData::ListedType {schema, entry.Cast<TypeCatalogEntry>()});
 		});
 	};

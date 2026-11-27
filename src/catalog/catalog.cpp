@@ -1942,9 +1942,9 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 }
 
 vector<reference<SchemaCatalogEntry>>
-Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool include_hidden,
+Catalog::GetAllSchemas(const CatalogEntryRetriever &retriever, bool include_hidden,
                        const std::function<bool(AttachedDatabase &)> &needs_database) {
-	const CatalogEntryRetriever retriever(context, role);
+	auto &context = retriever.GetContext();
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &meta_transaction = MetaTransaction::Get(context);
@@ -2000,9 +2000,9 @@ Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool incl
 	return result;
 }
 
-void Catalog::ScanListedEntries(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
-                                CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
-	const CatalogEntryRetriever retriever(context, role);
+void Catalog::ScanListedEntries(const CatalogEntryRetriever &retriever, SchemaCatalogEntry &schema, CatalogType type,
+                                const std::function<void(CatalogEntry &)> &callback) {
+	auto &context = retriever.GetContext();
 	vector<reference<CatalogEntry>> entries;
 	try {
 		schema.Scan(context, type, [&](CatalogEntry &entry) { entries.push_back(entry); });
@@ -2030,12 +2030,12 @@ void Catalog::ScanListedEntries(ClientContext &context, const RoleAccess &role, 
 	}
 }
 
-vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, const RoleAccess &role,
+vector<reference<CatalogEntry>> Catalog::GetAllEntries(const CatalogEntryRetriever &retriever,
                                                        CatalogType catalog_type) {
 	vector<reference<CatalogEntry>> result;
-	auto schemas = GetAllSchemas(context, role);
+	auto schemas = GetAllSchemas(retriever);
 	for (const auto &schema_ref : schemas) {
-		ScanListedEntries(context, role, schema_ref.get(), catalog_type,
+		ScanListedEntries(retriever, schema_ref.get(), catalog_type,
 		                  [&](CatalogEntry &entry) { result.push_back(entry); });
 	}
 	return result;

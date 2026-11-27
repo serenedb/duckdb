@@ -26,11 +26,11 @@ static unique_ptr<FunctionData> PragmaCollateBind(ClientContext &context, TableF
 unique_ptr<GlobalTableFunctionState> PragmaCollateInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<PragmaCollateData>();
 
-	auto &role = RoleAccess::System();
-	auto schemas = Catalog::GetAllSchemas(context, role);
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever);
 	unordered_set<string> listed;
 	for (auto schema : schemas) {
-		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::COLLATION_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::COLLATION_ENTRY, [&](CatalogEntry &entry) {
 			auto &name = entry.name.GetIdentifierName();
 			if (listed.insert(name).second) {
 				result->entries.push_back(name);

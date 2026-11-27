@@ -54,7 +54,7 @@ public:
 		return CatalogEntryRetriever(context, system);
 	}
 	void Inherit(const CatalogEntryRetriever &parent);
-	ClientContext &GetContext() {
+	ClientContext &GetContext() const {
 		return context;
 	}
 

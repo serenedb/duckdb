@@ -73,10 +73,10 @@ unique_ptr<GlobalTableFunctionState> DuckDBViewsInit(ClientContext &context, Tab
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto &role = RoleAccess::System();
-	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::VIEW_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::VIEW_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type == CatalogType::VIEW_ENTRY) {
 				result->entries.push_back(DuckDBViewsData::ListedView {schema, entry.Cast<ViewCatalogEntry>()});
 			}

@@ -625,12 +625,12 @@ public:
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetSchemas(CatalogEntryRetriever &retriever,
 	                                                                   const string &catalog_name);
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>>
-	GetAllSchemas(ClientContext &context, const RoleAccess &role, bool include_hidden = false,
+	GetAllSchemas(const CatalogEntryRetriever &retriever, bool include_hidden = false,
 	              const std::function<bool(AttachedDatabase &)> &needs_database = nullptr);
-	DUCKDB_API static void ScanListedEntries(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
+	DUCKDB_API static void ScanListedEntries(const CatalogEntryRetriever &retriever, SchemaCatalogEntry &schema,
 	                                         CatalogType type, const std::function<void(CatalogEntry &)> &callback);
 
-	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, const RoleAccess &role,
+	static vector<reference<CatalogEntry>> GetAllEntries(const CatalogEntryRetriever &retriever,
 	                                                     CatalogType catalog_type);
 
 	virtual void Verify();

@@ -88,25 +88,26 @@ static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, cons
 	// scan all the schemas for tables and collect them and collect them
 	// for column names we avoid adding internal entries, because it pollutes the auto-complete too much
 	// for table names this is generally fine, however
-	auto schemas = Catalog::GetAllSchemas(context, role);
+	auto schemas = Catalog::GetAllSchemas(CatalogEntryRetriever(context, role));
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		Catalog::ScanListedEntries(context, role, schema, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (!entry.internal || for_table_names) {
-				result.push_back(entry);
-			}
-		});
+		Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::TABLE_ENTRY,
+		                           [&](CatalogEntry &entry) {
+			                           if (!entry.internal || for_table_names) {
+				                           result.push_back(entry);
+			                           }
+		                           });
 	};
 	if (for_table_names) {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			Catalog::ScanListedEntries(context, role, schema, CatalogType::TABLE_FUNCTION_ENTRY,
+			Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::TABLE_FUNCTION_ENTRY,
 			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	} else {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			Catalog::ScanListedEntries(context, role, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
+			Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::SCALAR_FUNCTION_ENTRY,
 			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	}
@@ -116,10 +117,10 @@ static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, cons
 static vector<reference<CatalogEntry>> GetAllTypes(ClientContext &context, const RoleAccess &role) {
 	vector<reference<CatalogEntry>> result;
 	// scan all the schemas for types and collect them
-	auto schemas = Catalog::GetAllSchemas(context, role);
+	auto schemas = Catalog::GetAllSchemas(CatalogEntryRetriever(context, role));
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		Catalog::ScanListedEntries(context, role, schema, CatalogType::TYPE_ENTRY,
+		Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::TYPE_ENTRY,
 		                           [&](CatalogEntry &entry) { result.push_back(entry); });
 	};
 	return result;
@@ -139,7 +140,7 @@ static vector<AutoCompleteCandidate> SuggestCatalogName(ClientContext &context, 
 
 static vector<AutoCompleteCandidate> SuggestSchemaName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_entries = Catalog::GetAllSchemas(context, role);
+	auto all_entries = Catalog::GetAllSchemas(CatalogEntryRetriever(context, role));
 	for (auto &entry_ref : all_entries) {
 		auto &entry = entry_ref.get();
 		AutoCompleteCandidate candidate(entry.name.GetIdentifierName(), SuggestionState::SUGGEST_SCHEMA_NAME, 0);
@@ -223,7 +224,7 @@ static bool KnownExtension(const string &fname) {
 
 static vector<AutoCompleteCandidate> SuggestPragmaName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_pragmas = Catalog::GetAllEntries(context, role, CatalogType::PRAGMA_FUNCTION_ENTRY);
+	auto all_pragmas = Catalog::GetAllEntries(CatalogEntryRetriever(context, role), CatalogType::PRAGMA_FUNCTION_ENTRY);
 	for (const auto &pragma : all_pragmas) {
 		AutoCompleteCandidate candidate(pragma.get().name.GetIdentifierName(), SuggestionState::SUGGEST_PRAGMA_NAME, 0);
 		suggestions.push_back(std::move(candidate));
@@ -253,7 +254,8 @@ static vector<AutoCompleteCandidate> SuggestSettingName(ClientContext &context) 
 
 static vector<AutoCompleteCandidate> SuggestScalarFunctionName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto scalar_functions = Catalog::GetAllEntries(context, role, CatalogType::SCALAR_FUNCTION_ENTRY);
+	auto scalar_functions =
+	    Catalog::GetAllEntries(CatalogEntryRetriever(context, role), CatalogType::SCALAR_FUNCTION_ENTRY);
 	for (const auto &scalar_function : scalar_functions) {
 		AutoCompleteCandidate candidate(scalar_function.get().name.GetIdentifierName(),
 		                                SuggestionState::SUGGEST_SCALAR_FUNCTION_NAME, 0);
@@ -265,7 +267,8 @@ static vector<AutoCompleteCandidate> SuggestScalarFunctionName(ClientContext &co
 
 static vector<AutoCompleteCandidate> SuggestTableFunctionName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto table_functions = Catalog::GetAllEntries(context, role, CatalogType::TABLE_FUNCTION_ENTRY);
+	auto table_functions =
+	    Catalog::GetAllEntries(CatalogEntryRetriever(context, role), CatalogType::TABLE_FUNCTION_ENTRY);
 	for (const auto &table_function : table_functions) {
 		AutoCompleteCandidate candidate(table_function.get().name.GetIdentifierName(),
 		                                SuggestionState::SUGGEST_TABLE_FUNCTION_NAME, 0);
