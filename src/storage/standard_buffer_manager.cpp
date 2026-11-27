@@ -137,12 +137,15 @@ TempBufferPoolReservation StandardBufferManager::EvictBlocksOrThrow(QueryContext
 	if (auto client = context.GetClientContext()) {
 		account = client->GetMemoryAccount();
 	}
-	if (account && !account->TryAttach(memory_delta) &&
-	    !(buffer_pool.EvictAccount(context, *account, memory_delta) && account->TryAttach(memory_delta))) {
-		string extra_text = StringUtil::Format(" (the session's memory limit: %s/%s used)",
-		                                       StringUtil::BytesToHumanReadableString(account->Used()),
-		                                       StringUtil::BytesToHumanReadableString(account->Limit()));
-		throw OutOfMemoryException(error_message, StringUtil::BytesToHumanReadableString(memory_delta), extra_text);
+	if (account) {
+		account->Attach(memory_delta);
+		if (!buffer_pool.EvictAccount(context, *account)) {
+			account->Detach(memory_delta);
+			string extra_text = StringUtil::Format(" (the session's memory limit: %s/%s used)",
+			                                       StringUtil::BytesToHumanReadableString(account->Used()),
+			                                       StringUtil::BytesToHumanReadableString(account->Limit()));
+			throw OutOfMemoryException(error_message, StringUtil::BytesToHumanReadableString(memory_delta), extra_text);
+		}
 	}
 	absl::Cleanup detach = [&] {
 		if (account) {

@@ -86,8 +86,8 @@ protected:
 	                                           idx_t extra_memory, idx_t memory_limit, idx_t keep,
 	                                           unique_ptr<FileBuffer> *buffer);
 
-	//! Evict blocks the account holds until extra_memory more fits its limit; returns whether it does
-	bool EvictAccount(QueryContext context, MemoryAccount &account, idx_t extra_memory);
+	//! Evict blocks the account holds until it fits its limit; returns whether it does
+	bool EvictAccount(QueryContext context, MemoryAccount &account);
 
 	//! Evict object cache entries if needed.
 	EvictionResult EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);

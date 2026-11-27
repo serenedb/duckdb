@@ -355,9 +355,9 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 	return {found, std::move(r)};
 }
 
-bool BufferPool::EvictAccount(QueryContext context, MemoryAccount &account, idx_t extra_memory) {
+bool BufferPool::EvictAccount(QueryContext context, MemoryAccount &account) {
 	const auto fits = [&] {
-		return account.Used() + extra_memory <= account.Limit();
+		return account.Used() <= account.Limit();
 	};
 	for (auto &queue : queues) {
 		idx_t budget = DConstants::INVALID_INDEX;
