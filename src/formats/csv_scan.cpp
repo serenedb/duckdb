@@ -1335,8 +1335,7 @@ CSVError CsvScan::CopyRowError(const CsvRow &row, const CsvRowError &error) {
 		break;
 	case CSVErrorType::INVALID_ENCODING: {
 		const idx_t at = error.position - bytes->offset;
-		result.error_message = CopyInvalidUtf8(
-		    error.value.empty() ? std::string_view(bytes->data + at, bytes->size - at) : std::string_view(error.value));
+		result.error_message = CopyInvalidUtf8(std::string_view(bytes->data + at, bytes->size - at));
 		result.sqlstate = "22021";
 		break;
 	}
