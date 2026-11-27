@@ -56,19 +56,14 @@ public:
 	//! from there
 	template <class READER>
 	[[gnu::always_inline]] void Advance(const READER &reader, idx_t at) noexcept {
-		if (at > last) {
-			const auto gap = at - last;
-			if (gap < PageResidency::PAGE_SIZE) {
-				run += gap;
-			} else if (at >= end) [[unlikely]] {
-				Land(*reader.File().get(), at);
-			} else {
-				skipped += gap;
-			}
+		const auto from = last;
+		if (at > from) {
+			const auto gap = at - from;
+			(gap < PageResidency::PAGE_SIZE ? run : skipped) += gap;
 		}
 		last = at;
 		if (at + window / 2 >= end && end < stop) [[unlikely]] {
-			Grow(*reader.File().get(), at);
+			Step(*reader.File().get(), from, at);
 		}
 	}
 	void Landed(idx_t at) noexcept {
@@ -106,7 +101,14 @@ public:
 	}
 
 private:
-	[[gnu::noinline]] void Land(const InputFile &file, idx_t at) noexcept {
+	[[gnu::noinline]] void Step(const InputFile &file, idx_t from, idx_t at) noexcept {
+		if (at >= end && at >= from + PageResidency::PAGE_SIZE) {
+			Land(file, at);
+		} else {
+			Grow(file, at);
+		}
+	}
+	void Land(const InputFile &file, idx_t at) noexcept {
 		StartOver(at);
 		if (file.IsMapped() && !file.IsResident(at, 1)) {
 			Ask(file, Next(at, InputFile::MAX_HINT, 0));
@@ -138,7 +140,7 @@ private:
 		window = MinValue(2 * size, max);
 		return {from, asked};
 	}
-	[[gnu::noinline]] void Grow(const InputFile &file, idx_t at) noexcept {
+	void Grow(const InputFile &file, idx_t at) noexcept {
 		if (window == 0 || run < PageResidency::PAGE_SIZE || 2 * run < skipped) {
 			return;
 		}
