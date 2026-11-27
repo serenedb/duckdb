@@ -3,6 +3,7 @@
 #include "duckdb.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/formats/range_lines.hpp"
 #include "duckdb/formats/row_input.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 #include "duckdb/formats/row_ranges.hpp"
@@ -1782,4 +1783,25 @@ TEST_CASE("A whole file is mapped from its minimum size up and read below it, wi
 		}
 		REQUIRE((data[0] == '#') == (size >= MAPPED_FILE_MIN_BYTES));
 	}
+}
+
+TEST_CASE("Range lines count the lines before a range once every range before it finished", "[formats]") {
+	RangeLines lines;
+	REQUIRE(lines.Known(0));
+	REQUIRE(lines.Before(0) == 0);
+	REQUIRE_FALSE(lines.Add(2, 5));
+	REQUIRE_FALSE(lines.Known(1));
+	REQUIRE(lines.Before(3) == 5);
+	REQUIRE(lines.Add(0, 3));
+	REQUIRE(lines.Known(1));
+	REQUIRE_FALSE(lines.Known(2));
+	REQUIRE(lines.Before(1) == 3);
+	REQUIRE(lines.Add(1, 4));
+	REQUIRE(lines.Known(3));
+	REQUIRE_FALSE(lines.Known(4));
+	REQUIRE(lines.Before(3) == 12);
+	REQUIRE(lines.Before(2) == 7);
+	REQUIRE_FALSE(lines.Add(1, 1));
+	REQUIRE(lines.Before(3) == 13);
+	REQUIRE(lines.Before(2) == 8);
 }
