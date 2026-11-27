@@ -48,68 +48,6 @@ const CatalogSearchPath &SearchPathOf(ClientContext &context, const shared_ptr<C
 	return function_path ? *function_path : *ClientData::Get(context).catalog_search_path;
 }
 
-struct CurrentSchemaBindData : public FunctionData {
-	CurrentSchemaBindData(shared_ptr<CatalogSearchPath> function_path_p, optional_idx caller_role)
-	    : function_path(std::move(function_path_p)), caller_role(caller_role) {
-	}
-
-	shared_ptr<CatalogSearchPath> function_path;
-	optional_idx caller_role;
-
-public:
-	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<CurrentSchemaBindData>(function_path, caller_role);
-	}
-	bool Equals(const FunctionData &other_p) const override {
-		auto &other = other_p.Cast<CurrentSchemaBindData>();
-		return function_path == other.function_path && caller_role == other.caller_role;
-	}
-};
-
-unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
-	if (!input.HasBinder()) {
-		return make_uniq<CurrentSchemaBindData>(nullptr, optional_idx());
-	}
-	auto &binder = input.GetBinder();
-	return make_uniq<CurrentSchemaBindData>(binder.EntryRetriever().FunctionSearchPath(), binder.CallerRole());
-}
-
-// current_schema
-// PG-compliant: returns the first schema in the search path that actually
-// exists, or NULL if none of them do.
-void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<CurrentSchemaBindData>();
-	auto &search_path = SearchPathOf(context, info.function_path);
-	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
-	bool found = false;
-	const bool searched_current_catalog = VisitUsableSearchPath(
-	    context, search_path, context.CallerAccess(info.caller_role), [&](const Identifier &schema) {
-		    result.Reference(Value(schema), count_t(input.size()));
-		    found = true;
-		    return false;
-	    });
-	if (found) {
-		return;
-	}
-	// Only when the search path names no schema in the current catalog at all -- an
-	// embedded DuckDB rather than a serened session, which always sets one. A search
-	// path that DOES name one which happens not to exist must still report NULL, as
-	// PostgreSQL does (`SET search_path = nonexistent` -> current_schema() IS NULL),
-	// so the fallback must not swallow that case.
-	if (!searched_current_catalog) {
-		auto default_schema = search_path.GetDefaultSchema(context, current_catalog);
-		if (default_schema &&
-		    Catalog::GetSchema(context, current_catalog, *default_schema, OnEntryNotFound::RETURN_NULL)) {
-			result.Reference(Value(*default_schema), count_t(input.size()));
-			return;
-		}
-	}
-	result.SetVectorType(VectorType::CONSTANT_VECTOR);
-	ConstantVector::SetNull(result, true);
-}
-
 // current_database
 void CurrentDatabaseFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	Value val(DatabaseManager::GetDefaultDatabase(state.GetContext()));
@@ -196,6 +134,28 @@ void CurrentSchemasFunction(DataChunk &input, ExpressionState &state, Vector &re
 	result.Reference(info.result, count_t(input.size()));
 }
 
+unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &search_path =
+	    SearchPathOf(context, input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath() : nullptr);
+	Value schema(LogicalType::VARCHAR);
+	const bool searched_current_catalog = VisitUsableSearchPath(
+	    context, search_path, input.HasBinder() ? input.GetBinder().CurrentRole() : context.CurrentRole(),
+	    [&](const Identifier &name) {
+		    schema = Value(name);
+		    return false;
+	    });
+	if (schema.IsNull() && !searched_current_catalog) {
+		auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
+		auto default_schema = search_path.GetDefaultSchema(context, current_catalog);
+		if (default_schema &&
+		    Catalog::GetSchema(context, current_catalog, *default_schema, OnEntryNotFound::RETURN_NULL)) {
+			schema = Value(*default_schema);
+		}
+	}
+	return make_uniq<CurrentSchemasBindData>(std::move(schema));
+}
+
 // in_search_path
 void InSearchPathFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
@@ -232,7 +192,7 @@ ScalarFunction CurrentQueryFun::GetFunction() {
 }
 
 ScalarFunction CurrentSchemaFun::GetFunction() {
-	ScalarFunction current_schema({}, LogicalType::VARCHAR, CurrentSchemaFunction, CurrentSchemaBind);
+	ScalarFunction current_schema({}, LogicalType::VARCHAR, CurrentSchemasFunction, CurrentSchemaBind);
 	current_schema.SetStability(FunctionStability::CONSISTENT_WITHIN_QUERY);
 	return current_schema;
 }

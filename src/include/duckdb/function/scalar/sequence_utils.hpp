@@ -16,21 +16,19 @@
 namespace duckdb {
 
 struct NextvalBindData : public FunctionData {
-	NextvalBindData(SequenceCatalogEntry &sequence, optional_idx caller_role)
-	    : sequence(sequence), caller_role(caller_role) {
+	explicit NextvalBindData(SequenceCatalogEntry &sequence) : sequence(sequence) {
 	}
 
 	//! The sequence to use for the nextval computation; only if the sequence is a constant
 	SequenceCatalogEntry &sequence;
-	optional_idx caller_role;
 
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<NextvalBindData>(sequence, caller_role);
+		return make_uniq<NextvalBindData>(sequence);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<NextvalBindData>();
-		return RefersToSameObject(sequence, other.sequence) && caller_role == other.caller_role;
+		return RefersToSameObject(sequence, other.sequence);
 	}
 };
 

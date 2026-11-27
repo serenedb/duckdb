@@ -27,6 +27,7 @@
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #include <absl/algorithm/container.h>
 
@@ -318,6 +319,10 @@ bool Allowed(const RoleAccess &role, PrivilegeTarget target, AclMode use) {
 
 bool AllowedAny(const RoleAccess &role, PrivilegeTarget target, AclMode privileges) {
 	return role.is_superuser || Holds(role, target, privileges, true);
+}
+
+RoleAccess CallerAccess(ExpressionState &state) {
+	return state.GetContext().CallerAccess(state.expr.Cast<BoundFunctionExpression>().BoundRole());
 }
 
 [[noreturn]] static void ThrowNotOwner(const CatalogEntry &entry, optional_ptr<const StatementNaming> naming) {
