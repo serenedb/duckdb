@@ -507,7 +507,8 @@ idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
 		} else {
-			Require(context, CheckAs(), {existing_macro, existing_macro.OverloadPermissions(*overload)}, AclMode::Own);
+			Check(context, CheckAs(), {existing_macro, existing_macro.OverloadPermissions(*overload)}, AclMode::Own)
+			    .Require();
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -1191,7 +1192,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		if (auto database = Catalog::GetEntry(
 		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(info.SchemaCatalog())),
 		        OnEntryNotFound::RETURN_NULL)) {
-			Require(context, role, *database, AclMode::Create);
+			Check(context, role, *database, AclMode::Create).Require();
 		}
 		if (!role.IsSystem()) {
 			if (!role.CanSet(owner)) {

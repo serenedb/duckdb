@@ -34,6 +34,7 @@ enum class AclMode : uint64_t {
 	Rename = 0x800000000,
 	Admin = 0x1000000000,
 	SetRole = 0x2000000000,
+	Any = 0x4000000000,
 };
 
 constexpr AclMode operator|(AclMode a, AclMode b) {

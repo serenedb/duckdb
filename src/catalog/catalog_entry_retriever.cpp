@@ -147,7 +147,8 @@ const RoleAccess &CatalogEntryRetriever::CheckAs() const {
 
 void CatalogEntryRetriever::CheckUse(CatalogEntry &entry, AclMode use) {
 	if (use != AclMode::NoRights) {
-		Require(context, acting && acting->privileges ? *acting->privileges : context.CurrentRole(), entry, use);
+		Check(context, acting && acting->privileges ? *acting->privileges : context.CurrentRole(), entry, use)
+		    .Require();
 	}
 }
 

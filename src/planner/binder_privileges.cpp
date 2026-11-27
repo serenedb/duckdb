@@ -167,13 +167,11 @@ void Binder::BindStoredDefinition() {
 }
 
 void Binder::Execute(const CatalogEntry &function) {
-	if (!Allowed(CurrentRole(), function, AclMode::Execute)) {
-		ThrowPermissionDenied(function);
-	}
+	Check(context, CurrentRole(), function, AclMode::Execute).Require();
 }
 
 void Binder::Execute(const MacroCatalogEntry &function, const MacroFunction &overload) {
-	if (!Allowed(CurrentRole(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)) {
+	if (!Check(context, CurrentRole(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)) {
 		if (overload.is_procedure) {
 			throw PermissionException("permission denied for procedure %s", function.name.GetIdentifierName());
 		}
@@ -215,7 +213,7 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 
 void Binder::RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed) {
 	if (auto tablespace = catalog.PlacementTablespace(context, info, indexed)) {
-		Require(context, CheckAs(), *tablespace, AclMode::Create);
+		Check(context, CheckAs(), *tablespace, AclMode::Create).Require();
 	}
 }
 
@@ -345,7 +343,7 @@ RelationChecks Binder::ChecksOf(const StandardEntry &relation) {
 }
 
 RelationChecks Binder::ReadChecks(const StandardEntry &relation, RelationChecks checks) {
-	if (!checks.role || Allowed(*checks.role, relation, AclMode::Select)) {
+	if (!checks.role || Check(context, *checks.role, relation, AclMode::Select)) {
 		return {};
 	}
 	return checks;
@@ -356,7 +354,8 @@ RelationChecks Binder::ReadChecks(const StandardEntry &relation, TableRefUse use
 		return {};
 	}
 	const auto relation_checks = ChecksOf(relation);
-	if (relation_checks.role && target != AclMode::NoRights && !Allowed(*relation_checks.role, relation, target)) {
+	if (relation_checks.role && target != AclMode::NoRights &&
+	    !Check(context, *relation_checks.role, relation, target)) {
 		Deny(relation, relation_checks);
 	}
 	auto checks = ReadChecks(relation, relation_checks);
@@ -377,14 +376,14 @@ void Binder::Deny(const StandardEntry &relation, const RelationChecks &checks) {
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const LogicalIndex> columns) {
-	if (checks.role && !Allowed(*checks.role, table, use) && !checks.role->CanColumns(table, use, columns)) {
+	if (checks.role && !Check(context, *checks.role, table, use) && !checks.role->CanColumns(table, use, columns)) {
 		Deny(table, checks);
 	}
 }
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const Identifier> columns) {
-	if (!checks.role || Allowed(*checks.role, table, use)) {
+	if (!checks.role || Check(context, *checks.role, table, use)) {
 		return;
 	}
 	const bool granted = columns.empty()
@@ -485,12 +484,12 @@ void Binder::RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &
 		return;
 	}
 	if (existing->type != CatalogType::MACRO_ENTRY && existing->type != CatalogType::TABLE_MACRO_ENTRY) {
-		Require(context, role, *existing, AclMode::Own);
+		Check(context, role, *existing, AclMode::Own).Require();
 		return;
 	}
 	auto &macro = existing->Cast<MacroCatalogEntry>();
 	for (auto &overload : macro.macros) {
-		Require(context, role, {macro, macro.OverloadPermissions(*overload)}, AclMode::Own);
+		Check(context, role, {macro, macro.OverloadPermissions(*overload)}, AclMode::Own).Require();
 	}
 }
 
@@ -513,7 +512,7 @@ void Binder::RefuseSystemTablespace(const CatalogEntry &entry) {
 
 void Binder::RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info) {
 	auto &schema = relation.ParentSchema(context);
-	Require(context, CheckAs(), schema, AclMode::Create);
+	Check(context, CheckAs(), schema, AclMode::Create).Require();
 	RequireReplacedOwner(schema, info, info.GetIndexName());
 	RequirePlacement(relation.catalog, info, relation);
 }

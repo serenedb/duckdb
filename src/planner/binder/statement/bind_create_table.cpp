@@ -1000,7 +1000,8 @@ static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const F
 static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEntry &entry,
                               const ForeignKeyConstraint &fk) {
 	auto &role = entry_retriever.CheckAs();
-	if (entry.type != CatalogType::TABLE_ENTRY || Allowed(role, entry, AclMode::References)) {
+	if (entry.type != CatalogType::TABLE_ENTRY ||
+	    Check(entry_retriever.GetContext(), role, entry, AclMode::References)) {
 		return;
 	}
 	auto &table = entry.Cast<TableCatalogEntry>();

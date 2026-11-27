@@ -390,9 +390,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	if (table) {
 		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
 		auto &schema = table->ParentSchema(context);
-		if (!Allowed(CheckAs(), schema, AclMode::Usage)) {
-			ThrowPermissionDenied(schema);
-		}
+		Check(context, CheckAs(), schema, AclMode::Usage).Require();
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 

@@ -255,7 +255,7 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner
 		    Catalog::GetEntry(context, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                      QualifiedName(entry.ParentCatalog().GetName(), Identifier(),
 		                                    Identifier(entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name)));
-		Require(context, binder.AccessOf(new_owner), wrapper, AclMode::Usage);
+		Check(context, binder.AccessOf(new_owner), wrapper, AclMode::Usage).Require();
 	} else if (container == ObjectContainer::DATABASE) {
 		binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY,
 		                                                 QualifiedName(entry.ParentCatalog().GetName()),
@@ -266,7 +266,7 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner
 	            (!Catalog::InRelationNamespace(entry.type) && entry.type != CatalogType::TYPE_ENTRY))) {
 		auto &schema = entry.ParentSchema(context);
 		if ((!reassigned_schemas || !reassigned_schemas->count(schema.oid)) &&
-		    !Allowed(binder.AccessOf(new_owner), schema, AclMode::Create)) {
+		    !Check(context, binder.AccessOf(new_owner), schema, AclMode::Create)) {
 			ThrowPermissionDenied(schema);
 		}
 	}
@@ -286,7 +286,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 		RefuseOwnedSequence(context, entry);
 	}
 	if (!Catalog::InRelationNamespace(entry.type)) {
-		Require(context, role, {entry, permissions}, AclMode::Own);
+		Check(context, role, {entry, permissions}, AclMode::Own).Require();
 	}
 	RequireNewOwner(binder, entry, info.new_owner_id, nullptr);
 }
