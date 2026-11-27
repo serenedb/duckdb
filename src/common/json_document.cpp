@@ -927,29 +927,6 @@ optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, idx_t read
 	return ParseInto(*state, flags, data, len, readable, true, error);
 }
 
-bool JSONTreeParser::Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
-	constexpr auto rewritten =
-	    static_cast<uint32_t>(JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE);
-	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && readable >= len + PADDING &&
-	                   !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
-	if (plain) {
-		JSONCheckVisitor checker;
-		const auto code = state->parser.visit(simdjson::padded_string_view(data, len, readable), checker);
-		if (code == simdjson::MEMALLOC && state->buffers.error.HasError()) {
-			auto failure = std::move(state->buffers.error);
-			state->buffers.error = ErrorData();
-			failure.Throw();
-		}
-		if (!code) {
-			return true;
-		}
-	}
-	const idx_t mark = state->nodes.size();
-	const auto root = ParseInto(*state, flags, data, len, readable, false, error);
-	state->nodes.resize(mark);
-	return root.IsValid();
-}
-
 const JSONNode *JSONTreeParser::ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error) {
 	state->nodes.clear();
 	auto root = ParseInto(*state, flags, data, len, len, false, error, &consumed);
@@ -1278,24 +1255,28 @@ static simdjson::error_code VisitJSON(JSONTreeParserState &st, const char *input
 	return code;
 }
 
+//! Checks a padded document without building its values: simdjson reads documents of at most 32 bytes in one pass,
+//! without stage 1, and walks the tokens of the others
+static simdjson::error_code ValidateJSON(JSONTreeParserState &st, const char *input, idx_t len) {
+	if (len <= ondemand::parser::MAX_ONE_PASS_VISIT) {
+		JSONCheckVisitor checker;
+		return VisitJSON(st, input, len, checker);
+	}
+	ondemand::document document;
+	if (auto error = IterateJSON(st, input, len, document)) {
+		return error;
+	}
+	return document.validate();
+}
+
 //! Starts On-Demand on a padded document. With VALIDATE_PATHS (the json_strict_paths setting), the whole document is
 //! checked first; otherwise, as with On-Demand, only what the path functions read on the way to the values is.
 static simdjson::error_code CheckAndIterateJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *input,
                                                 idx_t len, ondemand::document &document) {
-	if (!HasFlag(flags, JSONReadFlags::VALIDATE_PATHS)) {
-		return IterateJSON(st, input, len, document);
-	}
-	JSONCheckVisitor checker;
-	if (len <= ondemand::parser::MAX_ONE_PASS_VISIT) {
-		if (auto error = VisitJSON(st, input, len, checker)) {
-			return error;
-		}
-		return IterateJSON(st, input, len, document);
-	}
 	if (auto error = IterateJSON(st, input, len, document)) {
 		return error;
 	}
-	return document.visit(checker);
+	return HasFlag(flags, JSONReadFlags::VALIDATE_PATHS) ? document.validate() : simdjson::SUCCESS;
 }
 
 template <class VALUE>
@@ -1502,14 +1483,24 @@ bool JSONTreeParser::WritePath(const char *data, idx_t len, const vector<JSONPat
 
 bool JSONTreeParser::IsValid(const char *data, idx_t len, JSONParseError &error) {
 	auto &st = *state;
-	if (JSONVisitable(flags, data, len)) {
-		const char *input = ReadableJSONInput(st, data, len);
-		JSONCheckVisitor checker;
-		if (!VisitJSON(st, input, len, checker)) {
-			return true;
-		}
+	if (JSONVisitable(flags, data, len) && !ValidateJSON(st, ReadableJSONInput(st, data, len), len)) {
+		return true;
 	}
 	return Parse(data, len, error) != nullptr;
+}
+
+bool JSONTreeParser::Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
+	constexpr auto rewritten =
+	    static_cast<uint32_t>(JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE);
+	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && readable >= len + PADDING &&
+	                   !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
+	if (plain && !ValidateJSON(*state, data, len)) {
+		return true;
+	}
+	const idx_t mark = state->nodes.size();
+	const auto root = ParseInto(*state, flags, data, len, readable, false, error);
+	state->nodes.resize(mark);
+	return root.IsValid();
 }
 
 const JSONNode *JSONTreeParser::Parse(const char *data, idx_t len) {

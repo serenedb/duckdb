@@ -616,3 +616,17 @@ query T
 SELECT json_valid('{"x":-00}')
 ----
 0
+
+# A document longer than 32 bytes is checked by a walk over its tokens, which finds an error wherever it lies,
+# while the leniency of the full parser still applies to what the walk refuses
+query IIIIIIII
+SELECT json_valid('{"padding": "0123456789abcdef", "a": "é\n", "b": [1, -2.5e3]}'),
+       json_valid('{"padding": "0123456789abcdef", "a": "\x"}'),
+       json_valid('{"padding": "0123456789abcdef", "a": 1.5e}'),
+       json_valid('{"padding": "0123456789abcdef", "a": 00}'),
+       json_valid('{"padding": "0123456789abcdef", "a": 1} x'),
+       json_valid('{"padding": "0123456789abcdef", "a": [1, 2,]}'),
+       json_valid('{"padding": "0123456789abcdef", "a": NaN}'),
+       json_valid('{"padding": "0123456789abcdef", "a": tru}');
+----
+true	false	false	false	false	true	true	false
