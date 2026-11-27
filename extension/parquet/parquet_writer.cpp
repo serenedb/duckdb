@@ -1,7 +1,9 @@
 #include "parquet_writer.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include "parquet_crypto.hpp"
@@ -766,13 +768,23 @@ void ParquetWriter::PrepareRowGroup(ColumnDataCollection &raw_buffer, PreparedRo
 		}
 		col_writer.PrepareWrite(write_state);
 	};
+	vector<idx_t> order(buffer.ColumnCount());
+	std::iota(order.begin(), order.end(), idx_t(0));
+	const auto codec = GetCodec();
+	if (codec == CompressionCodec::GZIP || codec == CompressionCodec::ZSTD || codec == CompressionCodec::BROTLI) {
+		const auto width = [&](idx_t col_idx) {
+			const auto physical = buffer.Types()[col_idx].InternalType();
+			return TypeIsConstantSize(physical) ? GetTypeIdSize(physical) : NumericLimits<idx_t>::Maximum();
+		};
+		std::stable_sort(order.begin(), order.end(), [&](idx_t a, idx_t b) { return width(a) > width(b); });
+	}
 	TaskExecutor executor(context);
-	for (idx_t col_idx = 1; col_idx < buffer.ColumnCount(); col_idx++) {
-		executor.ScheduleTask([&write_column, col_idx]() { write_column(col_idx); }, "ParquetColumnTask");
+	for (idx_t i = 1; i < order.size(); i++) {
+		executor.ScheduleTask([&write_column, col_idx = order[i]]() { write_column(col_idx); }, "ParquetColumnTask");
 	}
 	TaskExecutor::JoinGuard join(executor);
-	if (buffer.ColumnCount() > 0) {
-		write_column(0);
+	if (!order.empty()) {
+		write_column(order[0]);
 	}
 	executor.WorkOnTasks();
 }
