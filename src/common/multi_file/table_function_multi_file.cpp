@@ -230,6 +230,9 @@ TableFunctionInitInput TableFunctionFileReader::GetInitInput(TableFunctionFileIn
 	if (partitions) {
 		file_input.partitions = *partitions;
 	}
+	if (sampling) {
+		file_input.sampling = *sampling;
+	}
 	input.multi_file_input = file_input;
 	return input;
 }
@@ -401,9 +404,10 @@ bool TableFunctionFileReader::ListPartitions(ClientContext &context, vector<Part
 	return true;
 }
 
-void TableFunctionFileReader::SetPartitionsToScan(vector<idx_t> partitions_p) {
+void TableFunctionFileReader::SetPartitionsToScan(vector<idx_t> partitions_p, optional<ScanSamplingInfo> sampling_p) {
 	D_ASSERT(settings.scans_partitions && !global_state);
 	partitions = make_uniq<vector<idx_t>>(std::move(partitions_p));
+	sampling = std::move(sampling_p);
 }
 
 //===--------------------------------------------------------------------===//

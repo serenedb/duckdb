@@ -253,7 +253,8 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleParquetFileInitGlobal(Clie
 		reader.deletion_filter = make_uniq<BorrowedDeleteFilter>(*file_input.deletion_filter);
 	}
 	if (input.sample_options) {
-		reader.sampling = ScanSamplingInfo::FromOptions(*input.sample_options, reader.NumRows());
+		reader.sampling = file_input.sampling ? *file_input.sampling
+		                                      : ScanSamplingInfo::FromOptions(*input.sample_options, reader.NumRows());
 		reader.sample_seed = input.sample_options->seed;
 	}
 	if (file_input.partitions) {

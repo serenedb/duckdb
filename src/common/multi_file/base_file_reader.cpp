@@ -50,7 +50,7 @@ bool BaseFileReader::ListPartitions(ClientContext &context, vector<PartitionStat
 	return false;
 }
 
-void BaseFileReader::SetPartitionsToScan(vector<idx_t> partitions) {
+void BaseFileReader::SetPartitionsToScan(vector<idx_t> partitions, optional<ScanSamplingInfo> sampling) {
 	throw InternalException("Reader %s does not support SetPartitionsToScan", GetReaderType());
 }
 

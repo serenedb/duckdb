@@ -158,6 +158,7 @@ struct MultiFileReaderData {
 	//! Is only allowed to be populated when MultiFileReaderGlobalState::supports_local_extra_columns is set
 	vector<LogicalType> extra_columns;
 	vector<idx_t> planned_partitions;
+	optional<ScanSamplingInfo> planned_sampling;
 
 	vector<LogicalType> GetExtraColumns(const MultiFileReaderGlobalState &global_state) const {
 		auto result = global_state.extra_columns;

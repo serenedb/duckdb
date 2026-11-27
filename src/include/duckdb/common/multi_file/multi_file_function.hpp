@@ -700,6 +700,10 @@ public:
 		       (order && (order->row_group_offset != 0 || order->leading_null_group_offset != 0));
 	}
 
+	static bool PlansSample(const MultiFileGlobalState &gstate) {
+		return gstate.sample_options && !gstate.sample_options->is_percentage;
+	}
+
 	//! The column of an opened file the order column of the scan is read from as it is - a cast or a default would not
 	//! keep its order, so there is none then
 	static optional_idx OrderColumnOf(const MultiFileBindData &bind_data, MultiFileGlobalState &gstate,
@@ -806,7 +810,8 @@ public:
 			unique_lock<mutex> file_lock(*reader_data.file_mutex);
 			opened = CreatePlannedReader(context, bind_data, gstate, file_idx);
 			if (opened) {
-				reader_data.reader->SetPartitionsToScan(std::move(reader_data.planned_partitions));
+				reader_data.reader->SetPartitionsToScan(std::move(reader_data.planned_partitions),
+				                                        std::move(reader_data.planned_sampling));
 				reader_data.reader->PrepareReader(context, *gstate.global_state);
 				if (gstate.read_ahead) {
 					reader_data.reader->PrepareReadAhead(context, *gstate.global_state);
@@ -965,6 +970,24 @@ public:
 			}
 			order = std::move(kept);
 		}
+		optional<ScanSamplingInfo> sampling;
+		vector<idx_t> partition_rows;
+		if (PlansSample(gstate)) {
+			idx_t rows = 0;
+			for (auto &partition : partitions) {
+				partition_rows.push_back(rows);
+				rows += partition.count;
+			}
+			sampling = ScanSamplingInfo::FromOptions(*gstate.sample_options, rows);
+			sampling->SetRowCount(rows);
+			vector<idx_t> sampled;
+			for (auto partition : order) {
+				if (sampling->KeepsAnyRow(partition_rows[partition], partitions[partition].count)) {
+					sampled.push_back(partition);
+				}
+			}
+			order = std::move(sampled);
+		}
 
 		vector<vector<idx_t>> file_partitions(gstate.readers.size());
 		for (auto partition : order) {
@@ -988,6 +1011,10 @@ public:
 				continue;
 			}
 			reader_data.planned_partitions = std::move(file_partitions[file_idx]);
+			if (sampling) {
+				reader_data.planned_sampling = sampling;
+				reader_data.planned_sampling->first_row = partition_rows[file_starts[file_idx]];
+			}
 		}
 		gstate.file_index = gstate.readers.size();
 		gstate.planned = true;
@@ -1218,6 +1245,7 @@ public:
 		result->op = input.op;
 		result->global_state = bind_data.interface->InitializeGlobalState(context, bind_data, *result);
 		result->max_threads = TaskScheduler::QueryThreads(context);
+		const bool plans_partitions = bind_data.PlansPartitions() || PlansSample(*result);
 
 		// Ensure all readers are initialized and FileListScan is sync with readers list
 		for (auto &reader_data : result->readers) {
@@ -1240,14 +1268,14 @@ public:
 					//! File can be skipped entirely, close it and move on - planning the partitions still numbers its
 					//! partitions, and releases it afterwards
 					reader_data->file_state = MultiFileFileState::SKIPPED;
-					if (!bind_data.PlansPartitions()) {
+					if (!plans_partitions) {
 						reader_data->reader = nullptr;
 					}
 					result->file_index++;
 				}
 			}
 		}
-		if (bind_data.PlansPartitions()) {
+		if (plans_partitions) {
 			PlanPartitions(context, bind_data, *result);
 		}
 

@@ -380,15 +380,18 @@ struct ScanSamplingInfo {
 	bool is_percentage = false;
 	//! Target number of rows to sample (for row-count based sampling)
 	idx_t target_sample_rows = 0;
+	idx_t first_row = 0;
 
 	//! The sampling of a TABLESAMPLE pushed into a scan that reads about estimated_row_count rows
 	static ScanSamplingInfo FromOptions(const SampleOptions &options, idx_t estimated_row_count);
+	void SetRowCount(idx_t row_count);
 	//! Whether a percentage-based sample keeps the next vector
 	bool KeepsVector(RandomEngine &random) const {
 		return random.NextRandom() <= sample_rate;
 	}
 	//! Whether a row-count based sample keeps the row at row_idx; a rate of 1 keeps every row, which callers skip
 	bool KeepsRow(idx_t row_idx) const;
+	bool KeepsAnyRow(idx_t start_row, idx_t count) const;
 	//! Select the rows a row-count based sample keeps of the count rows from start_row on - returns how many
 	idx_t SelectRows(idx_t start_row, idx_t count, SelectionVector &sel) const;
 };

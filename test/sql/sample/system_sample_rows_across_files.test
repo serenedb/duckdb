@@ -1,0 +1,65 @@
+# name: test/sql/sample/system_sample_rows_across_files.test
+# description: A row-count system sample of many small files counts the rows of all of them
+# group: [sample]
+
+require parquet
+
+statement ok
+COPY (SELECT i AS v, i // 100 AS f FROM range(10000) t(i)) TO '{TEST_DIR}/system_sample_rows_files' (FORMAT parquet, PARTITION_BY (f))
+
+query I
+SELECT count(*) FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+----
+10
+
+query I
+SELECT count(*) FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 1 ROWS (system, 3)
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT v FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+----
+analyzed_plan	<REGEX>:.*Row Groups Scanned: 10 / 10.*
+
+statement ok
+COPY (SELECT i AS v FROM range(10000) t(i)) TO '{TEST_DIR}/system_sample_rows_one.parquet' (FORMAT parquet, ROW_GROUP_SIZE 2048)
+
+query II
+EXPLAIN ANALYZE SELECT v FROM read_parquet('{TEST_DIR}/system_sample_rows_one.parquet') USING SAMPLE 1 ROWS (system, 1)
+----
+analyzed_plan	<REGEX>:.*Row Groups Scanned: 1 / 1.*
+
+statement ok
+SET threads = 1
+
+statement ok
+CREATE TABLE one_thread AS SELECT v FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+
+statement ok
+SET threads = 4
+
+statement ok
+CREATE TABLE four_threads AS SELECT v FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+
+statement ok
+SET disabled_optimizers = 'sampling_pushdown'
+
+statement ok
+CREATE TABLE not_pushed AS SELECT v FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+
+statement ok
+SET disabled_optimizers = ''
+
+query III
+SELECT (SELECT count(*) FROM one_thread), (SELECT count(*) FROM (FROM one_thread EXCEPT FROM four_threads)), (SELECT count(*) FROM (FROM one_thread EXCEPT FROM not_pushed))
+----
+10	0	0
+
+statement ok
+COPY (SELECT i AS v, CASE WHEN i < 9000 THEN 0 ELSE 1 + i % 10 END AS f FROM range(10000) t(i)) TO '{TEST_DIR}/system_sample_rows_skewed' (FORMAT parquet, PARTITION_BY (f))
+
+query I
+SELECT count(*) FROM read_parquet('{TEST_DIR}/system_sample_rows_skewed/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+----
+10
