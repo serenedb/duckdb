@@ -253,7 +253,7 @@ static std::string_view TrimJSONToken(std::string_view token) {
 
 bool ParseJSONInfOrNan(std::string_view token, double &result) {
 	token = TrimJSONToken(token);
-	const bool negative = !token.empty() && token[0] == '-';
+	const bool negative = token.starts_with('-');
 	if (negative) {
 		token.remove_prefix(1);
 	}
