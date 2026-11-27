@@ -142,26 +142,23 @@ struct DecimalToString {
 			value = static_cast<SIGNED>(-value);
 			*dst = '-';
 		}
+		auto digits = UnsafeNumericCast<UNSIGNED>(value);
 		if (scale == 0) {
-			NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(value), end);
+			NumericHelper::FormatUnsigned<UNSIGNED>(digits, end);
 			return;
 		}
-		// we write two numbers:
-		// the numbers BEFORE the decimal (major)
-		// and the numbers AFTER the decimal (minor)
-		auto minor =
-		    UnsafeNumericCast<UNSIGNED>(value) % UnsafeNumericCast<UNSIGNED>(NumericHelper::POWERS_OF_TEN[scale]);
-		auto major =
-		    UnsafeNumericCast<UNSIGNED>(value) / UnsafeNumericCast<UNSIGNED>(NumericHelper::POWERS_OF_TEN[scale]);
-		// write the number after the decimal
-		dst = NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(minor), end);
-		// (optionally) pad with zeros and add the decimal point
-		while (dst > (end - scale)) {
-			*--dst = '0';
+		idx_t fraction = scale;
+		for (; fraction >= 2; fraction -= 2) {
+			end -= 2;
+			memcpy(end, fmt::detail::digits2(NumericCast<size_t>(digits % 100)), 2);
+			digits /= 100;
 		}
-		*--dst = '.';
-		// PG-compatible: always write the integer part (at least "0").
-		dst = NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(major), dst);
+		if (fraction) {
+			*--end = NumericCast<char>('0' + digits % 10);
+			digits /= 10;
+		}
+		*--end = '.';
+		NumericHelper::FormatUnsigned<UNSIGNED>(digits, end);
 	}
 
 	template <class SIGNED>
