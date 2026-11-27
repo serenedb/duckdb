@@ -1340,7 +1340,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
 		if (RestrictToRole(context, role, result) == SchemaAccess::NO_USAGE) {
-			ThrowPermissionDenied(*result.schema);
+			Check(context, role, *result.schema, AclMode::Usage).Require();
 		}
 		if (result.Found()) {
 			return result;
@@ -1516,7 +1516,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
 		const auto access = RestrictToRole(context, role, result);
 		if (access == SchemaAccess::NO_USAGE && !IsInvalidSchema(lookup_info.GetSchema())) {
-			ThrowPermissionDenied(*result.schema);
+			Check(context, role, *result.schema, AclMode::Usage).Require();
 		}
 		if (access != SchemaAccess::USABLE) {
 			result = {nullptr, nullptr, ErrorData()};

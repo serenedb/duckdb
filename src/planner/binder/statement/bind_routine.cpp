@@ -77,7 +77,7 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 	const StatementNaming naming {!routine.include_procedures  ? "function"
 	                              : !routine.include_functions ? "procedure"
 	                                                           : "routine",
-	                              routine.name};
+	                              routine.name.Path()};
 	const auto statement_naming = named_by_statement ? &naming : nullptr;
 	if (!macro) {
 		Check(context, CheckAs(), *result.entry, use).Require(statement_naming);

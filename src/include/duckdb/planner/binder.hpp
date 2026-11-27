@@ -294,7 +294,7 @@ struct GlobalBinderState {
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
 	idx_t relation_references = 0;
-	optional_ptr<const StandardEntry> denied_relation;
+	PrivilegeCheck relation_check;
 	idx_t denied_reference = 0;
 	vector<IndexKeyCheck> index_key_checks;
 	//! Statement properties
@@ -482,7 +482,7 @@ public:
 	RelationChecks ChecksOf(const StandardEntry &relation);
 	RelationChecks ReadChecks(const StandardEntry &relation, RelationChecks checks);
 	RelationChecks ReadChecks(const StandardEntry &relation, TableRefUse use, AclMode target);
-	void Deny(const StandardEntry &relation, const RelationChecks &checks);
+	void Deny(const PrivilegeCheck &check, const RelationChecks &checks);
 	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
 	                    std::span<const LogicalIndex> columns);
 	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
@@ -502,6 +502,7 @@ public:
 	void RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info);
 	static void OwnDefinedOverloads(CreateInfo &info, idx_t defined);
 	void RequireStoredTypes(const CreateInfo &info, Catalog &catalog, idx_t defined = 0);
+	void RequireTypeUsage(const LogicalType &type, Catalog &catalog);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(const Identifier &name);

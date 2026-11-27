@@ -1195,9 +1195,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			Check(context, role, *database, AclMode::Create).Require();
 		}
 		if (!role.IsSystem()) {
-			if (!role.CanSet(owner)) {
-				throw PermissionException("must be able to SET ROLE \"%s\"",
-				                          info.authorization.name.GetIdentifierName());
+			if (authorization) {
+				Check(context, role, *authorization, AclMode::SetRole).Require();
 			}
 			Catalog::GetCatalog(context, info.SchemaCatalog())
 			    .AssignOwner(context, info.permissions, CatalogType::SCHEMA_ENTRY, nullptr, owner);
@@ -1515,10 +1514,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
 		auto &role = CheckAs();
 		if (!info.owner.empty()) {
-			info.permissions.owner = BindRole(RoleSpec(info.owner))->oid;
-			if (!role.CanSet(info.permissions.owner)) {
-				throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(info.permissions.owner));
-			}
+			auto &owner = *BindRole(RoleSpec(info.owner));
+			info.permissions.owner = owner.oid;
+			Check(context, role, owner, AclMode::SetRole).Require();
 		} else if (!role.IsSystem()) {
 			info.permissions.owner = role.role;
 		}

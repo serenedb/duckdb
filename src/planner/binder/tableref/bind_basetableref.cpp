@@ -317,8 +317,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 		const auto owner = PermissionsOf(view_catalog_entry).owner;
 		auto checks = use == TableRefUse::UTILITY_TARGET ? RelationChecks()
 		                                                 : ReadChecks(view_catalog_entry, ChecksOf(view_catalog_entry));
-		if (checks.role && !role.CanColumns(view_catalog_entry, AclMode::Select, {})) {
-			ThrowPermissionDenied(view_catalog_entry);
+		if (checks.role) {
+			Check(context, role, PrivilegeTarget::Columns(view_catalog_entry, {}), AclMode::Select).Require();
 		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined

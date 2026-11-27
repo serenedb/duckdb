@@ -32,7 +32,6 @@ enum class AclMode : uint64_t {
 	Own = 0x200000000,
 	Drop = 0x400000000,
 	Rename = 0x800000000,
-	Admin = 0x1000000000,
 	SetRole = 0x2000000000,
 	Any = 0x4000000000,
 };

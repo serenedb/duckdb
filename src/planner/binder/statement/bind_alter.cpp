@@ -104,7 +104,7 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 static void BindAlterTypes(Binder &binder, AlterInfo &info, optional_ptr<Catalog> catalog) {
 	auto require_usage = [&](const LogicalType &type) {
 		if (catalog) {
-			RequireTypeUsage(binder.context, binder.CheckAs(), type, *catalog);
+			binder.RequireTypeUsage(type, *catalog);
 		}
 	};
 	if (info.type == AlterType::ALTER_TABLE) {
@@ -324,7 +324,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		                         AclMode::Own, OnEntryNotFound::THROW_EXCEPTION, true);
 		auto &function = *bound.entry;
 		if (function.internal) {
-			ThrowPermissionDenied(function);
+			throw PermissionException("permission denied for function %s", function.name.GetIdentifierName());
 		}
 		auto &routine = function.Cast<MacroCatalogEntry>();
 		auto &overload = *bound.overload;

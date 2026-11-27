@@ -68,9 +68,10 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	auto &name = entry.name.GetIdentifierName();
 	if (checked && info.privileges != AclMode::NoRights) {
 		const auto options = BestGrantor(info.grantors, owner, info.privileges, stored).options;
-		if (options == AclMode::NoRights &&
-		    !role.CanAny(object.type, permissions, ObjectKindOf(object.type).privileges)) {
-			ThrowPermissionDenied(object.type, name);
+		if (options == AclMode::NoRights) {
+			const StatementNaming naming {ObjectKindOf(object.type).noun, {&entry.name, 1}};
+			Check(context, role, {entry, permissions}, ObjectKindOf(object.type).privileges | AclMode::Any)
+			    .Require(naming);
 		}
 		WarnUngranted(context, info, info.privileges, options, info.privileges == ObjectKindOf(object.type).privileges,
 		              StringUtil::Format("\"%s\"", name));
@@ -104,7 +105,8 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	if (!checked) {
 		return;
 	}
-	for (auto &column : columns) {
+	for (idx_t i = 0; i < columns.size(); i++) {
+		auto &column = columns[i];
 		auto requested = implied;
 		for (auto &privilege : info.column_privileges) {
 			if (privilege.column == column.name.get()) {
@@ -116,8 +118,9 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 		}
 		auto &column_name = column.name.get().GetIdentifierName();
 		const auto options = BestGrantor(info.grantors, owner, requested, stored, column.acl).options;
-		if (options == AclMode::NoRights && !role.CanAny(object.type, permissions, ACL_COLUMN_PRIVILEGES) &&
-		    (role.HeldModes(column.acl) & ACL_COLUMN_PRIVILEGES) == AclMode::NoRights) {
+		const LogicalIndex index(i);
+		if (options == AclMode::NoRights && !Check(context, role, entry, ACL_COLUMN_PRIVILEGES | AclMode::Any) &&
+		    !Check(context, role, PrivilegeTarget::Columns(entry, {&index, 1}), ACL_COLUMN_PRIVILEGES | AclMode::Any)) {
 			throw PermissionException("permission denied for column \"%s\" of relation \"%s\"", column_name, name);
 		}
 		WarnUngranted(context, info, requested, options, requested == ACL_COLUMN_PRIVILEGES,
@@ -229,10 +232,14 @@ static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
 		                          target.name.GetIdentifierName());
 	}
+	if (!role.is_superuser && PermissionsOf(target).owner == 0) {
+		throw PermissionException("permission denied for %s %s", ObjectKindOf(object.type).noun,
+		                          target.name.GetIdentifierName());
+	}
 	RequireGrantable(binder, info, object, role, target);
 }
 
-static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner,
+static void RequireNewOwner(Binder &binder, CatalogEntry &entry, const RoleEntry &new_owner,
                             optional_ptr<const unordered_set<idx_t>> reassigned_schemas) {
 	auto &role = binder.CheckAs();
 	if (role.is_superuser) {
@@ -242,8 +249,8 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner
 	if (entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 		entry.ParentCatalog().RequireSubscription(context, role, entry, nullptr);
 	}
-	if (!reassigned_schemas && !role.CanSet(new_owner)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(new_owner));
+	if (!reassigned_schemas) {
+		Check(context, role, new_owner, AclMode::SetRole).Require();
 	}
 	const auto container = ObjectKindOf(entry.type).container;
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
@@ -255,7 +262,7 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner
 		    Catalog::GetEntry(context, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                      QualifiedName(entry.ParentCatalog().GetName(), Identifier(),
 		                                    Identifier(entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name)));
-		Check(context, binder.AccessOf(new_owner), wrapper, AclMode::Usage).Require();
+		Check(context, binder.AccessOf(new_owner.oid), wrapper, AclMode::Usage).Require();
 	} else if (container == ObjectContainer::DATABASE) {
 		binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY,
 		                                                 QualifiedName(entry.ParentCatalog().GetName()),
@@ -266,8 +273,8 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, idx_t new_owner
 	            (!Catalog::InRelationNamespace(entry.type) && entry.type != CatalogType::TYPE_ENTRY))) {
 		auto &schema = entry.ParentSchema(context);
 		if ((!reassigned_schemas || !reassigned_schemas->count(schema.oid)) &&
-		    !Check(context, binder.AccessOf(new_owner), schema, AclMode::Create)) {
-			ThrowPermissionDenied(schema);
+		    !Check(context, binder.AccessOf(new_owner.oid), schema, AclMode::Create)) {
+			throw PermissionException("permission denied for schema %s", schema.name.GetIdentifierName());
 		}
 	}
 }
@@ -277,7 +284,8 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 	auto &entry = ResolvePermissionsTarget(binder, info, object, AclMode::Own);
 	Binder::RefuseSystemTablespace(entry);
 	auto &permissions = TargetPermissions(object.overload_oid, entry);
-	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
+	auto &new_owner = *binder.BindRole(info.new_owner);
+	info.new_owner_id = new_owner.oid;
 	auto &role = binder.CheckAs();
 	if (info.new_owner_id == permissions.owner) {
 		return;
@@ -288,7 +296,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 	if (!Catalog::InRelationNamespace(entry.type)) {
 		Check(context, role, {entry, permissions}, AclMode::Own).Require();
 	}
-	RequireNewOwner(binder, entry, info.new_owner_id, nullptr);
+	RequireNewOwner(binder, entry, new_owner, nullptr);
 }
 
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
@@ -345,14 +353,14 @@ static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, cons
 	}
 }
 
-static void ListReassigned(Binder &binder, AlterOwnedInfo &info) {
+static void ListReassigned(Binder &binder, AlterOwnedInfo &info, const RoleEntry &new_owner) {
 	auto &context = binder.context;
 	const auto reassigned = [&](idx_t owner) {
 		return owner != info.new_owner_id && absl::c_linear_search(info.role_ids, owner);
 	};
 	unordered_set<idx_t> schemas;
 	const auto add = [&](CatalogTransaction transaction, CatalogEntry &entry, idx_t overload) {
-		RequireNewOwner(binder, entry, info.new_owner_id, schemas);
+		RequireNewOwner(binder, entry, new_owner, schemas);
 		if (entry.type == CatalogType::SCHEMA_ENTRY) {
 			schemas.insert(entry.oid);
 		}
@@ -395,12 +403,11 @@ void Binder::ResolveOwned(AlterOwnedInfo &info) {
 		RefuseBootstrapRole(*this, info.role_ids, "drop objects");
 		return;
 	}
-	info.new_owner_id = BindRole(info.new_owner)->oid;
-	if (!CheckAs().CanSet(info.new_owner_id)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(info.new_owner_id));
-	}
+	auto &new_owner = *BindRole(info.new_owner);
+	info.new_owner_id = new_owner.oid;
+	Check(context, CheckAs(), new_owner, AclMode::SetRole).Require();
 	RefuseBootstrapRole(*this, info.role_ids, "reassign ownership of objects");
-	ListReassigned(*this, info);
+	ListReassigned(*this, info, new_owner);
 }
 
 static void ExpandAllInSchema(Binder &binder, AlterPermissionsInfo &grant) {

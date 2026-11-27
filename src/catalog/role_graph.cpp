@@ -2,7 +2,6 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
-#include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/unordered_set.hpp"
@@ -147,16 +146,6 @@ bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode n
 bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
 	return Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), DefaultModes(*this, type, permissions), type,
 	              need, true);
-}
-
-bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const LogicalIndex> columns) const {
-	const auto granted = [&](std::span<const AclItem> acl) {
-		return Can(CatalogType::TABLE_ENTRY, acl, need);
-	};
-	if (columns.empty()) {
-		return AnyColumnAcl(relation, granted);
-	}
-	return absl::c_all_of(columns, [&](LogicalIndex column) { return granted(ColumnAclOf(relation, column)); });
 }
 
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {

@@ -17,7 +17,6 @@
 
 namespace duckdb {
 class Catalog;
-class StandardEntry;
 
 enum class RoleOption : uint32_t {
 	None = 0x0,
@@ -101,7 +100,6 @@ struct RoleAccess {
 	bool Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
-	bool CanColumns(const StandardEntry &relation, AclMode need, std::span<const LogicalIndex> columns) const;
 	AclMode HeldModes(std::span<const AclItem> acl) const;
 	AclMode GrantableModes(std::span<const AclItem> acl) const;
 };

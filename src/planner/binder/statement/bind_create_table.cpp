@@ -1010,9 +1010,7 @@ static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEnt
 		Identifier name(column);
 		columns.push_back(table.GetColumnIndex(name));
 	}
-	if (!role.CanColumns(table, AclMode::References, columns)) {
-		ThrowPermissionDenied(table);
-	}
+	Check(entry_retriever.GetContext(), role, PrivilegeTarget::Columns(table, columns), AclMode::References).Require();
 }
 
 static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryRetriever &entry_retriever,

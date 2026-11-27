@@ -10,6 +10,7 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/privileges.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -171,12 +172,9 @@ void Binder::Execute(const CatalogEntry &function) {
 }
 
 void Binder::Execute(const MacroCatalogEntry &function, const MacroFunction &overload) {
-	if (!Check(context, CurrentRole(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)) {
-		if (overload.is_procedure) {
-			throw PermissionException("permission denied for procedure %s", function.name.GetIdentifierName());
-		}
-		ThrowPermissionDenied(function);
-	}
+	const StatementNaming procedure {"procedure", {&function.name, 1}};
+	Check(context, CurrentRole(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)
+	    .Require(overload.is_procedure ? &procedure : nullptr);
 }
 
 static bool CallsFunctions(const IndexCatalogEntry &index) {
@@ -354,30 +352,32 @@ RelationChecks Binder::ReadChecks(const StandardEntry &relation, TableRefUse use
 		return {};
 	}
 	const auto relation_checks = ChecksOf(relation);
-	if (relation_checks.role && target != AclMode::NoRights &&
-	    !Check(context, *relation_checks.role, relation, target)) {
-		Deny(relation, relation_checks);
+	if (relation_checks.role && target != AclMode::NoRights) {
+		Deny(Check(context, *relation_checks.role, relation, target), relation_checks);
 	}
 	auto checks = ReadChecks(relation, relation_checks);
-	if (checks.role && use == TableRefUse::READ && !checks.role->CanColumns(relation, AclMode::Select, {})) {
-		Deny(relation, checks);
-		return {};
+	if (checks.role && use == TableRefUse::READ) {
+		auto check = Check(context, *checks.role, PrivilegeTarget::Columns(relation, {}), AclMode::Select);
+		if (!check) {
+			Deny(check, checks);
+			return {};
+		}
 	}
 	return checks;
 }
 
-void Binder::Deny(const StandardEntry &relation, const RelationChecks &checks) {
+void Binder::Deny(const PrivilegeCheck &check, const RelationChecks &checks) {
 	auto &state = *global_binder_state;
-	if (!state.denied_relation || checks.reference < state.denied_reference) {
-		state.denied_relation = &relation;
+	if (!check && (state.relation_check || checks.reference < state.denied_reference)) {
+		state.relation_check = check;
 		state.denied_reference = checks.reference;
 	}
 }
 
 void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
                             std::span<const LogicalIndex> columns) {
-	if (checks.role && !Check(context, *checks.role, table, use) && !checks.role->CanColumns(table, use, columns)) {
-		Deny(table, checks);
+	if (checks.role && !Check(context, *checks.role, table, use)) {
+		Deny(Check(context, *checks.role, PrivilegeTarget::Columns(table, columns), use), checks);
 	}
 }
 
@@ -386,14 +386,15 @@ void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks
 	if (!checks.role || Check(context, *checks.role, table, use)) {
 		return;
 	}
-	const bool granted = columns.empty()
-	                         ? checks.role->CanColumns(table, use, {})
-	                         : absl::c_all_of(columns, [&](const Identifier &name) {
-		                           return !table.ColumnExists(name) ||
-		                                  checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(name).Acl(), use);
-	                           });
-	if (!granted) {
-		Deny(table, checks);
+	if (columns.empty()) {
+		Deny(Check(context, *checks.role, PrivilegeTarget::Columns(table, {}), use), checks);
+		return;
+	}
+	for (auto &name : columns) {
+		if (table.ColumnExists(name)) {
+			const auto column = table.GetColumn(name).Logical();
+			Deny(Check(context, *checks.role, PrivilegeTarget::Columns(table, {&column, 1}), use), checks);
+		}
 	}
 }
 
@@ -402,30 +403,25 @@ void Binder::CheckColumnRead(Binding &binding, const Identifier &column) {
 	if (!binding.checks.role || !binding.TryGetBindingIndex(column, index) || index >= VIRTUAL_COLUMN_START) {
 		return;
 	}
-	auto &relation = *binding.GetStandardEntry();
 	const LogicalIndex read(index);
-	if (!binding.checks.role->CanColumns(relation, AclMode::Select, {&read, 1})) {
-		Deny(relation, binding.checks);
-	}
+	Deny(Check(context, *binding.checks.role, PrivilegeTarget::Columns(*binding.GetStandardEntry(), {&read, 1}),
+	           AclMode::Select),
+	     binding.checks);
 }
 
 void Binder::AdoptPrivilegeChecks(Binder &other) {
 	auto &source = *other.global_binder_state;
 	D_ASSERT(&source != global_binder_state.get());
-	if (source.denied_relation) {
-		Deny(*source.denied_relation, {nullptr, source.denied_reference});
-	}
+	Deny(source.relation_check, {nullptr, source.denied_reference});
 	auto &checks = global_binder_state->index_key_checks;
 	checks.insert(checks.end(), source.index_key_checks.begin(), source.index_key_checks.end());
-	source.denied_relation = nullptr;
+	source.relation_check = PrivilegeCheck();
 	source.index_key_checks.clear();
 }
 
 void Binder::CheckPrivileges() {
 	auto &state = *global_binder_state;
-	if (state.denied_relation) {
-		ThrowPermissionDenied(*state.denied_relation);
-	}
+	state.relation_check.Require();
 	for (auto &check : state.index_key_checks) {
 		auto &table = check.table.get();
 		auto &index = check.index.get();
@@ -524,9 +520,49 @@ void Binder::OwnDefinedOverloads(CreateInfo &info, idx_t defined) {
 	}
 }
 
+void Binder::RequireTypeUsage(const LogicalType &type, Catalog &catalog) {
+	if (CheckAs().is_superuser) {
+		return;
+	}
+	if (auto extension = type.GetExtensionInfo()) {
+		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		if (oid != extension->properties.end()) {
+			auto entry = catalog.LookupOwner(catalog.GetCatalogTransaction(context), oid->second.GetValue<idx_t>());
+			if (entry && entry->type == CatalogType::TYPE_ENTRY) {
+				Check(context, CheckAs(), *entry, AclMode::Usage).Require();
+			}
+			return;
+		}
+	}
+	if (!type.HasParameters()) {
+		return;
+	}
+	switch (type.id()) {
+	case LogicalTypeId::LIST:
+		return RequireTypeUsage(ListType::GetChildType(type), catalog);
+	case LogicalTypeId::ARRAY:
+		return RequireTypeUsage(ArrayType::GetChildType(type), catalog);
+	case LogicalTypeId::MAP:
+		RequireTypeUsage(MapType::KeyType(type), catalog);
+		return RequireTypeUsage(MapType::ValueType(type), catalog);
+	case LogicalTypeId::STRUCT:
+		for (auto &child : StructType::GetChildTypes(type)) {
+			RequireTypeUsage(child.second, catalog);
+		}
+		return;
+	case LogicalTypeId::UNION:
+		for (idx_t i = 0; i < UnionType::GetMemberCount(type); i++) {
+			RequireTypeUsage(UnionType::GetMemberType(type, i), catalog);
+		}
+		return;
+	default:
+		return;
+	}
+}
+
 void Binder::RequireStoredTypes(const CreateInfo &info, Catalog &catalog, idx_t defined) {
 	const auto require = [&](const LogicalType &type) {
-		RequireTypeUsage(context, CheckAs(), type, catalog);
+		RequireTypeUsage(type, catalog);
 	};
 	switch (info.type) {
 	case CatalogType::TABLE_ENTRY:

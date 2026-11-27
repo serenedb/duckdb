@@ -121,7 +121,7 @@ void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 		auto entry = entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop),
 		                                      OnEntryNotFound::RETURN_NULL);
 		if (entry && entry->type == CatalogType::TABLESPACE_ENTRY && entry->internal) {
-			ThrowPermissionDenied(*entry);
+			throw PermissionException("permission denied for tablespace %s", entry->name.GetIdentifierName());
 		}
 		break;
 	}
