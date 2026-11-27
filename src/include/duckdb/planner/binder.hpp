@@ -41,6 +41,7 @@
 #include "duckdb/planner/joinside.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
@@ -275,9 +276,10 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
-struct RecordedCalls {
-	Catalog &catalog;
-	vector<idx_t> overloads;
+struct IndexKeyCheck {
+	reference<const TableCatalogEntry> table;
+	reference<const IndexCatalogEntry> index;
+	reference<const RoleAccess> role;
 };
 
 struct GlobalBinderState {
@@ -291,11 +293,10 @@ struct GlobalBinderState {
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
-	optional_ptr<RecordedCalls> recorded_calls;
 	idx_t relation_references = 0;
 	optional_ptr<const StandardEntry> denied_relation;
 	idx_t denied_reference = 0;
-	optional_ptr<const CatalogEntry> denied_function;
+	vector<IndexKeyCheck> index_key_checks;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode
@@ -468,7 +469,6 @@ public:
 	void BindAsFunctionBody(const RoleAccess &role);
 	void BindUnchecked();
 	void BindStoredDefinition();
-	void RecordCalls(optional_ptr<RecordedCalls> calls);
 	void Execute(const CatalogEntry &function);
 	void Execute(const MacroCatalogEntry &function, const MacroFunction &overload);
 	static bool MayRun(const RoleAccess &role, const SQLStatement &statement);

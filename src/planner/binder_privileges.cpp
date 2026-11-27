@@ -20,11 +20,14 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckdb/planner/expression_binder/index_binder.hpp"
 #include "duckdb/planner/table_binding.hpp"
 
 #include <absl/algorithm/container.h>
@@ -163,10 +166,6 @@ void Binder::BindStoredDefinition() {
 	acting.lookups = &RoleAccess::System();
 }
 
-void Binder::RecordCalls(optional_ptr<RecordedCalls> calls) {
-	global_binder_state->recorded_calls = calls;
-}
-
 void Binder::Execute(const CatalogEntry &function) {
 	if (!Allowed(CurrentRole(), function, AclMode::Execute)) {
 		ThrowPermissionDenied(function);
@@ -180,23 +179,26 @@ void Binder::Execute(const MacroCatalogEntry &function, const MacroFunction &ove
 		}
 		ThrowPermissionDenied(function);
 	}
-	auto calls = global_binder_state->recorded_calls;
-	if (!calls || PermissionsOf(function).owner == 0) {
-		return;
+}
+
+static bool CallsFunctions(const IndexCatalogEntry &index) {
+	bool calls = false;
+	const auto visit = [&](const ParsedExpression &expression) {
+		ParsedExpressionIterator::VisitExpression<FunctionExpression>(
+		    expression, [&](const FunctionExpression &) { calls = true; });
+	};
+	for (auto &key : index.parsed_expressions) {
+		visit(*key);
 	}
-	if (&function.ParentCatalog() != &calls->catalog) {
-		throw NotImplementedException("cross-database references are not implemented: \"%s.%s.%s\"",
-		                              function.ParentCatalog().GetName().GetIdentifierName(),
-		                              function.ParentSchemaName().GetIdentifierName(),
-		                              function.name.GetIdentifierName());
+	if (index.where_clause) {
+		visit(*index.where_clause);
 	}
-	calls->overloads.push_back(function.OverloadOid(overload));
+	return calls;
 }
 
 void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed) {
 	auto &role = CurrentRole();
-	auto &state = *global_binder_state;
-	if (role.is_superuser || state.denied_relation || state.denied_function) {
+	if (role.is_superuser) {
 		return;
 	}
 	auto &columns = table.GetColumns();
@@ -204,23 +206,9 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 		return absl::c_any_of(
 		    *changed, [&](PhysicalIndex index) { return columns.GetColumn(index).Logical() == LogicalIndex(column); });
 	};
-	auto &catalog = table.ParentCatalog();
-	const auto transaction = catalog.GetCatalogTransaction(context);
-	catalog.ScanIndexes(context, table, [&](IndexCatalogEntry &index) {
-		if (state.denied_function || (changed && absl::c_none_of(index.column_ids, changes))) {
-			return;
-		}
-		for (const auto oid : index.CalledOverloads()) {
-			auto function = catalog.LookupOwner(transaction, oid);
-			auto overload = function ? function->Cast<MacroCatalogEntry>().FindOverload(oid) : nullptr;
-			if (!overload) {
-				throw CatalogException("function with OID %llu does not exist", oid);
-			}
-			auto &macro = function->Cast<MacroCatalogEntry>();
-			if (!Allowed(role, {macro, macro.OverloadPermissions(*overload)}, AclMode::Execute)) {
-				state.denied_function = function.get();
-				return;
-			}
+	table.ParentCatalog().ScanIndexes(context, table, [&](IndexCatalogEntry &index) {
+		if ((!changed || absl::c_any_of(index.column_ids, changes)) && CallsFunctions(index)) {
+			global_binder_state->index_key_checks.push_back({table, index, role});
 		}
 	});
 }
@@ -428,12 +416,10 @@ void Binder::AdoptPrivilegeChecks(Binder &other) {
 	if (source.denied_relation) {
 		Deny(*source.denied_relation, {nullptr, source.denied_reference});
 	}
-	auto &state = *global_binder_state;
-	if (!state.denied_function) {
-		state.denied_function = source.denied_function;
-	}
+	auto &checks = global_binder_state->index_key_checks;
+	checks.insert(checks.end(), source.index_key_checks.begin(), source.index_key_checks.end());
 	source.denied_relation = nullptr;
-	source.denied_function = nullptr;
+	source.index_key_checks.clear();
 }
 
 void Binder::CheckPrivileges() {
@@ -441,8 +427,29 @@ void Binder::CheckPrivileges() {
 	if (state.denied_relation) {
 		ThrowPermissionDenied(*state.denied_relation);
 	}
-	if (state.denied_function) {
-		ThrowPermissionDenied(*state.denied_function);
+	for (auto &check : state.index_key_checks) {
+		auto &table = check.table.get();
+		auto &index = check.index.get();
+		auto keys = Binder::CreateBinder(context, this);
+		keys->BindAsFunctionBody(check.role);
+		keys->BindStoredDefinition();
+		vector<Identifier> names;
+		vector<LogicalType> types;
+		for (auto &column : table.GetColumns().Logical()) {
+			names.push_back(column.Name());
+			types.push_back(column.Type());
+		}
+		keys->bind_context.AddGenericBinding(keys->GenerateTableIndex(), table.name, names, types,
+		                                     table.GetColumns().IsCaseSensitive());
+		IndexBinder key_binder(*keys, context);
+		for (auto &key : index.parsed_expressions) {
+			auto expression = QualifyTableExpression(context, table, key->Copy());
+			key_binder.BindKey(expression);
+		}
+		if (index.where_clause) {
+			auto predicate = QualifyTableExpression(context, table, index.where_clause->Copy());
+			key_binder.Bind(predicate);
+		}
 	}
 }
 

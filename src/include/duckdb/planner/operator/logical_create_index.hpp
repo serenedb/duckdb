@@ -34,7 +34,6 @@ public:
 	unique_ptr<AlterTableInfo> alter_table_info;
 	//! Unbound expressions of the indexed columns.
 	vector<unique_ptr<Expression>> unbound_expressions;
-	vector<idx_t> called_overloads;
 
 public:
 	void Serialize(Serializer &serializer) const override;
