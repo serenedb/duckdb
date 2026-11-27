@@ -51,8 +51,9 @@ public:
 	//! The user of [reader] is at [at], where it reads next: counts what it read and what it skipped since its
 	//! step before, and asks the reader's file for the next window once the user is within half of it of the end of
 	//! what was asked, unless it skipped more than it read. A step of a page or more that lands past what was asked
-	//! starts over there and, in a mapped file, asks the first window from there at once: the user went to where it
-	//! reads next, as a reader of a list sent to the block it needs does, and reads on from there
+	//! starts over there and, in a mapped file whose page there is not in memory, asks the first window from there at
+	//! once: the user went to where it reads next, as a reader of a list sent to the block it needs does, and reads on
+	//! from there
 	template <class READER>
 	[[gnu::always_inline]] void Advance(const READER &reader, idx_t at) noexcept {
 		if (at > last) {
@@ -105,7 +106,7 @@ private:
 		skipped = 0;
 		window = first_window;
 		asked = 0;
-		if (file.IsMapped()) {
+		if (file.IsMapped() && !file.IsResident(at, 1)) {
 			Ask(file, Next(at, InputFile::MAX_HINT, 0));
 		}
 	}

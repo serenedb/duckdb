@@ -2246,13 +2246,19 @@ TEST_CASE("A read-ahead window asks ahead of where its reader lands past what wa
 	TestFile file("read_ahead_landing.bin", SIZE);
 	auto mapped = fs.OpenInputFile(file.path, MappedFileAccess::RANDOM);
 	REQUIRE(mapped->IsMapped());
+	mapped->Evict(0, SIZE);
+	// the kernel may keep pages a request to drop them leaves: a landing on a page in memory asks nothing
+	const auto asked_at = [&](idx_t at) {
+		return PageResidency::IsResident(mapped->Data() + at, PAGE) ? idx_t(0) : InputFile::HINT_CHUNK - PAGE;
+	};
 
 	// a reader armed where its list starts and sent to a block past what was asked asks a window from there at once
 	MemoryReader reader(*mapped);
 	reader.ReadAheadUntil(SIZE, ReadAheadSteps::SKIPPING);
+	auto asked = asked_at(16 * BLOCK);
 	reader.Seek(16 * BLOCK);
 	reader.Advance();
-	REQUIRE(mapped->Warm(16 * BLOCK, InputFile::HINT_CHUNK) == InputFile::HINT_CHUNK);
+	REQUIRE(mapped->Warm(16 * BLOCK + PAGE, InputFile::HINT_CHUNK - PAGE) == asked);
 
 	// a step inside what was asked asks nothing more until the reader read a page
 	reader.Seek(16 * BLOCK + 2 * PAGE);
@@ -2260,10 +2266,17 @@ TEST_CASE("A read-ahead window asks ahead of where its reader lands past what wa
 	REQUIRE(mapped->Warm(16 * BLOCK + InputFile::HINT_CHUNK, PAGE) == 0);
 
 	// a landing past what was asked asks a window from there again
+	asked = asked_at(40 * BLOCK);
 	reader.Seek(40 * BLOCK);
 	reader.Advance();
-	REQUIRE(mapped->Warm(40 * BLOCK, InputFile::HINT_CHUNK) == InputFile::HINT_CHUNK);
+	REQUIRE(mapped->Warm(40 * BLOCK + PAGE, InputFile::HINT_CHUNK - PAGE) == asked);
 	REQUIRE(mapped->Warm(40 * BLOCK + InputFile::HINT_CHUNK, PAGE) == 0);
+
+	// a landing on a page the file knows to be in memory asks nothing
+	mapped->MarkWarm(56 * BLOCK, PAGE);
+	reader.Seek(56 * BLOCK);
+	reader.Advance();
+	REQUIRE(mapped->Warm(56 * BLOCK + PAGE, PAGE) == 0);
 }
 
 TEST_CASE("A mapped file is read once a window at a time when the read is longer than the kernel is asked to hold",
