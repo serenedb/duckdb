@@ -424,7 +424,7 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		input.SetFunction(CastToNaive<SRC, DST>);
 		auto &info = input.CastData()->Cast<CastData>().info->Cast<BindData>();
 		if (!info.lut ||
-		    !ICUZoneCasts::FixedShiftFits<SRC>(*info.lut, input.child_stats, ICUZoneCasts::Widening<SRC, DST>())) {
+		    !ICUZoneCasts::FixedShiftFits<SRC>(*info.lut, input.child_stats, ICUZoneCasts::WIDENING<SRC, DST>)) {
 			return nullptr;
 		}
 		input.SetFunction(CastToNaiveFixed<SRC, DST>);

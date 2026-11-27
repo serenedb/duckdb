@@ -147,9 +147,8 @@ struct ICUZoneCasts {
 	}
 
 	template <class SRC, class DST>
-	static constexpr int64_t Widening() {
-		return !IS_TIME<DST> && DST::PRECISION > SRC::PRECISION ? DST::PRECISION / SRC::PRECISION : 1;
-	}
+	static constexpr int64_t WIDENING =
+	    !IS_TIME<DST> && DST::PRECISION > SRC::PRECISION ? DST::PRECISION / SRC::PRECISION : 1;
 
 	template <class SRC>
 	static bool FixedShiftFits(const ZoneLUT &lut, const BaseStatistics &stats, int64_t widening) {
