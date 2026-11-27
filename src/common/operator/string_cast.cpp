@@ -230,8 +230,10 @@ static idx_t WriteTimestamp(const T &input, char *data) {
 
 template <typename T>
 duckdb::string_t StringFromTimestamp(const T &input, StringHeap &heap) {
-	char data[TimestampToStringCast::MAX_LENGTH];
-	return heap.AddString(data, WriteTimestamp(input, data));
+	auto &allocator = heap.GetAllocator();
+	const auto data = StringVector::AllocateShrinkableBuffer(allocator, TimestampToStringCast::MAX_LENGTH);
+	const auto length = WriteTimestamp(input, char_ptr_cast(data));
+	return StringVector::FinalizeShrinkableBuffer(allocator, data, TimestampToStringCast::MAX_LENGTH, length);
 }
 
 idx_t TimestampToStringCast::Write(timestamp_t timestamp, char *data) {
