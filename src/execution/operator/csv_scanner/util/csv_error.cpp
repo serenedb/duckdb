@@ -42,19 +42,24 @@ void CSVErrorHandler::ThrowOverRejectLimit() {
 	                            reject_tolerance, errors.back().error_message);
 }
 
-void CSVErrorHandler::ThrowEarliestFailure(bool any) {
-	if (failures.empty()) {
-		return;
-	}
+static idx_t EarliestOf(const vector<CSVError> &list) {
 	idx_t earliest = 0;
-	for (idx_t i = 1; i < failures.size(); i++) {
-		auto &info = failures[i].error_info;
-		auto &best = failures[earliest].error_info;
+	for (idx_t i = 1; i < list.size(); i++) {
+		auto &info = list[i].error_info;
+		auto &best = list[earliest].error_info;
 		if (info.boundary_idx < best.boundary_idx ||
 		    (info.boundary_idx == best.boundary_idx && info.lines_in_batch < best.lines_in_batch)) {
 			earliest = i;
 		}
 	}
+	return earliest;
+}
+
+void CSVErrorHandler::ThrowEarliestFailure(bool any) {
+	if (failures.empty()) {
+		return;
+	}
+	const idx_t earliest = EarliestOf(failures);
 	if (any || CanGetLine(failures[earliest].GetBoundaryIndex())) {
 		ThrowCopyError(failures[earliest]);
 	}
@@ -124,16 +129,7 @@ void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
 }
 
 idx_t CSVErrorHandler::EarliestError() const {
-	idx_t earliest = 0;
-	for (idx_t i = 1; i < errors.size(); i++) {
-		auto &info = errors[i].error_info;
-		auto &best = errors[earliest].error_info;
-		if (info.boundary_idx < best.boundary_idx ||
-		    (info.boundary_idx == best.boundary_idx && info.lines_in_batch < best.lines_in_batch)) {
-			earliest = i;
-		}
-	}
-	return earliest;
+	return EarliestOf(errors);
 }
 
 void CSVErrorHandler::Absorb(CSVErrorHandler &other) {
