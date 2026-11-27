@@ -153,6 +153,9 @@ inline JSONNodeRange::Iterator &JSONNodeRange::Iterator::operator++() {
 bool JSONEquals(const JSONNode &left, const JSONNode &right);
 const char *JSONTypeDescription(const JSONNode &node);
 
+bool ParseJSONInfOrNan(std::string_view token, double &result);
+bool FindJSONTrailingCommas(const char *data, idx_t len, vector<idx_t> &commas);
+
 struct JSONParseError {
 	bool HasError() const {
 		return has_error;

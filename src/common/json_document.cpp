@@ -250,10 +250,10 @@ static std::string_view TrimJSONToken(std::string_view token) {
 	return token;
 }
 
-static bool ParseJSONInfOrNan(std::string_view token, double &result) {
-	bool negative = false;
-	if (!token.empty() && (token[0] == '-' || token[0] == '+')) {
-		negative = token[0] == '-';
+bool ParseJSONInfOrNan(std::string_view token, double &result) {
+	token = TrimJSONToken(token);
+	const bool negative = !token.empty() && token[0] == '-';
+	if (negative) {
 		token.remove_prefix(1);
 	}
 	if (StringUtil::CIEquals(token, "nan")) {
@@ -640,11 +640,8 @@ template <class VALUE>
 static simdjson::error_code BuildJSONInfOrNan(VALUE &value, JSONBuildContext &context, simdjson::error_code error) {
 	std::string_view token;
 	double special;
-	if (!HasFlag(context.flags, JSONReadFlags::ALLOW_INF_AND_NAN) || JSONRawToken(value, token)) {
-		return error;
-	}
-	token = TrimJSONToken(token);
-	if (token.empty() || token[0] == '+' || !ParseJSONInfOrNan(token, special)) {
+	if (!HasFlag(context.flags, JSONReadFlags::ALLOW_INF_AND_NAN) || JSONRawToken(value, token) ||
+	    !ParseJSONInfOrNan(token, special)) {
 		return error;
 	}
 	auto node = MakeJSONNode(JSONValueType::DOUBLE);
@@ -1040,10 +1037,8 @@ static bool IsJSONSpace(char c) {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-//! Copies a document without its trailing commas (a comma after a value and before a closing bracket); false when it
-//! has none
-static bool RemoveTrailingCommas(const char *data, idx_t len, string &out) {
-	bool found = false;
+bool FindJSONTrailingCommas(const char *data, idx_t len, vector<idx_t> &commas) {
+	commas.clear();
 	char previous = '[';
 	for (idx_t i = 0; i < len; i++) {
 		const char c = data[i];
@@ -1060,16 +1055,24 @@ static bool RemoveTrailingCommas(const char *data, idx_t len, string &out) {
 				next++;
 			}
 			if (next < len && (data[next] == ']' || data[next] == '}')) {
-				if (!found) {
-					out.assign(data, len);
-					found = true;
-				}
-				out[i] = ' ';
+				commas.push_back(i);
 			}
 		}
 		previous = c;
 	}
-	return found;
+	return !commas.empty();
+}
+
+static bool RemoveTrailingCommas(const char *data, idx_t len, string &out) {
+	vector<idx_t> commas;
+	if (!FindJSONTrailingCommas(data, len, commas)) {
+		return false;
+	}
+	out.assign(data, len);
+	for (const auto comma : commas) {
+		out[comma] = ' ';
+	}
+	return true;
 }
 
 static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len,
@@ -2101,7 +2104,6 @@ char *JSONStringWriter::WriteString(char *out, std::string_view value, JSONWrite
 	*out++ = '"';
 	return out;
 }
-
 
 JSONBuilder::JSONBuilder(ArenaAllocator &arena_p) : arena(arena_p) {
 }
