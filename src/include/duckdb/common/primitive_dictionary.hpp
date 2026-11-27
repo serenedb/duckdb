@@ -72,19 +72,20 @@ public:
 public:
 	//! Insert value into dictionary (if not full)
 	template <bool ADD_TO_TARGET = false>
-	void Insert(SRC value) {
+	uint32_t Insert(SRC value) {
 		if (full) {
-			return;
+			return INVALID_INDEX;
 		}
 		auto &entry = Lookup(value);
 		if (entry.IsEmpty()) {
 			if (size + 1 > maximum_size || (ADD_TO_TARGET && !AddToTarget(value))) {
 				full = true;
-				return;
+				return INVALID_INDEX;
 			}
 			entry.value = value;
 			entry.index = size++;
 		}
+		return entry.index;
 	}
 
 	//! Get dictionary index of an already inserted value

@@ -1,0 +1,33 @@
+# name: test/sql/copy/parquet/writer/parquet_write_dictionary_pages.test
+# description: Dictionary-encoded columns write each value's own dictionary entry across pages, row groups, NULLs, empty lists and nested levels
+# group: [writer]
+
+require parquet
+
+statement ok
+CREATE TABLE src AS
+SELECT
+	i,
+	CASE WHEN i % 11 = 0 THEN NULL ELSE 'v' || (i % 13) END AS s,
+	CASE WHEN i % 17 = 0 THEN NULL ELSE i % 7 END AS n,
+	CASE WHEN i % 5 = 0 THEN NULL WHEN i % 5 = 1 THEN [] ELSE [CASE WHEN i % 3 = 0 THEN NULL ELSE 'l' || (i % 4) END, 'm' || (i % 6)] END AS l,
+	CASE WHEN i % 9 = 0 THEN NULL ELSE {'a': CASE WHEN i % 4 = 0 THEN NULL ELSE 'a' || (i % 3) END, 'b': i % 5} END AS st,
+	CASE WHEN i % 8 = 0 THEN NULL ELSE MAP {'k' || (i % 3): CASE WHEN i % 6 = 0 THEN NULL ELSE 'x' || (i % 2) END} END AS mp
+FROM range(250000) t(i);
+
+foreach version v1 v2
+
+statement ok
+COPY src TO '{TEST_DIR}/dictionary_pages_${version}.parquet' (FORMAT PARQUET, PARQUET_VERSION ${version}, ROW_GROUP_SIZE 100000, DATA_PAGE_SIZE_LIMIT 4096);
+
+query I
+SELECT count(*) FROM parquet_metadata('{TEST_DIR}/dictionary_pages_${version}.parquet') WHERE encodings NOT LIKE '%DICTIONARY%' AND path_in_schema <> 'i';
+----
+0
+
+query I
+SELECT (SELECT md5(string_agg(src::VARCHAR, '|' ORDER BY i)) FROM src) = (SELECT md5(string_agg(p::VARCHAR, '|' ORDER BY i)) FROM '{TEST_DIR}/dictionary_pages_${version}.parquet' p);
+----
+true
+
+endloop
