@@ -12,6 +12,17 @@ CopyFunction::CopyFunction(const Identifier &name)
       desired_batch_size(nullptr), serialize(nullptr), deserialize(nullptr), copy_from_bind(nullptr) {
 }
 
+CopyFunctionExecutionMode CopyFunction::ParallelUnlessOrdered(bool preserve_insertion_order,
+                                                              bool supports_batch_index) {
+	if (!preserve_insertion_order) {
+		return CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
+	}
+	if (supports_batch_index) {
+		return CopyFunctionExecutionMode::BATCH_COPY_TO_FILE;
+	}
+	return CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
+}
+
 CopyOption::CopyOption() : type(LogicalType::ANY), mode(CopyOptionMode::READ_WRITE) {
 }
 

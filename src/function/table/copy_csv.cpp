@@ -388,18 +388,6 @@ void WriteCSVFinalize(ClientContext &context, FunctionData &bind_data, GlobalFun
 }
 
 //===--------------------------------------------------------------------===//
-// Execution Mode
-//===--------------------------------------------------------------------===//
-CopyFunctionExecutionMode WriteCSVExecutionMode(bool preserve_insertion_order, bool supports_batch_index) {
-	if (!preserve_insertion_order) {
-		return CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
-	}
-	if (supports_batch_index) {
-		return CopyFunctionExecutionMode::BATCH_COPY_TO_FILE;
-	}
-	return CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
-}
-//===--------------------------------------------------------------------===//
 // Prepare Batch
 //===--------------------------------------------------------------------===//
 struct WriteCSVBatchData : public PreparedBatchData {
@@ -469,7 +457,7 @@ void CSVCopyFunction::RegisterFunction(BuiltinFunctions &set) {
 	info.copy_to_sink = WriteCSVSink;
 	info.copy_to_combine = WriteCSVCombine;
 	info.copy_to_finalize = WriteCSVFinalize;
-	info.execution_mode = WriteCSVExecutionMode;
+	info.execution_mode = CopyFunction::ParallelUnlessOrdered;
 
 	info.prepare_batch = WriteCSVPrepareBatch;
 	info.flush_batch = WriteCSVFlushBatch;

@@ -833,18 +833,6 @@ static unique_ptr<FunctionData> ParquetCopyDeserialize(Deserializer &deserialize
 // LCOV_EXCL_STOP
 
 //===--------------------------------------------------------------------===//
-// Execution Mode
-//===--------------------------------------------------------------------===//
-static CopyFunctionExecutionMode ParquetWriteExecutionMode(bool preserve_insertion_order, bool supports_batch_index) {
-	if (!preserve_insertion_order) {
-		return CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
-	}
-	if (supports_batch_index) {
-		return CopyFunctionExecutionMode::BATCH_COPY_TO_FILE;
-	}
-	return CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
-}
-//===--------------------------------------------------------------------===//
 // Initialize Logger
 //===--------------------------------------------------------------------===//
 static void ParquetWriteInitializeOperator(GlobalFunctionData &gstate, const PhysicalOperator &op) {
@@ -1118,7 +1106,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	function.copy_to_sink = ParquetWriteSink;
 	function.copy_to_combine = ParquetWriteCombine;
 	function.copy_to_finalize = ParquetWriteFinalize;
-	function.execution_mode = ParquetWriteExecutionMode;
+	function.execution_mode = CopyFunction::ParallelUnlessOrdered;
 	function.initialize_operator = ParquetWriteInitializeOperator;
 	function.copy_from_bind = ParquetCopyFromBind;
 	function.copy_from_function = *scan_fun.functions[0];
