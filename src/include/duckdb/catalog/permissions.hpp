@@ -45,8 +45,6 @@ struct PrivilegeTarget {
 };
 
 DUCKDB_API const Permissions &PermissionsOf(const PrivilegeTarget &target);
-DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
-DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
 DUCKDB_API const RoleAccess &Role(ClientContext &context, optional_idx bound = optional_idx());
 DUCKDB_API const RoleAccess &Role(ExpressionState &state);
 

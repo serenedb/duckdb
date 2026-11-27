@@ -115,7 +115,7 @@ optional_ptr<Catalog> Catalog::GetCatalogEntry(CatalogEntryRetriever &retriever,
 
 static optional_ptr<Catalog> VisibleCatalog(CatalogEntryRetriever &retriever, const Identifier &catalog_name) {
 	auto catalog = Catalog::GetCatalogEntry(retriever, catalog_name);
-	if (catalog && !DatabaseVisible(retriever.GetContext(), retriever.CheckAs(), catalog->GetAttached())) {
+	if (catalog && !retriever.Shows(catalog->GetAttached())) {
 		return nullptr;
 	}
 	return catalog;
@@ -809,7 +809,7 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 	return catalog.LookupSchemaPath(
 	    catalog.GetCatalogTransaction(context), lookup, if_not_found,
 	    [&](const EntryLookupInfo &) -> optional_ptr<CatalogEntry> { return schema.get(); },
-	    [&](CatalogEntry &entry) { return EntryVisible(context, retriever.CheckAs(), entry); });
+	    [&](CatalogEntry &entry) { return retriever.Shows(entry); });
 }
 
 optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogTransaction transaction,
@@ -870,7 +870,7 @@ vector<SimilarCatalogEntry> Catalog::SimilarEntriesInSchemas(ClientContext &cont
 	vector<SimilarCatalogEntry> results;
 	for (auto schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		if (!DatabaseVisible(context, Role(context), schema.catalog.GetAttached())) {
+		if (!CatalogEntryRetriever(context).Shows(schema.catalog.GetAttached())) {
 			continue;
 		}
 		SimilarCatalogEntry entry;
@@ -1151,7 +1151,7 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 		}
 		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
 		    (ListingRank(database->GetCatalog()) != 1 && !search_path_catalogs.count(database->GetName())) ||
-		    !DatabaseVisible(context, Role(context), *database)) {
+		    !CatalogEntryRetriever(context).Shows(*database)) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;
@@ -1275,15 +1275,15 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 
 enum class SchemaAccess : uint8_t { USABLE, HIDDEN, NO_USAGE };
 
-static SchemaAccess RestrictToRole(ClientContext &context, const RoleAccess &role, CatalogEntryLookup &result) {
-	if (result.schema && !EntryVisible(context, role, *result.schema)) {
+static SchemaAccess RestrictToRole(CatalogEntryRetriever &retriever, CatalogEntryLookup &result) {
+	if (result.schema && !retriever.Shows(*result.schema)) {
 		result = CatalogEntryLookup();
 		return SchemaAccess::HIDDEN;
 	}
-	if (result.schema && !Check(context, role, *result.schema, AclMode::Usage)) {
+	if (result.schema && !Check(retriever.GetContext(), retriever.CheckAs(), *result.schema, AclMode::Usage)) {
 		return SchemaAccess::NO_USAGE;
 	}
-	if (result.Found() && !EntryVisible(context, role, *result.entry)) {
+	if (result.Found() && !retriever.Shows(*result.entry)) {
 		result.entry = nullptr;
 	}
 	return SchemaAccess::USABLE;
@@ -1326,7 +1326,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 			auto result = TryLookupEntryInternal(
 			    transaction, EntryLookupInfo(lookup_info, QualifiedName(GetName(), candidate_schema,
 			                                                            lookup_info.GetEntryIdentifier())));
-			if (RestrictToRole(context, role, result) != SchemaAccess::USABLE) {
+			if (RestrictToRole(retriever, result) != SchemaAccess::USABLE) {
 				continue;
 			}
 			if (result.Found()) {
@@ -1339,7 +1339,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	} else {
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
-		if (RestrictToRole(context, role, result) == SchemaAccess::NO_USAGE) {
+		if (RestrictToRole(retriever, result) == SchemaAccess::NO_USAGE) {
 			Check(context, role, *result.schema, AclMode::Usage).Require();
 		}
 		if (result.Found()) {
@@ -1514,7 +1514,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	for (auto &lookup : lookups) {
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
-		const auto access = RestrictToRole(context, role, result);
+		const auto access = RestrictToRole(retriever, result);
 		if (access == SchemaAccess::NO_USAGE && !IsInvalidSchema(lookup_info.GetSchema())) {
 			Check(context, role, *result.schema, AclMode::Usage).Require();
 		}
@@ -1541,7 +1541,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 				auto index = result.schema->LookupEntry(
 				    transaction,
 				    EntryLookupInfo(CatalogType::INDEX_ENTRY, QualifiedName(lookup_info.GetEntryIdentifier())));
-				if (index && EntryVisible(context, role, *index)) {
+				if (index && retriever.Shows(*index)) {
 					break;
 				}
 			}
@@ -1655,7 +1655,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriev
 		EntryLookupInfo info(CatalogType::TABLE_ENTRY,
 		                     QualifiedName(catalog_by_name->GetName(), table_schema, table_name), at_clause, context);
 		auto result = catalog_by_name->TryLookupEntryInternal(transaction, info);
-		if (RestrictToRole(retriever.GetContext(), retriever.CheckAs(), result) != SchemaAccess::USABLE) {
+		if (RestrictToRole(retriever, result) != SchemaAccess::USABLE) {
 			return {nullptr, nullptr, ErrorData()};
 		}
 		return result;
@@ -1681,7 +1681,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 		EntryLookupInfo default_schema_lookup(
 		    lookup_info, QualifiedName(catalog_entry->GetName(), *default_schema, lookup_info.GetEntryIdentifier()));
 		auto result = catalog_entry->TryLookupEntryInternal(transaction, default_schema_lookup);
-		if (RestrictToRole(retriever.GetContext(), retriever.CheckAs(), result) != SchemaAccess::USABLE) {
+		if (RestrictToRole(retriever, result) != SchemaAccess::USABLE) {
 			continue;
 		}
 		if (result.Found() || result.error.HasError()) {
@@ -1703,7 +1703,7 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 		auto entry = catalog ? catalog->LookupEntry(catalog->GetCatalogTransaction(context), type,
 		                                            lookup_info.GetEntryIdentifier())
 		                     : nullptr;
-		if (entry && !EntryVisible(context, retriever.CheckAs(), *entry)) {
+		if (entry && !retriever.Shows(*entry)) {
 			entry = nullptr;
 		}
 		if (!entry && if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
@@ -1860,7 +1860,7 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 		}
 		const auto on_not_found = i + 1 == entries.size() ? if_not_found : OnEntryNotFound::RETURN_NULL;
 		auto result = catalog->GetSchema(retriever.GetContext(), schema_lookup, on_not_found);
-		if (result && !EntryVisible(retriever.GetContext(), retriever.CheckAs(), *result)) {
+		if (result && !retriever.Shows(*result)) {
 			if (on_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 				throw CatalogException::MissingEntry(schema_lookup, string());
 			}
@@ -1944,6 +1944,7 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 vector<reference<SchemaCatalogEntry>>
 Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool include_hidden,
                        const std::function<bool(AttachedDatabase &)> &needs_database) {
+	const CatalogEntryRetriever retriever(context, role);
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &meta_transaction = MetaTransaction::Get(context);
@@ -1955,7 +1956,7 @@ Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool incl
 		if (needs_database && !needs_database(*database)) {
 			continue;
 		}
-		if (!DatabaseVisible(context, role, *database)) {
+		if (!retriever.Shows(*database)) {
 			continue;
 		}
 		// Pin the database for the meta transaction: the returned schema (and downstream entry) references
@@ -1972,7 +1973,7 @@ Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool incl
 			continue;
 		}
 		for (auto &schema : new_schemas) {
-			if (EntryVisible(context, role, schema.get())) {
+			if (retriever.Shows(schema.get())) {
 				result.push_back(schema);
 			}
 		}
@@ -2001,6 +2002,7 @@ Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool incl
 
 void Catalog::ScanListedEntries(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
                                 CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
+	const CatalogEntryRetriever retriever(context, role);
 	vector<reference<CatalogEntry>> entries;
 	try {
 		schema.Scan(context, type, [&](CatalogEntry &entry) { entries.push_back(entry); });
@@ -2012,7 +2014,7 @@ void Catalog::ScanListedEntries(ClientContext &context, const RoleAccess &role, 
 		return;
 	}
 	for (auto &entry : entries) {
-		if (!EntryVisible(context, role, entry.get())) {
+		if (!retriever.Shows(entry.get())) {
 			continue;
 		}
 		try {

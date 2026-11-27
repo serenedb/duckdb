@@ -421,7 +421,7 @@ static void ExpandAllInSchema(Binder &binder, AlterPermissionsInfo &grant) {
 		                                       AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 		const auto scan = [&](CatalogType type) {
 			schema.Scan(binder.context, type, [&](CatalogEntry &entry) {
-				if (entry.internal || !EntryVisible(binder.context, binder.CheckAs(), entry)) {
+				if (entry.internal || !CatalogEntryRetriever(binder.context, binder.CheckAs()).Shows(entry)) {
 					return;
 				}
 				if (kind != CatalogType::MACRO_ENTRY) {

@@ -42,8 +42,10 @@ public:
 	}
 	CatalogEntryRetriever(ClientContext &context, const ActingRoles &acting) : context(context), acting(&acting) {
 	}
+	CatalogEntryRetriever(ClientContext &context, const RoleAccess &role) : context(context), role(&role) {
+	}
 	CatalogEntryRetriever(const CatalogEntryRetriever &other)
-	    : callback(other.callback), context(other.context), acting(other.acting) {
+	    : callback(other.callback), context(other.context), acting(other.acting), role(other.role) {
 	}
 
 public:
@@ -119,6 +121,8 @@ public:
 	void SetAtClause(optional_ptr<BoundAtClause> at_clause);
 
 	DUCKDB_API const RoleAccess &CheckAs() const;
+	DUCKDB_API bool Shows(CatalogEntry &entry) const;
+	DUCKDB_API bool Shows(AttachedDatabase &database) const;
 
 private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
@@ -134,6 +138,7 @@ private:
 	shared_ptr<CatalogSearchPath> function_search_path;
 	optional_ptr<BoundAtClause> at_clause;
 	optional_ptr<const ActingRoles> acting;
+	optional_ptr<const RoleAccess> role;
 	optional_ptr<const vector<NameBinding>> bindings;
 	optional_ptr<vector<NameBinding>> recorded_bindings;
 	Identifier bindings_catalog;

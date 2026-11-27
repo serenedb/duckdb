@@ -1,6 +1,7 @@
 #include "duckdb/catalog/permissions.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
@@ -64,7 +65,7 @@ static bool CanConnect(ClientContext &context, const RoleAccess &role, const Ide
 	       role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
 }
 
-bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
+static bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
 	if (role.is_superuser || database.IsSystem() || database.IsTemporary()) {
 		return true;
 	}
@@ -98,7 +99,7 @@ static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, Catal
 	return parent.versions->GetVisible(entry.ParentCatalog().GetCatalogTransaction(context).view);
 }
 
-bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+static bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
 	if (role.is_superuser) {
 		return true;
 	}
@@ -154,6 +155,14 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	default:
 		return true;
 	}
+}
+
+bool CatalogEntryRetriever::Shows(CatalogEntry &entry) const {
+	return EntryVisible(context, CheckAs(), entry);
+}
+
+bool CatalogEntryRetriever::Shows(AttachedDatabase &database) const {
+	return DatabaseVisible(context, CheckAs(), database);
 }
 
 static string ObjectNounOf(CatalogType type) {
