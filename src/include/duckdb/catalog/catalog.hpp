@@ -310,6 +310,8 @@ public:
 
 	//! Drops an entry from the catalog
 	DUCKDB_API void DropEntry(ClientContext &context, DropInfo &info);
+	DUCKDB_API virtual void DropEntries(ClientContext &context, const catalog_entry_vector_t &entries,
+	                                    catalog_entry_map_t<vector<DropInfo>> &drops);
 	static bool InRelationNamespace(CatalogType type);
 
 	DUCKDB_API virtual optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction,
@@ -578,8 +580,6 @@ public:
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
 	virtual void ScanOwned(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);
-	virtual catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
-	virtual void RefuseDroppingTogether(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);

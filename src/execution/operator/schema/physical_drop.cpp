@@ -23,28 +23,24 @@ static void DropTemporaryObjects(ClientContext &context) {
 		types.push_back(CatalogType::JOB_ENTRY);
 	}
 	catalog_entry_vector_t entries;
+	catalog_entry_map_t<vector<DropInfo>> drops;
 	catalog.ScanSchemas(context, [&](SchemaCatalogEntry &schema) {
 		for (auto type : types) {
 			schema.Scan(context, type, [&](CatalogEntry &entry) {
-				if (!entry.internal) {
-					entries.push_back(entry);
+				if (entry.internal) {
+					return;
 				}
+				entries.push_back(entry);
+				auto &drop = drops[entry].emplace_back();
+				drop.type = entry.type;
+				drop.SetQualifiedName(
+				    QualifiedName::FromCatalogSchema(catalog.GetName(), entry.ParentSchemaPath(), entry.name));
+				drop.cascade = true;
+				drop.if_not_found = OnEntryNotFound::RETURN_NULL;
 			});
 		}
 	});
-	vector<unique_ptr<DropInfo>> drops;
-	for (auto &entry : catalog.DropOrder(catalog.GetCatalogTransaction(context), entries)) {
-		auto drop = make_uniq<DropInfo>();
-		drop->type = entry.get().type;
-		drop->SetQualifiedName(
-		    QualifiedName::FromCatalogSchema(catalog.GetName(), entry.get().ParentSchemaPath(), entry.get().name));
-		drop->cascade = true;
-		drop->if_not_found = OnEntryNotFound::RETURN_NULL;
-		drops.push_back(std::move(drop));
-	}
-	for (auto &drop : drops) {
-		catalog.DropEntry(context, *drop);
-	}
+	catalog.DropEntries(context, entries, drops);
 }
 
 static void ResetSequences(ClientContext &context) {
@@ -108,50 +104,36 @@ static optional_ptr<CatalogEntry> DropTarget(ClientContext &context, const DropI
 }
 
 static void DropTogether(ClientContext &context, const DropInfo &info) {
-	DropInfo drop(info);
-	const auto target = [&](const ObjectReference &object) {
+	DropInfo statement(info);
+	statement.objects.clear();
+	vector<reference<Catalog>> catalogs;
+	reference_map_t<Catalog, catalog_entry_vector_t> entries;
+	reference_map_t<Catalog, catalog_entry_map_t<vector<DropInfo>>> drops;
+	for (auto &object : info.objects) {
+		DropInfo drop(statement);
 		drop.type = object.type;
 		drop.SetQualifiedName(object.name);
 		drop.func_parameters = object.func_parameters;
 		drop.has_func_args = object.has_func_args;
-	};
-	vector<reference<Catalog>> catalogs;
-	reference_map_t<Catalog, catalog_entry_vector_t> entries;
-	catalog_entry_map_t<vector<reference<const ObjectReference>>> targets;
-	for (auto &object : info.objects) {
-		target(object);
 		auto entry = DropTarget(context, drop);
-		if (!entry) {
+		if (!entry || entry->type != drop.type) {
 			DropCatalog(context, drop).DropEntry(context, drop);
 			continue;
 		}
-		auto &listed = targets[*entry];
-		if (listed.empty()) {
-			auto &catalog_entries = entries[entry->ParentCatalog()];
-			if (catalog_entries.empty()) {
-				catalogs.push_back(entry->ParentCatalog());
-			}
-			catalog_entries.push_back(*entry);
+		drop.if_not_found = OnEntryNotFound::RETURN_NULL;
+		auto &catalog = entry->ParentCatalog();
+		auto &catalog_drops = drops[catalog];
+		if (catalog_drops.empty()) {
+			catalogs.push_back(catalog);
 		}
-		listed.push_back(object);
+		auto &entry_drops = catalog_drops[*entry];
+		if (entry_drops.empty()) {
+			entries[catalog].push_back(*entry);
+		}
+		entry_drops.push_back(std::move(drop));
 	}
-	drop.if_not_found = OnEntryNotFound::RETURN_NULL;
 	for (auto &catalog : catalogs) {
-		auto &catalog_entries = entries[catalog];
-		auto transaction = catalog.get().GetCatalogTransaction(context);
-		if (!info.cascade && catalog_entries.size() > 1) {
-			catalog.get().RefuseDroppingTogether(transaction, catalog_entries);
-		}
-		drop.dropped_together.clear();
-		for (auto &entry : catalog_entries) {
-			drop.dropped_together.push_back(entry.get().oid);
-		}
-		for (auto &entry : catalog.get().DropOrder(transaction, catalog_entries)) {
-			for (auto &object : targets[entry]) {
-				target(object);
-				DropCatalog(context, drop).DropEntry(context, drop);
-			}
-		}
+		catalog.get().DropEntries(context, entries[catalog], drops[catalog]);
 	}
 }
 

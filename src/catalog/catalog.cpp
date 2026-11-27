@@ -2166,12 +2166,15 @@ optional_ptr<CatalogEntry> Catalog::OwnerOf(CatalogTransaction transaction, Cata
 void Catalog::ScanOwned(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback) {
 }
 
-catalog_entry_vector_t Catalog::DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries) {
+void Catalog::DropEntries(ClientContext &context, const catalog_entry_vector_t &entries,
+                          catalog_entry_map_t<vector<DropInfo>> &drops) {
 	auto dependency_manager = GetDependencyManager();
-	return dependency_manager ? dependency_manager->DropOrder(transaction, entries) : entries;
-}
-
-void Catalog::RefuseDroppingTogether(CatalogTransaction transaction, const catalog_entry_vector_t &entries) {
+	for (auto &entry :
+	     dependency_manager ? dependency_manager->DropOrder(GetCatalogTransaction(context), entries) : entries) {
+		for (auto &drop : drops[entry]) {
+			DropEntry(context, drop);
+		}
+	}
 }
 
 ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {

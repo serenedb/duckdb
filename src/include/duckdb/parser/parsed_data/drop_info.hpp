@@ -45,7 +45,6 @@ public:
 	bool is_routine = false;
 	bool is_macro = false;
 	vector<ObjectReference> objects;
-	vector<idx_t> dropped_together;
 
 	//! Extra info related to this drop
 	unique_ptr<ExtraDropInfo> extra_drop_info;
