@@ -71,6 +71,12 @@ public:
 			Grow(*reader.File().get(), at);
 		}
 	}
+	void Landed(idx_t at) noexcept {
+		if (at >= end && at >= last + PageResidency::PAGE_SIZE) {
+			last = at;
+			StartOver(at);
+		}
+	}
 	//! The reader is at [at] and reads on in order, which its caller knows: the bytes to ask for now, [least] or
 	//! more unless the reader stops before, growing up to [max]; none until the reader is within half of the window
 	//! asked last of its end
@@ -101,14 +107,17 @@ public:
 
 private:
 	[[gnu::noinline]] void Land(const InputFile &file, idx_t at) noexcept {
+		StartOver(at);
+		if (file.IsMapped() && !file.IsResident(at, 1)) {
+			Ask(file, Next(at, InputFile::MAX_HINT, 0));
+		}
+	}
+	void StartOver(idx_t at) noexcept {
 		end = at;
 		run = 0;
 		skipped = 0;
 		window = first_window;
 		asked = 0;
-		if (file.IsMapped() && !file.IsResident(at, 1)) {
-			Ask(file, Next(at, InputFile::MAX_HINT, 0));
-		}
 	}
 	void Ask(const InputFile &file, FileRange range) noexcept {
 		if (range.size == 0) {

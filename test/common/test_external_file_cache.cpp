@@ -2286,6 +2286,36 @@ TEST_CASE("A read-ahead window asks ahead of where its reader lands past what wa
 	REQUIRE(mapped->Warm(4 * PAGE, PAGE) == 0);
 }
 
+TEST_CASE("A read-ahead window asks nothing where its reader says it landed, and asks once the reader read a page on",
+          "[external_file_cache]") {
+	constexpr idx_t SIZE = 64 * BLOCK;
+	constexpr idx_t PAGE = PageResidency::PAGE_SIZE;
+	LocalFileSystem fs;
+	TestFile file("read_ahead_landed.bin", SIZE);
+	auto mapped = fs.OpenInputFile(file.path, MappedFileAccess::RANDOM);
+	REQUIRE(mapped->IsMapped());
+	mapped->Evict(0, SIZE);
+
+	MemoryReader reader(*mapped);
+	reader.ReadAheadUntil(SIZE, ReadAheadSteps::SKIPPING);
+	reader.Seek(16 * BLOCK);
+	reader.Landed();
+	reader.Advance();
+	REQUIRE(mapped->Warm(16 * BLOCK, InputFile::HINT_CHUNK) == 0);
+
+	for (idx_t at = 16 * BLOCK + PAGE / 4; at <= 16 * BLOCK + PAGE; at += PAGE / 4) {
+		reader.Seek(at);
+		reader.Landed();
+		reader.Advance();
+	}
+	REQUIRE(mapped->Warm(16 * BLOCK + PAGE, InputFile::HINT_CHUNK) == InputFile::HINT_CHUNK);
+
+	reader.Seek(40 * BLOCK);
+	reader.Landed();
+	reader.Advance();
+	REQUIRE(mapped->Warm(40 * BLOCK, InputFile::HINT_CHUNK) == 0);
+}
+
 TEST_CASE("A mapped file is read once a window at a time when the read is longer than the kernel is asked to hold",
           "[external_file_cache]") {
 	constexpr idx_t SIZE = 160ULL * 1024 * 1024;
