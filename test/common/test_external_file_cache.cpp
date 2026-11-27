@@ -2277,6 +2277,13 @@ TEST_CASE("A read-ahead window asks ahead of where its reader lands past what wa
 	reader.Seek(56 * BLOCK);
 	reader.Advance();
 	REQUIRE(mapped->Warm(56 * BLOCK + PAGE, PAGE) == 0);
+
+	// a landing where its reader stops asks nothing
+	MemoryReader stopping(*mapped);
+	stopping.ReadAheadUntil(4 * PAGE, ReadAheadSteps::SKIPPING);
+	stopping.Seek(4 * PAGE);
+	stopping.Advance();
+	REQUIRE(mapped->Warm(4 * PAGE, PAGE) == 0);
 }
 
 TEST_CASE("A mapped file is read once a window at a time when the read is longer than the kernel is asked to hold",
