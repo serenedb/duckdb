@@ -14,6 +14,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "include/icu-bucket.hpp"
 #include "include/icu-scalar-fast.hpp"
+#include "include/icu-zone-lut-casts.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -664,11 +665,42 @@ struct ICUStrftime : public ICUDateFunc {
 		loader.RegisterFunction(set);
 	}
 
+	static idx_t WriteZoneOffset(int64_t offset_msecs, char *data) {
+		const auto offset = offset_msecs / Interval::MSECS_PER_SEC / Interval::SECS_PER_MINUTE;
+		return Time::WriteUTCOffset(UnsafeNumericCast<int>(offset / Interval::MINS_PER_HOUR),
+		                            UnsafeNumericCast<int>(offset % Interval::MINS_PER_HOUR), data);
+	}
+
+	static bool TryFormatInZone(const ZoneLUT &lut, timestamp_tz_t input, char *data, idx_t &length) {
+		timestamp_t local;
+		if (!ICUZoneCasts::Try(lut, input, local)) {
+			return false;
+		}
+		length = TimestampToStringCast::Write(local, data);
+		length += WriteZoneOffset((local.value - input.value) / Interval::MICROS_PER_MSEC, data + length);
+		return true;
+	}
+
+	static bool TryFormatInZone(const ZoneLUT &lut, timestamp_tz_ns_t input, char *data, idx_t &length) {
+		timestamp_ns_t local;
+		if (!ICUZoneCasts::Try(lut, input, local)) {
+			return false;
+		}
+		length = TimestampToStringCast::Write(local, data);
+		length += WriteZoneOffset((local.value - input.value) / Interval::NANOS_PER_MSEC, data + length);
+		return true;
+	}
+
 	template <typename T>
-	static string_t CastOperation(Calendar *calendar, T input, Vector &result) {
+	static string_t CastOperation(const ZoneLUT *lut, Calendar *calendar, T input, Vector &result) {
 		// Infinity is always formatted the same way
 		if (!input.IsFinite()) {
 			return StringVector::AddString(result, Date::ToInfinity(input));
+		}
+		char text[TimestampToStringCast::MAX_LENGTH + Time::UTC_OFFSET_MAX_LENGTH];
+		idx_t text_length;
+		if (lut && TryFormatInZone(*lut, input, text, text_length)) {
+			return StringVector::AddString(result, text, text_length);
 		}
 
 		// decompose the timestamp
@@ -681,13 +713,9 @@ struct ICUStrftime : public ICUDateFunc {
 		char micro_buffer[9];
 		const auto time_len = TimeToStringCast::MicrosLength(ts_data.microsecond, micro_buffer, ts_data.nanosecond);
 
-		auto offset = ExtractField(calendar, CAL_ZONE_OFFSET) + ExtractField(calendar, CAL_DST_OFFSET);
-		offset /= Interval::MSECS_PER_SEC;
-		offset /= Interval::SECS_PER_MINUTE;
-		int hour_offset = offset / 60;
-		int minute_offset = offset % 60;
-		auto offset_str = Time::ToUTCOffset(hour_offset, minute_offset);
-		const auto offset_len = offset_str.size();
+		char offset_text[Time::UTC_OFFSET_MAX_LENGTH];
+		const auto offset_len = WriteZoneOffset(
+		    ExtractField(calendar, CAL_ZONE_OFFSET) + ExtractField(calendar, CAL_DST_OFFSET), offset_text);
 
 		const auto len = date_len + 1 + time_len + offset_len;
 		string_t target = StringVector::EmptyString(result, len);
@@ -700,7 +728,7 @@ struct ICUStrftime : public ICUDateFunc {
 		TimeToStringCast::Format(buffer, time_len, ts_data.hour, ts_data.minute, ts_data.second, 0, micro_buffer);
 		buffer += time_len;
 
-		memcpy(buffer, offset_str.c_str(), offset_len);
+		memcpy(buffer, offset_text, offset_len);
 		buffer += offset_len;
 
 		target.Finalize();
@@ -713,9 +741,10 @@ struct ICUStrftime : public ICUDateFunc {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
 		CalendarPtr calendar(info.calendar->Copy());
+		const auto lut = info.lut.get();
 
-		UnaryExecutor::Execute<T, string_t>(source, result, count,
-		                                    [&](T input) { return CastOperation<T>(calendar.get(), input, result); });
+		UnaryExecutor::Execute<T, string_t>(
+		    source, result, count, [&](T input) { return CastOperation<T>(lut, calendar.get(), input, result); });
 		return true;
 	}
 

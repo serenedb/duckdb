@@ -35,6 +35,8 @@ public:
 	DUCKDB_API static string ToString(dtime_t time);
 	//! Convert a UTC offset to ±HH[:MM]
 	DUCKDB_API static string ToUTCOffset(int hour_offset, int minute_offset);
+	static constexpr idx_t UTC_OFFSET_MAX_LENGTH = 1 + 2 + 1 + 2;
+	DUCKDB_API static idx_t WriteUTCOffset(int hour_offset, int minute_offset, char *data);
 
 	DUCKDB_API static dtime_t FromTime(int32_t hour, int32_t minute, int32_t second, int32_t microseconds = 0);
 	DUCKDB_API static int64_t ToNanoTime(int32_t hour, int32_t minute, int32_t second, int32_t nanoseconds = 0);

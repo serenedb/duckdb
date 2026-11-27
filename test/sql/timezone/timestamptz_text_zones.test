@@ -1,0 +1,69 @@
+# name: test/sql/timezone/timestamptz_text_zones.test
+# description: TIMESTAMPTZ to VARCHAR in zones with DST edges, half-hour, 45-minute and local mean time offsets, inside and outside the zone table's range
+# group: [timezone]
+
+require icu
+
+statement ok
+SET TimeZone = 'UTC';
+
+query I
+SELECT [TIMESTAMPTZ '2024-01-02 03:04:05.123456+00', TIMESTAMPTZ 'infinity', TIMESTAMPTZ '-infinity', TIMESTAMPTZ '0001-01-01 00:00:00+00', TIMESTAMPTZ '9999-12-31 23:59:59.999999+00', TIMESTAMPTZ '0044-03-15 (BC) 12:00:00+00']::VARCHAR;
+----
+['2024-01-02 03:04:05.123456+00', infinity, -infinity, '0001-01-01 00:00:00+00', '9999-12-31 23:59:59.999999+00', '0044-03-15 (BC) 12:00:00+00']
+
+statement ok
+SET TimeZone = 'America/New_York';
+
+query I
+SELECT [TIMESTAMPTZ '2024-03-10 06:59:59.999999+00', TIMESTAMPTZ '2024-03-10 07:00:00+00', TIMESTAMPTZ '2024-11-03 05:59:59.999999+00', TIMESTAMPTZ '2024-11-03 06:00:00+00', TIMESTAMPTZ '1883-11-18 16:59:59+00']::VARCHAR;
+----
+['2024-03-10 01:59:59.999999-05', '2024-03-10 03:00:00-04', '2024-11-03 01:59:59.999999-04', '2024-11-03 01:00:00-05', '1883-11-18 12:03:57-04:56']
+
+query I
+SELECT ['2024-03-10 06:59:59.999999999+00'::TIMESTAMPTZ_NS, '2024-07-01 12:00:00.000000001+00'::TIMESTAMPTZ_NS]::VARCHAR;
+----
+['2024-03-10 01:59:59.999999999-05', '2024-07-01 08:00:00.000000001-04']
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query I
+SELECT [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '1941-10-01 00:00:00+00']::VARCHAR;
+----
+['2024-01-01 05:30:00+05:30', '1941-10-01 06:30:00+06:30']
+
+statement ok
+SET TimeZone = 'Pacific/Chatham';
+
+query I
+SELECT [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '2024-07-01 00:00:00+00']::VARCHAR;
+----
+['2024-01-01 13:45:00+13:45', '2024-07-01 12:45:00+12:45']
+
+statement ok
+SET TimeZone = 'Africa/Monrovia';
+
+query I
+SELECT [TIMESTAMPTZ '1900-06-01 12:00:00+00', TIMESTAMPTZ '1972-01-07 00:44:29+00', TIMESTAMPTZ '1972-01-07 00:44:30+00']::VARCHAR;
+----
+['1900-06-01 11:16:52-00:43', '1972-01-06 23:59:59-00:44', '1972-01-07 00:44:30+00']
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+query I
+SELECT [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '2024-07-01 00:00:00+00']::VARCHAR;
+----
+['2024-01-01 11:00:00+11', '2024-07-01 10:30:00+10:30']
+
+statement ok
+SET Calendar = 'japanese';
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query I
+SELECT [TIMESTAMPTZ '2024-01-01 00:00:00+00']::VARCHAR;
+----
+['2024-01-01 09:00:00+09']
