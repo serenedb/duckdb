@@ -71,8 +71,8 @@ bool ZstdStreamWrapper::Read(StreamData &sd) {
 	in_buffer.size = sd.in_buff_end - sd.in_buff_start;
 	in_buffer.pos = 0;
 
-	out_buffer.dst = sd.out_buff_start;
-	out_buffer.size = sd.out_buf_size;
+	out_buffer.dst = sd.out_buff_end;
+	out_buffer.size = sd.out_buff_limit - sd.out_buff_end;
 	out_buffer.pos = 0;
 
 	auto res = duckdb_zstd::ZSTD_decompressStream(zstd_stream_ptr, &out_buffer, &in_buffer);

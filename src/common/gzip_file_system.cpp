@@ -83,7 +83,7 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 	D_ASSERT(sd.in_buff_end - sd.in_buff_start < NumericLimits<int32_t>::Maximum());
 	stream.avail_in = static_cast<uint32_t>(sd.in_buff_end - sd.in_buff_start);
 	stream.next_out = data_ptr_cast(sd.out_buff_end);
-	stream.avail_out = static_cast<uint32_t>((sd.out_buff.get() + sd.out_buf_size) - sd.out_buff_end);
+	stream.avail_out = static_cast<uint32_t>(sd.out_buff_limit - sd.out_buff_end);
 	const auto ret = inflate(&stream, Z_NO_FLUSH);
 	if (ret != Z_OK && ret != Z_STREAM_END) {
 		const string reason = stream.msg ? stream.msg : zError(ret);
@@ -97,7 +97,7 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 	sd.in_buff_start = (data_ptr_t)stream.next_in; // NOLINT
 	sd.in_buff_end = sd.in_buff_start + stream.avail_in;
 	sd.out_buff_end = data_ptr_cast(stream.next_out);
-	D_ASSERT(sd.out_buff_end + stream.avail_out == sd.out_buff.get() + sd.out_buf_size);
+	D_ASSERT(sd.out_buff_end + stream.avail_out == sd.out_buff_limit);
 	return false;
 }
 

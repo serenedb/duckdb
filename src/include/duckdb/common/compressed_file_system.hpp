@@ -76,6 +76,7 @@ struct StreamData {
 	unsafe_unique_array<data_t> out_buff;
 	data_ptr_t out_buff_start = nullptr;
 	data_ptr_t out_buff_end = nullptr;
+	data_ptr_t out_buff_limit = nullptr;
 	data_ptr_t in_buff_start = nullptr;
 	data_ptr_t in_buff_end = nullptr;
 
