@@ -148,7 +148,7 @@ public:
 	void DecompressAll(const_data_ptr_t piece, const PieceSpan &span, data_ptr_t out) override {
 		string error;
 		if (!decompressor.TryDecompress(BlockCodec::ZSTD, piece, span.size, out, span.output_size, error)) {
-			throw IOException("Failed to decode a ZSTD frame: %s", error);
+			throw IOException(error);
 		}
 	}
 
