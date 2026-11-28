@@ -8,6 +8,7 @@
 #include "duckdb/common/serializer/async_memory_governor.hpp"
 #include "duckdb/common/serializer/async_file_writer.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
+#include "duckdb/formats/copy_file_writer.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -1160,10 +1161,10 @@ TEST_CASE("CSVWriter applies backpressure on automatic async flushes", "[async_f
 	auto path = TestCreatePath("csv_writer_async_backpressure.tmp");
 	fs.TryRemoveFile(path);
 
-	AsyncFileWriter file_writer(*con->context, fs, path);
+	CopyFileWriter copy_file(*con->context, fs, path, FileCompressionType::UNCOMPRESSED, "\n");
 	CSVReaderOptions options;
 	options.force_quote.push_back(false);
-	CSVWriter writer(options, file_writer);
+	CSVWriter writer(options, copy_file);
 	CSVWriterState local_state(*con->context, writer.writer_options.flush_size);
 	string data(writer.writer_options.flush_size, 'x');
 	DataChunk input;
@@ -1199,8 +1200,7 @@ TEST_CASE("CSVWriter applies backpressure on automatic async flushes", "[async_f
 	if (write_error) {
 		std::rethrow_exception(write_error);
 	}
-	file_writer.Close();
-	REQUIRE(file_writer.GetTotalWritten() == writer.BytesWritten());
+	REQUIRE(copy_file.Close() == write_count * (data.size() + 1) - 1);
 	fs.RemoveFile(path);
 }
 

@@ -4,6 +4,7 @@ add_library_unity(
   block_codecs.cpp
   copy_encoding.cpp
   copy_fields.cpp
+  copy_file_writer.cpp
   copy_from.cpp
   copy_options.cpp
   csv_encoder.cpp

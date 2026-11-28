@@ -15,11 +15,10 @@
 #include "duckdb/formats/csv_encoder.hpp"
 
 namespace duckdb {
-class AsyncFileWriter;
 class CompressedPiece;
+class CopyFileWriter;
 class MemoryStream;
 class PieceCompressor;
-class PiecedFile;
 
 enum class CSVNewLineMode {
 	//! Newlines are written before writing out a new csv line. Ensures we don't write an empty line at the end of
@@ -69,9 +68,7 @@ class CSVWriter {
 public:
 	//! Create a CSVWriter that writes to a (non-owned) WriteStream
 	CSVWriter(WriteStream &stream, vector<Identifier> name_list, bool shared = true);
-	//! Create a CSVWriter with the full set of options that writes to a (non-owned) AsyncFileWriter
-	CSVWriter(CSVReaderOptions &options, AsyncFileWriter &file_writer, optional_ptr<PiecedFile> pieced = nullptr,
-	          bool shared = true);
+	CSVWriter(CSVReaderOptions &options, CopyFileWriter &copy_file, bool shared = true);
 
 	//! Create a CSVWriter that writes to a file
 	CSVWriter(CSVReaderOptions &options, FileSystem &fs, const string &file_path, FileCompressionType compression,
@@ -135,11 +132,10 @@ protected:
 
 	//! (optional) The owned file writer of this CSVWriter
 	unique_ptr<BufferedFileWriter> file_writer;
-	//! (optional) The non-owned async file writer of this CSVWriter
-	optional_ptr<AsyncFileWriter> async_file_writer;
+	optional_ptr<CopyFileWriter> copy_file;
 
 	//! The WriteStream to write the CSV data to
-	WriteStream &write_stream;
+	optional_ptr<WriteStream> write_stream;
 
 	idx_t bytes_written = 0;
 
@@ -150,13 +146,7 @@ protected:
 
 	unique_ptr<CSVWriterState> global_write_state;
 
-	optional_ptr<PiecedFile> pieced;
-	unique_ptr<PieceCompressor> compressor;
-	unique_ptr<CompressedPiece> separator;
-
 	CsvEncoding Encoding() const;
-	void WriteCompressed(const_data_ptr_t data, idx_t size);
-	void WritePiece(unique_ptr<CompressedPiece> piece);
 };
 
 } // namespace duckdb
