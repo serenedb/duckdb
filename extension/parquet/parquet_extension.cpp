@@ -30,6 +30,7 @@
 #include "duckdb/common/enums/file_compression_type.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/formats/block_codecs.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
@@ -326,13 +327,7 @@ static unique_ptr<FunctionData> ParquetWriteBind(ClientContext &context, CopyFun
 			}
 			bind_data->bloom_filter_false_positive_ratio = val;
 		} else if (option_name == "compression_level") {
-			const auto val = option_values[0].GetValue<int64_t>();
-			if (val < ZStdFileSystem::MinimumCompressionLevel() || val > ZStdFileSystem::MaximumCompressionLevel()) {
-				throw BinderException("Compression level must be between %lld and %lld",
-				                      ZStdFileSystem::MinimumCompressionLevel(),
-				                      ZStdFileSystem::MaximumCompressionLevel());
-			}
-			bind_data->compression_level = val;
+			bind_data->compression_level = option_values[0].GetValue<int64_t>();
 			compression_level_set = true;
 		} else if (option_name == "parquet_version") {
 			const auto roption = StringUtil::Upper(option_values[0].ToString());
@@ -367,8 +362,31 @@ static unique_ptr<FunctionData> ParquetWriteBind(ClientContext &context, CopyFun
 		}
 	}
 
-	if (compression_level_set && bind_data->codec != CompressionCodec::ZSTD) {
-		throw BinderException("Compression level is only supported for the ZSTD compression codec");
+	if (compression_level_set) {
+		int64_t minimum;
+		int64_t maximum;
+		switch (bind_data->codec) {
+		case CompressionCodec::ZSTD:
+			minimum = ZStdFileSystem::MinimumCompressionLevel();
+			maximum = ZStdFileSystem::MaximumCompressionLevel();
+			break;
+		case CompressionCodec::GZIP:
+			minimum = 0;
+			maximum = 9;
+			break;
+		case CompressionCodec::BROTLI:
+			minimum = 0;
+			maximum = 11;
+			break;
+		default:
+			throw BinderException(
+			    "Compression level is only supported for the ZSTD, GZIP and BROTLI compression codecs");
+		}
+		if (bind_data->compression_level < minimum || bind_data->compression_level > maximum) {
+			throw BinderException("Compression level must be between %lld and %lld", minimum, maximum);
+		}
+	} else if (bind_data->codec != CompressionCodec::ZSTD) {
+		bind_data->compression_level = BlockCompressor::DEFAULT_LEVEL;
 	}
 
 	bind_data->sql_types = sql_types;

@@ -171,9 +171,7 @@ void ColumnWriter::CompressPage(MemoryStream &temp_writer, size_t &compressed_si
 		compressed_size = temp_writer.GetPosition();
 		compressed_data = temp_writer.GetData();
 	} else if (TryGetParquetBlockCodec(codec, block_codec)) {
-		BlockCompressor compressor(block_codec, codec == CompressionCodec::ZSTD
-		                                            ? NumericCast<int>(writer.CompressionLevel())
-		                                            : BlockCompressor::DEFAULT_LEVEL);
+		BlockCompressor compressor(block_codec, NumericCast<int>(writer.CompressionLevel()));
 		const auto bound = compressor.MaxCompressedSize(temp_writer.GetPosition());
 		compressed_buf = BufferAllocator::Get(writer.GetContext()).Allocate(bound);
 		compressed_size =
