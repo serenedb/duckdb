@@ -223,8 +223,8 @@ void StatementPreprocessor::ResolveAddColumn(MultiStatement &multi_statement) co
 		return;
 	}
 	auto &add_column = alter.Cast<AddColumnInfo>();
-	auto entry = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, add_column.GetQualifiedName()),
-	                               OnEntryNotFound::RETURN_NULL);
+	auto entry = CatalogEntryRetriever(context).GetEntry(
+	    EntryLookupInfo(CatalogType::TABLE_ENTRY, add_column.GetQualifiedName()), OnEntryNotFound::RETURN_NULL);
 	if (!entry) {
 		if (add_column.if_not_found == OnEntryNotFound::RETURN_NULL) {
 			statements.resize(1);
