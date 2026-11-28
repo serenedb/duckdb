@@ -43,6 +43,11 @@ bool Expression::IsConsistent() const {
 	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.IsConsistent(); });
 }
 
+bool Expression::IsScored() const {
+	return rewrite_guard == RewriteGuard::SCORED ||
+	       ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.IsScored(); });
+}
+
 bool Expression::CanThrow() const {
 	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.CanThrow(); });
 }

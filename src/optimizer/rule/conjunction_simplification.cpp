@@ -36,6 +36,9 @@ unique_ptr<Expression> ConjunctionSimplificationRule::Apply(LogicalOperator &op,
                                                             bool is_root) {
 	auto &conjunction = bindings[0].get().Cast<BoundConjunctionExpression>();
 	auto &constant_expr = bindings[1].get();
+	if (conjunction.GetRewriteGuard() == RewriteGuard::FIXED_CHILDREN) {
+		return nullptr;
+	}
 	// the constant_expr is a scalar expression that we have to fold
 	// use an ExpressionExecutor to execute the expression
 	D_ASSERT(constant_expr.IsFoldable());
@@ -68,6 +71,11 @@ unique_ptr<Expression> ConjunctionSimplificationRule::Apply(LogicalOperator &op,
 			// FALSE in OR, remove the expression from the set
 			return RemoveExpression(conjunction, constant_expr);
 		} else {
+			for (auto &child : conjunction.GetChildren()) {
+				if (child.get() != &constant_expr && child->IsScored()) {
+					return nullptr;
+				}
+			}
 			// TRUE in OR, result of expression is true
 			return make_uniq<BoundConstantExpression>(Value::BOOLEAN(true));
 		}
