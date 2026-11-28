@@ -10,6 +10,7 @@
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 
 #include <cmath>
 
@@ -590,8 +591,7 @@ bool JsonDirectDecoder::Leaf(idx_t id, simdjson::ondemand::value &value, idx_t r
 		if (token.size() >= 2 && token.front() == '"') {
 			const auto content = token.substr(1, token.size() - 2);
 			if (PlainString(content)) {
-				reinterpret_cast<string_t *>(state.data)[row] =
-				    string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
+				MakeString(content.data(), content.size(), readable_end, reinterpret_cast<string_t *>(state.data)[row]);
 				return true;
 			}
 		}

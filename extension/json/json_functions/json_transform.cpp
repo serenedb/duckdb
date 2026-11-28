@@ -1350,6 +1350,7 @@ bool TransformDirect(const UnifiedVectorFormat &input_data, const string_t *inpu
 	Vector direct(result.GetType(), count);
 	JsonDirectDecoder decoder(lstate.nodes, options, lstate.parser, lstate.writer);
 	decoder.Bind(lstate.root, direct, count);
+	decoder.readable_end = lstate.documents.data() + total;
 	char *document_data = lstate.documents.data();
 	for (idx_t i = 0; i < count; i++) {
 		const auto idx = input_data.sel->get_index(i);

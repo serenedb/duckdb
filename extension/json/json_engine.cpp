@@ -1505,6 +1505,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 	const idx_t column_count = vectors.size();
 	const uint8_t *skips = global.pass_skips.data() + static_cast<idx_t>(pass) * column_count;
 	const idx_t begin = starts[record];
+	decoder.readable_end = data + size + JSON_PADDING;
 	ondemand::document document;
 	auto code = direct_parser.iterate(data + begin, lengths[record], size + JSON_PADDING - begin).get(document);
 	if (code == simdjson::MEMALLOC && direct_memory.error.HasError()) {

@@ -108,6 +108,7 @@ public:
 
 public:
 	bool skipped = false;
+	const char *readable_end = nullptr;
 
 private:
 	void Refresh(idx_t id, idx_t from, idx_t capacity);
