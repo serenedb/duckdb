@@ -29,9 +29,14 @@ uint64_t ExpectedPattern(idx_t columns, idx_t phase) {
 	return result;
 }
 
+template <int FIRST>
 inline uint32_t *WritePositions(uint64_t bits, uint32_t offset, uint32_t *out) {
 	const int count = std::popcount(bits);
-	for (int i = 0; i < count; i += 4) {
+	for (int i = 0; i < FIRST; i++) {
+		out[i] = offset + static_cast<uint32_t>(std::countr_zero(bits));
+		bits &= bits - 1;
+	}
+	for (int i = FIRST; i < count; i += 4) {
 		out[i] = offset + static_cast<uint32_t>(std::countr_zero(bits));
 		bits &= bits - 1;
 		out[i + 1] = offset + static_cast<uint32_t>(std::countr_zero(bits));
@@ -314,8 +319,8 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		return reach - prior > limit;
 	};
 	while (pos + CSV_BLOCK_BYTES <= end) {
-		if constexpr (!EXTRACT && !SHAPE) {
-			if (!(in_quotes | after_closer | after_opener)) {
+		if constexpr (!SHAPE) {
+			if (!(in_quotes | after_closer | after_opener | pending_flag)) {
 				D_ASSERT(!d.comment && !escape);
 				const char quote_byte = d.quote ? d.quote : '\r';
 				const idx_t run_start = pos;
@@ -328,6 +333,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					const uint64_t merged = d.merge_terms && !d.empty_lines ? after_terms : 0;
 					const uint64_t row_ends = terms & ~merged;
 					const uint64_t line_ends = d.empty_lines ? row_ends & ~after_terms : row_ends;
+					const uint64_t row_starts = after_terms & ~(terms & merged);
 					const uint64_t boundaries = delims | row_ends;
 					idx_t next_phase = phase;
 					if (check_arity && boundaries) {
@@ -355,8 +361,15 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					}
 					settled = block_settled;
 					phase = next_phase;
+					if constexpr (EXTRACT) {
+						const auto offset = static_cast<uint32_t>(pos - anchor);
+						rows_out = WritePositions<4>(row_starts, offset, rows_out);
+						ends_out = WritePositions<8>(boundaries, offset, ends_out);
+						open_rows += std::popcount(row_starts);
+						open_rows -= std::popcount(row_ends);
+					}
 					if (track_fields) {
-						const uint64_t field_bits = from_delims | (after_terms & ~(terms & merged));
+						const uint64_t field_bits = from_delims | row_starts;
 						if (field_bits) {
 							field_start = pos + 63 - std::countl_zero(field_bits);
 						}
@@ -597,9 +610,9 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		}
 		if (EXTRACT) {
 			const uint32_t offset = static_cast<uint32_t>(pos - anchor);
-			rows_out = WritePositions(row_starts, offset, rows_out);
+			rows_out = WritePositions<4>(row_starts, offset, rows_out);
 			uint32_t *block_ends = ends_out;
-			ends_out = WritePositions(boundaries, offset, ends_out);
+			ends_out = WritePositions<8>(boundaries, offset, ends_out);
 			if (raw_quote | pending_flag) {
 				FlagFields(raw_quote, boundaries, pending_flag, block_ends);
 			}
@@ -1328,7 +1341,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		}
 		if (EXTRACT) {
 			const uint32_t offset = static_cast<uint32_t>(c.pos - c.anchor);
-			rows_out = WritePositions(row_starts, offset, rows_out);
+			rows_out = WritePositions<0>(row_starts, offset, rows_out);
 			c.open_rows += std::popcount(row_starts);
 			uint32_t *block_ends = ends_out;
 			if (d.strip_carriage) {
@@ -1339,9 +1352,9 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					*ends_out++ = offset - 1;
 				}
 				ends_out =
-				    WritePositions((boundaries & ~stripped) | ((stripped & ~uint64_t(1)) >> 1), offset, ends_out);
+				    WritePositions<0>((boundaries & ~stripped) | ((stripped & ~uint64_t(1)) >> 1), offset, ends_out);
 			} else {
-				ends_out = WritePositions(boundaries, offset, ends_out);
+				ends_out = WritePositions<0>(boundaries, offset, ends_out);
 			}
 			const uint64_t specials = raw_quote | escape_bits;
 			if (specials | c.pending_flag) {
