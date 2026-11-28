@@ -1,0 +1,168 @@
+# name: test/sql/copy/parquet/parquet_plain_string_filters.test
+# description: Filters on strings of plain Parquet pages are evaluated on the value bytes and keep the rows a table scan keeps, with NULLs, non-ASCII pages and every predicate kind
+# group: [parquet]
+
+require parquet
+
+statement ok
+CREATE TABLE src AS
+SELECT i,
+       CASE WHEN i % 13 = 0 THEN NULL
+            WHEN i % 5 = 0 THEN 'élan furiously ' || i
+            WHEN i % 3 = 0 THEN 'quietly ' || i || ' furious'
+            ELSE 'plain ' || i || ' text' END AS s
+FROM range(20000) t(i);
+
+statement ok
+COPY src TO '{TEMP_DIR}/plain_strings.parquet' (ROW_GROUP_SIZE 5000);
+
+statement ok
+COPY (SELECT i, s FROM src WHERE i % 5 <> 0) TO '{TEMP_DIR}/plain_ascii.parquet' (ROW_GROUP_SIZE 5000);
+
+query I
+SELECT DISTINCT encodings FROM parquet_metadata('{TEMP_DIR}/plain_strings.parquet') WHERE path_in_schema = 's';
+----
+PLAIN
+
+query II
+SELECT count(*), sum(i) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE '%furiously%';
+----
+3692	36916930
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE '%furious%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%furious%') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE 'plain%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE 'plain%') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE '%text') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%text') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE '%1%3%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%1%3%') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s NOT LIKE '%furious%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s NOT LIKE '%furious%') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s = 'plain 7 text') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s = 'plain 7 text') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s < 'p') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s < 'p') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s IN ('plain 1 text', 'élan furiously 10', 'missing')) = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s IN ('plain 1 text', 'élan furiously 10', 'missing')) AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s IS NULL) = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s IS NULL) AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s IS NOT NULL) = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s IS NOT NULL) AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE '%1%' AND s LIKE '%2%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%1%' AND s LIKE '%2%') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_strings.parquet' WHERE s LIKE '%élan%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%élan%') AND TRUE);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s LIKE '%furious%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%furious%') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s LIKE 'plain%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE 'plain%') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s LIKE '%text') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%text') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s LIKE '%1%3%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%1%3%') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s NOT LIKE '%furious%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s NOT LIKE '%furious%') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s = 'plain 7 text') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s = 'plain 7 text') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s < 'p') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s < 'p') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s IN ('plain 1 text', 'élan furiously 10', 'missing')) = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s IN ('plain 1 text', 'élan furiously 10', 'missing')) AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s IS NULL) = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s IS NULL) AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s IS NOT NULL) = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s IS NOT NULL) AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s LIKE '%1%' AND s LIKE '%2%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%1%' AND s LIKE '%2%') AND i % 5 <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM '{TEMP_DIR}/plain_ascii.parquet' WHERE s LIKE '%élan%') = (SELECT count(*) || ':' || coalesce(sum(hash(i, s)), 0) FROM src WHERE (s LIKE '%élan%') AND i % 5 <> 0);
+----
+true
+
+statement ok
+COPY (SELECT i, CASE WHEN i % 2 = 0 THEN 'a' || i || 'z' ELSE 'bbbb' END AS s FROM range(10000) t(i)) TO '{TEMP_DIR}/plain_boundaries.parquet';
+
+query I
+SELECT count(*) FROM '{TEMP_DIR}/plain_boundaries.parquet' WHERE s LIKE '%z' || chr(4) || '%';
+----
+0
+
+query II
+SELECT count(*), sum(i) FROM '{TEMP_DIR}/plain_boundaries.parquet' WHERE s LIKE '%8z%';
+----
+1000	5003000
+
+query II
+SELECT count(*), sum(i) FROM '{TEMP_DIR}/plain_boundaries.parquet' WHERE s LIKE '%b%';
+----
+5000	25000000

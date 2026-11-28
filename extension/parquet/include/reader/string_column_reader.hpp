@@ -19,6 +19,7 @@
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/string_type.hpp"
+#include "duckdb/formats/raw_predicates.hpp"
 #include "resizable_buffer.hpp"
 
 namespace duckdb {
@@ -93,9 +94,18 @@ protected:
 	bool SupportsDirectSelect() const override {
 		return true;
 	}
+	bool PlainFilters(const TableFilter &filter) override;
+	void PlainFilter(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values, Vector &result,
+	                 SelectionVector &sel, idx_t &approved_tuple_count) override;
 
 private:
+	void PlainFilterContains(ByteBuffer &values, uint8_t *defines, idx_t num_values, Vector &result,
+	                         SelectionVector &passed, idx_t &count);
+
 	mutable optional_ptr<Vector> current_plain_result;
+	optional_ptr<const TableFilter> raw_filter;
+	vector<RawPredicate> raw_predicates;
+	shared_ptr<RawContains> raw_contains;
 };
 
 struct StringParquetValueConversion {

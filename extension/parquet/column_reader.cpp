@@ -915,6 +915,15 @@ void ColumnReader::DirectFilter(ColumnReaderInput &input, Vector &result, const 
 		FinishRead(to_read);
 		return;
 	}
+	if (encoding == ColumnEncoding::PLAIN && read_now == to_read && !page_is_filtered_out && !HasRepeats() &&
+	    PlainFilters(filter)) {
+		const auto all_valid = PrepareRead(read_now, define_out, repeat_out, 0);
+		const auto define_ptr = all_valid ? nullptr : static_cast<uint8_t *>(define_out);
+		PlainFilter(block, define_ptr, read_now, result, sel, approved_tuple_count);
+		page_rows_available -= read_now;
+		FinishRead(to_read);
+		return;
+	}
 	// fallback to regular read + filter
 	ReadInternal(input, result);
 	ApplyFilter(result, filter, filter_state, num_values, sel, approved_tuple_count);
