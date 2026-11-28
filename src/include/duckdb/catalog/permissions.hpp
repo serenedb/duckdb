@@ -40,8 +40,7 @@ struct PrivilegeTarget {
 	PrivilegeTarget(const CatalogEntry &entry, const Permissions &permissions)
 	    : entry(&entry), type(entry.type), oid(entry.oid), permissions(permissions) {
 	}
-	PrivilegeTarget(CatalogType type, const Permissions &permissions, RoleCapability capability = RoleCapability::None)
-	    : type(type), permissions(permissions), capability(capability) {
+	PrivilegeTarget(CatalogType type, const Permissions &permissions) : type(type), permissions(permissions) {
 	}
 	static PrivilegeTarget Columns(const CatalogEntry &relation, std::span<const LogicalIndex> columns) {
 		PrivilegeTarget target(relation);
@@ -80,7 +79,6 @@ struct PrivilegeTarget {
 	optional_ptr<const ColumnList> column_list;
 	bool of_columns = false;
 	optional_ptr<const SchemaView> schema;
-	RoleCapability capability = RoleCapability::None;
 };
 
 enum class StatementRule : uint8_t {

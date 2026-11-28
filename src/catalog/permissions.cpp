@@ -349,8 +349,7 @@ bool PrivilegeCheck::Holds(const RoleAccess &role, const PrivilegeTarget &target
 		const auto required = target.entry->Cast<FunctionEntry>().required_capability;
 		return required == RoleCapability::None || HoldsRequiredRole(role, required);
 	}
-	if (modes == AclMode::NoRights ||
-	    (target.capability != RoleCapability::None && HoldsRequiredRole(role, target.capability))) {
+	if (modes == AclMode::NoRights) {
 		return true;
 	}
 	const auto type = ObjectKindOf(target.type).acl_class;
