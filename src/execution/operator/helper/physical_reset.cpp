@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/helper/physical_reset.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enums/set_scope.hpp"
 #include "duckdb/execution/operator/helper/physical_set.hpp"
 
@@ -180,7 +181,8 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 	return SourceResultType::FINISHED;
 }
 
-void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name, SetScope scope) {
+void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name, SetScope scope, bool check_access,
+                                  optional_ptr<const RoleAccess> role) {
 	auto &config = DBConfig::GetConfig(context);
 
 	// Single-target RESET: the handler call moved inside ResetOption /
@@ -188,6 +190,9 @@ void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
 		const auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
+		if (check_access) {
+			Settings::CheckChange(role ? *role : Role(context), name, option->access, variable_scope);
+		}
 		ResetOption(context, config, *option, name.GetIdentifierName().c_str(), variable_scope);
 		return;
 	}
@@ -203,6 +208,9 @@ void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name
 		}
 	}
 	const auto variable_scope = PhysicalSet::GetSettingScope(extension_option, scope);
+	if (check_access) {
+		Settings::CheckChange(role ? *role : Role(context), name, extension_option.access, variable_scope);
+	}
 	ResetExtensionVariable(context, config, name, extension_option, variable_scope);
 }
 
