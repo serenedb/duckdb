@@ -162,20 +162,7 @@ bool CollectRawPredicates(const Expression &expr, bool string_column, vector<Raw
 			    {type == ExpressionType::OPERATOR_IS_NULL ? RawPredicateKind::IS_NULL : RawPredicateKind::IS_NOT_NULL});
 			return true;
 		}
-		if (type != ExpressionType::COMPARE_IN || !string_column) {
-			return false;
-		}
-		RawPredicate predicate {RawPredicateKind::IN_LIST};
-		for (idx_t i = 1; i < children.size(); i++) {
-			auto value = StringConstant(*children[i]);
-			if (!value) {
-				return false;
-			}
-			predicate.values.push_back(*value);
-		}
-		std::sort(predicate.values.begin(), predicate.values.end());
-		out.push_back(std::move(predicate));
-		return true;
+		return false;
 	}
 	case ExpressionClass::BOUND_FUNCTION: {
 		if (!string_column) {
@@ -220,11 +207,6 @@ bool RawPasses(const vector<RawPredicate> &predicates, const char *value, idx_t 
 		const std::string_view field(value, size);
 		switch (predicate.kind) {
 		case RawPredicateKind::IS_NOT_NULL:
-			break;
-		case RawPredicateKind::IN_LIST:
-			if (!std::binary_search(predicate.values.begin(), predicate.values.end(), field)) {
-				return false;
-			}
 			break;
 		case RawPredicateKind::LIKE:
 		case RawPredicateKind::NOT_LIKE:

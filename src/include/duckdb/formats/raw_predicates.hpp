@@ -19,7 +19,7 @@ namespace duckdb {
 
 class Expression;
 
-enum class RawPredicateKind : uint8_t { COMPARE, IN_LIST, IS_NULL, IS_NOT_NULL, LIKE, NOT_LIKE };
+enum class RawPredicateKind : uint8_t { COMPARE, IS_NULL, IS_NOT_NULL, LIKE, NOT_LIKE };
 
 struct RawPredicate {
 	RawPredicateKind kind;
