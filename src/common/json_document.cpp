@@ -780,7 +780,6 @@ static const char *JSONErrorMessage(simdjson::error_code error) {
 		return "invalid escaped sequence in string";
 	case simdjson::UNESCAPED_CHARS:
 		return "unexpected control character in string";
-	case simdjson::UNCLOSED_STRING:
 	case simdjson::INCOMPLETE_ARRAY_OR_OBJECT:
 		return "unexpected end of data";
 	case simdjson::NUMBER_ERROR:
