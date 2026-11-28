@@ -398,4 +398,19 @@ TEST_CASE("Pins of a block another pin is loading wait for that load", "[storage
 }
 #endif
 
+TEST_CASE("A max_temp_directory_size the database starts with limits its temporary files",
+          "[storage][buffer_manager]") {
+	DBConfig config;
+	config.options.maximum_memory = 32ULL * 1024 * 1024;
+	config.options.maximum_threads = 2;
+	config.options.temporary_directory = TestCreatePath("max_temp_directory_size_at_start");
+	config.options.use_temporary_directory = true;
+	config.SetOptionByName("max_temp_directory_size", Value("1MiB"));
+	DuckDB db(nullptr, &config);
+	Connection con(db);
+	auto result = con.Query("SELECT count(*) FROM (SELECT * FROM range(10000000) t(i) ORDER BY i DESC)");
+	REQUIRE(result->HasError());
+	REQUIRE(StringUtil::Contains(result->GetError(), "max_temp_directory_size"));
+}
+
 } // namespace duckdb

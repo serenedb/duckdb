@@ -84,6 +84,10 @@ StandardBufferManager::StandardBufferManager(DatabaseInstance &db, string tmp)
 	temp_block_manager =
 	    make_uniq<InMemoryBlockManager>(*this, DEFAULT_BLOCK_ALLOC_SIZE, DEFAULT_BLOCK_HEADER_STORAGE_SIZE);
 	temporary_directory.path = std::move(tmp);
+	const auto swap_limit = DBConfig::GetConfig(db).options.maximum_swap_space;
+	if (swap_limit != DConstants::INVALID_INDEX) {
+		temporary_directory.maximum_swap_space = swap_limit;
+	}
 	for (idx_t i = 0; i < MEMORY_TAG_COUNT; i++) {
 		evicted_data_per_tag[i] = 0;
 	}
