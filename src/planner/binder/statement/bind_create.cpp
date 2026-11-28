@@ -1189,11 +1189,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		BindCreateSchema(info);
 		auto &role = CheckAs();
 		const auto owner = authorization && !role.IsSystem() ? authorization->oid : role.role;
-		if (auto database = Catalog::GetEntry(
-		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(info.SchemaCatalog())),
-		        OnEntryNotFound::RETURN_NULL)) {
-			Check(context, role, *database, AclMode::Create).Require();
-		}
+		entry_retriever.GetEntry(
+		    EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(info.SchemaCatalog()), AclMode::Create),
+		    OnEntryNotFound::RETURN_NULL);
 		if (!role.IsSystem()) {
 			if (authorization) {
 				Check(context, role, *authorization, AclMode::SetRole).Require();
@@ -1514,9 +1512,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
 		auto &role = CheckAs();
 		if (!info.owner.empty()) {
-			auto &owner = *BindRole(RoleSpec(info.owner));
-			info.permissions.owner = owner.oid;
-			Check(context, role, owner, AclMode::SetRole).Require();
+			info.permissions.owner =
+			    BindRole(RoleSpec(info.owner), OnEntryNotFound::THROW_EXCEPTION, AclMode::SetRole)->oid;
 		} else if (!role.IsSystem()) {
 			info.permissions.owner = role.role;
 		}

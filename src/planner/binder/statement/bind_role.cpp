@@ -94,10 +94,10 @@ static void CheckMembershipAuthorization(ClientContext &context, const RoleAcces
 	RequireAdminOf(caller, granted, revoke ? RoleChange::REVOKE : RoleChange::GRANT);
 }
 
-optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound if_not_found) {
+optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound if_not_found, AclMode use) {
 	if (role.type == RoleSpecType::NAME) {
-		auto entry =
-		    entry_retriever.GetEntry(EntryLookupInfo(CatalogType::ROLE_ENTRY, QualifiedName(role.name)), if_not_found);
+		auto entry = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::ROLE_ENTRY, QualifiedName(role.name), use),
+		                                      if_not_found);
 		return entry ? &entry->Cast<RoleEntry>() : nullptr;
 	}
 	auto &system = Catalog::GetSystemCatalog(context);
@@ -105,6 +105,9 @@ optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound i
 	    system.LookupOwner(system.GetCatalogTransaction(context),
 	                       role.type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id);
 	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
+		if (use != AclMode::NoRights) {
+			Check(context, CheckAs(), *entry, use).Require();
+		}
 		return &entry->Cast<RoleEntry>();
 	}
 	if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {

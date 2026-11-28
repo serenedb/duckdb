@@ -492,7 +492,8 @@ public:
 	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
 	                         bool named_by_statement = false);
 	optional_ptr<RoleEntry> BindRole(const RoleSpec &role,
-	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION);
+	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION,
+	                                 AclMode use = AclMode::NoRights);
 	string RoleName(idx_t role);
 	static void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 	static void RefuseSystemTablespace(const CatalogEntry &entry);

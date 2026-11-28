@@ -403,9 +403,8 @@ void Binder::ResolveOwned(AlterOwnedInfo &info) {
 		RefuseBootstrapRole(*this, info.role_ids, "drop objects");
 		return;
 	}
-	auto &new_owner = *BindRole(info.new_owner);
+	auto &new_owner = *BindRole(info.new_owner, OnEntryNotFound::THROW_EXCEPTION, AclMode::SetRole);
 	info.new_owner_id = new_owner.oid;
-	Check(context, CheckAs(), new_owner, AclMode::SetRole).Require();
 	RefuseBootstrapRole(*this, info.role_ids, "reassign ownership of objects");
 	ListReassigned(*this, info, new_owner);
 }
