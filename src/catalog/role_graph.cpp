@@ -74,17 +74,17 @@ static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclM
 
 AclMode RoleAccess::PredefinedRoleModes(CatalogType type) const {
 	AclMode modes = AclMode::NoRights;
-	if (!reads_all_data && !writes_all_data && !maintains) {
+	if (!Uses(RoleCapability::ReadAllData | RoleCapability::WriteAllData | RoleCapability::Maintain)) {
 		return modes;
 	}
 	auto &kind = ObjectKindOf(type);
-	if (reads_all_data) {
+	if (Uses(RoleCapability::ReadAllData)) {
 		modes |= kind.read_all_data;
 	}
-	if (writes_all_data) {
+	if (Uses(RoleCapability::WriteAllData)) {
 		modes |= kind.write_all_data;
 	}
-	if (maintains) {
+	if (Uses(RoleCapability::Maintain)) {
 		modes |= kind.maintain;
 	}
 	return modes;
@@ -238,9 +238,11 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		const auto memberships_begin = arena.size();
 		arena.insert(arena.end(), role.memberships.begin(), role.memberships.end());
 		access.memberships = std::span<const idx_t>(arena.data() + memberships_begin, role.memberships.size());
-		access.reads_all_data = access.Uses(PredefinedRoleOid(RoleCapability::ReadAllData));
-		access.writes_all_data = access.Uses(PredefinedRoleOid(RoleCapability::WriteAllData));
-		access.maintains = access.Uses(PredefinedRoleOid(RoleCapability::Maintain));
+		for (const auto predefined : PREDEFINED_ROLES) {
+			if (access.Uses(PredefinedRoleOid(predefined))) {
+				access.predefined |= predefined;
+			}
+		}
 		roles.push_back(access);
 	}
 	if (!nodes.count(database_owner_role)) {

@@ -232,7 +232,7 @@ static bool Uses(AclMode use, AclMode modes) {
 }
 
 static bool HoldsRequiredRole(const RoleAccess &role, RoleCapability required) {
-	return role.owns_builtins || (required != RoleCapability::Superuser && role.MemberOf(PredefinedRoleOid(required)));
+	return role.owns_builtins || (required != RoleCapability::Superuser && role.Uses(required));
 }
 
 template <class F>
@@ -435,7 +435,7 @@ static_assert(std::size(STATEMENT_RULES) == static_cast<idx_t>(StatementRule::Se
 PrivilegeCheck PrivilegeCheck::Runs(const RoleAccess &role, StatementRule rule) {
 	auto &requirement = STATEMENT_RULES[static_cast<idx_t>(rule)];
 	if ((requirement.option != RoleOption::None && role.Has(requirement.option)) ||
-	    (requirement.capability != RoleCapability::None && role.MemberOf(PredefinedRoleOid(requirement.capability)))) {
+	    (requirement.capability != RoleCapability::None && role.Uses(requirement.capability))) {
 		return {};
 	}
 	PrivilegeCheck check(Denial::Statement, nullptr);

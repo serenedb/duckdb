@@ -1133,10 +1133,7 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 		return;
 	}
 	const auto holds = [&](const RoleAccess &role) {
-		return role.is_superuser || absl::c_any_of(PREDEFINED_ROLES, [&](RoleCapability predefined) {
-			       return (predefined & sufficient) != RoleCapability::None &&
-			              Check<AclMode::Usage>(role, PrivilegeTarget::Role(predefined));
-		       });
+		return role.is_superuser || role.Uses(sufficient);
 	};
 	if (!access_scope && holds(*current_role)) {
 		return;
