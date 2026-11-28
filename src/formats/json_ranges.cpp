@@ -1,11 +1,6 @@
 #include "duckdb/formats/json_ranges.hpp"
 
-#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/formats/csv_simd.hpp"
-
-#include <bit>
-#include <cstring>
 
 namespace duckdb {
 
@@ -17,31 +12,6 @@ struct JsonSpan {
 	int64_t delta = 0;
 	int64_t flipped_delta = 0;
 };
-
-template <class VISIT>
-void ScanJsonBlocks(const char *data, idx_t size, uint64_t &escape_carry, uint64_t &in_string, VISIT &&visit) {
-	char tail[CSV_BLOCK_BYTES];
-	for (idx_t offset = 0; offset < size; offset += CSV_BLOCK_BYTES) {
-		const idx_t available = MinValue<idx_t>(CSV_BLOCK_BYTES, size - offset);
-		const char *block = data + offset;
-		if (available < CSV_BLOCK_BYTES) {
-			memset(tail, 0, sizeof(tail));
-			memcpy(tail, block, available);
-			block = tail;
-		}
-		const CsvVector vector(block);
-		const uint64_t escaped = CsvFindEscaped(vector.Equal('\\'), escape_carry);
-		const uint64_t quotes = vector.Equal('"') & ~escaped;
-		const uint64_t strings = CsvPrefixXor(quotes) ^ in_string;
-		in_string = CsvSpread(strings >> 63);
-		if (available < CSV_BLOCK_BYTES) {
-			escape_carry = (escaped >> available) & 1;
-		}
-		if (!visit(offset, vector, strings, quotes)) {
-			return;
-		}
-	}
-}
 
 JsonSpan ScanSpan(const char *data, idx_t size, uint64_t escape_carry, uint64_t in_string) {
 	int64_t opens = 0;

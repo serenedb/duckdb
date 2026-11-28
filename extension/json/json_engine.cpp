@@ -47,38 +47,9 @@ const char *NextNewline(const char *ptr, idx_t size) {
 	return const_char_ptr_cast(memchr(ptr, '\n', size));
 }
 
-const char *NextJSONContainer(const char *ptr, const char *const end) {
-	uint64_t escape_carry = 0;
-	uint64_t in_string = 0;
-	int64_t depth = 0;
-	char tail[CSV_BLOCK_BYTES];
-	for (const char *start = ptr; start < end; start += CSV_BLOCK_BYTES) {
-		const auto available = NumericCast<idx_t>(end - start);
-		const char *block = start;
-		if (available < CSV_BLOCK_BYTES) {
-			memset(tail, 0, sizeof(tail));
-			memcpy(tail, start, available);
-			block = tail;
-		}
-		const CsvVector vector(block);
-		const uint64_t escaped = CsvFindEscaped(vector.Equal('\\'), escape_carry);
-		const uint64_t strings = CsvPrefixXor(vector.Equal('"') & ~escaped) ^ in_string;
-		in_string = CsvSpread(strings >> 63);
-		const uint64_t opens = (vector.Equal('{') | vector.Equal('[')) & ~strings;
-		for (uint64_t marks = opens | ((vector.Equal('}') | vector.Equal(']')) & ~strings); marks; marks &= marks - 1) {
-			const auto bit = std::countr_zero(marks);
-			depth += (opens >> bit) & 1 ? 1 : -1;
-			if (depth == 0) {
-				return start + bit + 1;
-			}
-		}
-	}
-	return end;
-}
-
 const char *NextJSONDefault(const char *ptr, const char *const end) {
 	if (*ptr == '{' || *ptr == '[') {
-		return NextJSONContainer(ptr, end);
+		return ptr + JsonContainerEnd(ptr, NumericCast<idx_t>(end - ptr));
 	}
 	idx_t parents = 0;
 	while (ptr != end) {
