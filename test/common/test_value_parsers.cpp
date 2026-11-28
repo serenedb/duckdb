@@ -84,3 +84,33 @@ TEST_CASE("Doubles the fast path refuses go to the full parser", "[formats]") {
 	REQUIRE(!ParseFull("1.5 _", out));
 	REQUIRE(!ParseFull("1.5x", out));
 }
+
+TEST_CASE("An ISO date parses to the date DuckDB's calendar gives", "[formats]") {
+	idx_t fast_dates = 0;
+	for (int32_t year = 1; year <= 9999; year++) {
+		for (int32_t month = 1; month <= 12; month++) {
+			for (int32_t day = 1; day <= 31; day++) {
+				char buffer[16] = {};
+				snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", year, month, day);
+				date_t expected;
+				const bool valid = Date::TryFromDate(year, month, day, expected);
+				date_t fast;
+				INFO(buffer);
+				REQUIRE(FastDate(buffer, 10, fast) == valid);
+				if (valid) {
+					REQUIRE(fast == expected);
+					fast_dates++;
+				}
+			}
+		}
+	}
+	REQUIRE(fast_dates == 3652059);
+	for (const string text : {"0000-01-01", "2024-00-10", "2024-13-01", "2024-01-00", "2023-02-29", "2100-02-29",
+	                          "2024/01/01", "2024-1-01", "20x4-01-01", "2024-01-011"}) {
+		char buffer[16] = {};
+		memcpy(buffer, text.data(), text.size());
+		date_t fast;
+		INFO(text);
+		REQUIRE(!FastDate(buffer, text.size(), fast));
+	}
+}

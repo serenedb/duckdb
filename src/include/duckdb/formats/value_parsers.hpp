@@ -260,6 +260,20 @@ template <class T>
 	if (year == 0 || month == 0 || month > 12 || day == 0) {
 		return false;
 	}
+	const auto shifted = static_cast<uint32_t>(year - (Date::EPOCH_YEAR - Date::YEAR_INTERVAL));
+	if (shifted < 2 * Date::YEAR_INTERVAL) {
+		const bool late = shifted >= Date::YEAR_INTERVAL;
+		const uint32_t index = late ? shifted - Date::YEAR_INTERVAL : shifted;
+		const int32_t year_days = Date::CUMULATIVE_YEAR_DAYS[index];
+		const bool leap_year = Date::CUMULATIVE_YEAR_DAYS[index + 1] - year_days == 366;
+		const int32_t *cumulative = leap_year ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS;
+		if (day > static_cast<uint32_t>(cumulative[month] - cumulative[month - 1])) {
+			return false;
+		}
+		const int32_t year_start = late ? year_days : year_days - Date::DAYS_PER_YEAR_INTERVAL;
+		out = date_t(year_start + cumulative[month - 1] + static_cast<int32_t>(day) - 1);
+		return true;
+	}
 	const bool leap = (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0);
 	static constexpr uint8_t DAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 	if (day > DAYS[month - 1] + (month == 2 && leap)) {
