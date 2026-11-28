@@ -9,8 +9,11 @@
 #pragma once
 
 #include "duckdb/common/enums/subquery_type.hpp"
+#include "duckdb/parser/function_body.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
+
+#include <optional>
 
 namespace duckdb {
 
@@ -53,6 +56,12 @@ public:
 	void SetPerCall() {
 		per_call = true;
 	}
+	const std::optional<FunctionBody> &GetFunctionBody() const {
+		return function_body;
+	}
+	void SetFunctionBody(FunctionBody body) {
+		function_body = body;
+	}
 
 	bool HasSubquery() const override {
 		return true;
@@ -82,5 +91,6 @@ private:
 	//! The comparison type of the child expression with the subquery (in case of ANY, ALL operators), empty otherwise
 	ExpressionType comparison_type;
 	bool per_call = false;
+	std::optional<FunctionBody> function_body;
 };
 } // namespace duckdb

@@ -20,6 +20,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/function_body.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
@@ -473,7 +474,7 @@ public:
 	void Execute(const MacroCatalogEntry &function, const MacroFunction &overload);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
-	void BindAsFunctionBody(const SelectStatement &statement);
+	void BindAsFunctionBody(const FunctionBody &body);
 	void UseFunctionSearchPath(const vector<string> &config);
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use, AclMode target = AclMode::NoRights);
 	RelationChecks ChecksOf(const StandardEntry &relation);

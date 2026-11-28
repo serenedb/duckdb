@@ -518,6 +518,12 @@
         "type": "bool",
         "serialize_skip": true,
         "hash_skip": true
+      },
+      {
+        "name": "function_body",
+        "type": "std::optional<FunctionBody>",
+        "serialize_skip": true,
+        "hash_skip": true
       }
     ]
   },

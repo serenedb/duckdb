@@ -111,7 +111,9 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 	auto subquery_binder = Binder::CreateBinder(context, binder);
 	subquery_binder->SetCanContainNulls(true);
 	subquery_binder->SetInsideSubquery();
-	subquery_binder->BindAsFunctionBody(*expr.Subquery());
+	if (auto &body = expr.GetFunctionBody()) {
+		subquery_binder->BindAsFunctionBody(*body);
+	}
 
 	subquery_binder->BeginSubqueryBind(binder, *this);
 	auto bound_node = subquery_binder->BindNode(*expr.Subquery()->node);

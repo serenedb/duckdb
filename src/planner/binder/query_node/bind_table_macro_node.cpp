@@ -135,12 +135,10 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		const Identifier body_alias("0_macro_body");
 		auto body = make_uniq<SelectStatement>();
 		body->node = std::move(node);
-		body->function_body = own_body;
-		body->function_owner = owner;
-		if (!macro_def.config.empty()) {
-			body->function_config = &macro_def.config;
-		}
 		auto body_ref = make_uniq<SubqueryRef>(std::move(body), body_alias);
+		if (own_body) {
+			body_ref->function_body = FunctionBody {owner, &macro_def.config};
+		}
 		auto select_node = make_uniq<SelectNode>();
 		select_node->select_list.push_back(make_uniq<StarExpression>(body_alias));
 		if (parameters) {

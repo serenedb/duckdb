@@ -203,15 +203,11 @@ unique_ptr<ParsedExpression> FunctionBodySubquery(unique_ptr<ParsedExpression> b
 	node->from_table = make_uniq<EmptyTableRef>();
 	auto statement = make_uniq<SelectStatement>();
 	statement->node = std::move(node);
-	statement->function_body = true;
-	statement->function_owner = owner;
-	if (!function.config.empty()) {
-		statement->function_config = &function.config;
-	}
 	auto subquery = make_uniq<SubqueryExpression>();
 	subquery->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
 	subquery->SubqueryMutable() = std::move(statement);
 	subquery->SetPerCall();
+	subquery->SetFunctionBody({owner, &function.config});
 	return std::move(subquery);
 }
 
@@ -321,12 +317,7 @@ bool AggregatesOnlyParameters(ParsedExpression &expr, DummyBinding &parameters,
 void ExpressionBinder::MarkFunctionBody(ParsedExpression &body, optional_idx owner, const MacroFunction &function) {
 	ParsedExpressionIterator::VisitExpressionClassMutable(
 	    body, ExpressionClass::SUBQUERY, [&](ParsedExpression &subquery) {
-		    auto &statement = *subquery.Cast<SubqueryExpression>().SubqueryMutable();
-		    statement.function_body = true;
-		    statement.function_owner = owner;
-		    if (!function.config.empty()) {
-			    statement.function_config = &function.config;
-		    }
+		    subquery.Cast<SubqueryExpression>().SetFunctionBody({owner, &function.config});
 	    });
 }
 
@@ -1299,7 +1290,7 @@ void ExpressionBinder::ExpandSubqueryArguments(DummyBinding &binding, vector<uni
 		auto &subquery = expr->Cast<SubqueryExpression>();
 		const auto subquery_type = subquery.GetSubqueryType();
 		if (subquery_type == SubqueryType::SCALAR || subquery_type == SubqueryType::EXISTS) {
-			if (!subquery.Subquery()->function_body) {
+			if (!subquery.GetFunctionBody()) {
 				AddSqlFunctionParameters(expr, alias, value_names, std::move(values), sql_function);
 				return;
 			}

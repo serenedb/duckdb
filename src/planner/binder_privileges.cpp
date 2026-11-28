@@ -121,17 +121,12 @@ void Binder::RequirePlacement(Catalog &catalog, const CreateInfo &info, optional
 	}
 }
 
-void Binder::BindAsFunctionBody(const SelectStatement &statement) {
-	if (!statement.function_body) {
-		return;
-	}
+void Binder::BindAsFunctionBody(const FunctionBody &body) {
 	if (!CheckAs().IsSystem()) {
-		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
+		BindAsFunctionBody(FunctionBodyRole(body.owner));
 	}
-	acting.security_definer |= statement.function_owner.IsValid();
-	if (statement.function_config) {
-		UseFunctionSearchPath(*statement.function_config);
-	}
+	acting.security_definer |= body.owner.IsValid();
+	UseFunctionSearchPath(*body.config);
 }
 
 BinderScope::BinderScope(Binder &binder_p) : binder(binder_p), acting(binder.acting) {
