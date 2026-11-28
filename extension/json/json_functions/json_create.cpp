@@ -223,7 +223,6 @@ static LogicalType GetJSONType(const CastFunctionSet &casts, const LogicalType &
 	case LogicalTypeId::UUID:
 	case LogicalTypeId::BIGNUM:
 	case LogicalTypeId::DECIMAL:
-	// GEOMETRY is emitted as either WKT or GeoJSON, so it must reach EncodeValues untouched
 	case LogicalTypeId::GEOMETRY:
 		return type;
 	case LogicalTypeId::VARIANT:
