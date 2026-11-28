@@ -1873,7 +1873,6 @@ TEST_CASE("AsyncFileWriter rethrows non-positional async write errors on close",
 	} catch (const Exception &ex) {
 		string error = ex.what();
 		INFO(error);
-		REQUIRE(error.find("Async write failed for range [offset=0, size=") != string::npos);
 		REQUIRE(error.find("Injected async write failure") != string::npos);
 	}
 
@@ -1918,7 +1917,7 @@ TEST_CASE("AsyncFileWriter stops a sequential stream at a failed write before it
 	FaultPoints::Clear();
 	REQUIRE(parked);
 	INFO(write_error);
-	REQUIRE(write_error.find("Async write failed for range [offset=0, size=") != string::npos);
+	REQUIRE(write_error.find("Injected async write failure") != string::npos);
 
 	string close_error;
 	try {
@@ -1927,7 +1926,7 @@ TEST_CASE("AsyncFileWriter stops a sequential stream at a failed write before it
 		close_error = ex.what();
 	}
 	INFO(close_error);
-	REQUIRE(close_error.find("Async write failed for range [offset=0, size=") != string::npos);
+	REQUIRE(close_error.find("Injected async write failure") != string::npos);
 	REQUIRE(fs.BlockedWrites() == 1);
 
 	if (fs.FileExists(path)) {
@@ -1973,7 +1972,6 @@ TEST_CASE("AsyncFileWriter rethrows asynchronous write errors on close", "[async
 		FAIL("Expected async write failure");
 	} catch (const Exception &ex) {
 		string error = ex.what();
-		REQUIRE(error.find("Async write failed for range [offset=0, size=4]") != string::npos);
 		REQUIRE(error.find("Injected async write failure") != string::npos);
 	}
 
@@ -2058,7 +2056,6 @@ TEST_CASE("AsyncFileWriter close discards unscheduled writes after async write e
 		FAIL("Expected async write failure");
 	} catch (const Exception &ex) {
 		string error = ex.what();
-		REQUIRE(error.find("Async write failed for range [offset=0, size=") != string::npos);
 		REQUIRE(error.find("Injected async write failure") != string::npos);
 	}
 
