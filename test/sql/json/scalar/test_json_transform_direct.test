@@ -25,6 +25,11 @@ SELECT from_json('{"s": "tab\there \"quoted\" é"}', '{"s": "VARCHAR"}').s = 'ta
 true
 
 query II
+SELECT r.s = 'é😀/' || chr(10), r.k1 FROM (SELECT from_json('{"s": "' || chr(92) || 'u00e9' || chr(92) || 'uD83D' || chr(92) || 'uDE00' || chr(92) || '/' || chr(92) || 'n", "k' || chr(92) || 'u0031": 7}', '{"s": "VARCHAR", "k1": "INTEGER"}') AS r);
+----
+true	7
+
+query II
 SELECT r.ka, r.a FROM (SELECT from_json('{"ka": 1, "a": 2}', '{"ka": "INTEGER", "a": "INTEGER"}') AS r);
 ----
 1	2
@@ -183,3 +188,48 @@ query III
 SELECT from_json('[]', '{"a": "INTEGER"}').a, len(from_json('{}', '[{"a": "INTEGER"}]')), from_json('{"a": {}}', '{"a": {"b": "INTEGER"}}').a.b;
 ----
 NULL	NULL	NULL
+
+statement error
+SELECT from_json('{"a": {"b": @}}', '{"a": {"b": "INTEGER"}}');
+----
+Malformed JSON at byte 12 of input: unexpected character
+
+statement error
+SELECT from_json('{"a": [1, @]}', '{"a": ["INTEGER"]}');
+----
+Malformed JSON at byte 10 of input: unexpected character
+
+statement error
+SELECT from_json('[{"a": 1}, @]', '[{"a": "INTEGER"}]');
+----
+Malformed JSON at byte 11 of input: unexpected character
+
+statement error
+SELECT from_json('{"a": [1, 2', '{"a": ["INTEGER"]}');
+----
+Malformed JSON at byte 11 of input: unexpected end of data
+
+statement error
+SELECT from_json('{"a": "unclosed string that is longer than thirty-two bytes}', '{"a": "VARCHAR"}');
+----
+Malformed JSON at byte 60 of input: unexpected end of data
+
+statement error
+SELECT from_json('{"a": {"x": tru}}', '{"a": "JSON"}');
+----
+Malformed JSON at byte 12 of input: invalid literal, expected 'true'
+
+query IIII
+SELECT r.h::VARCHAR, r.b, r.i, r.j FROM (SELECT from_json('{"h": 123456789012345678901234567890, "b": 123456789012345678901234567890, "i": -3000000000, "j": 3000000000}', '{"h": "HUGEINT", "b": "BIGINT", "i": "INTEGER", "j": "INTEGER"}') AS r);
+----
+123456789012345678901234567890	NULL	NULL	NULL
+
+statement error
+SELECT json_transform_strict('{"i": -3000000000}', '{"i": "INTEGER"}');
+----
+<REGEX>:.*-3000000000.*
+
+query I
+SELECT from_json('{"a": 1.5 , "b": [2.5 ,3 ]}', '{"a": "DECIMAL(4,1)", "b": ["DECIMAL(4,1)"]}')::VARCHAR;
+----
+{'a': 1.5, 'b': [2.5, 3.0]}
