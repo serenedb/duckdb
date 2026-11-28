@@ -56,20 +56,16 @@ struct JsonPathPredicate {
 
 enum class JsonRecordResult : uint8_t { DECODED, REJECTED, FALLBACK };
 
-//! A STRUCT or LIST column, or a value inside one, decoded straight into its vector
 struct JsonDirectNode {
 	JsonDirectKind kind = JsonDirectKind::TREE;
 	JsonDirectFast fast = JsonDirectFast::NONE;
-	//! TREE: the projection passed to JSONTransform
 	optional_ptr<const ColumnIndex> column_index;
-	//! STRUCT: the projected children, their entries in the struct vector and the entries projected out
 	vector<idx_t> children;
 	vector<idx_t> slots;
 	vector<idx_t> unprojected;
 	unordered_map<string, idx_t> keys;
 	case_insensitive_map_t<idx_t> folded_keys;
 	bool unknown_key_error = false;
-	//! LIST: the element
 	idx_t child = DConstants::INVALID_INDEX;
 };
 

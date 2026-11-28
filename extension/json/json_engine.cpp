@@ -1751,8 +1751,6 @@ void JsonScan::BindNode(idx_t id, Vector &vector, idx_t capacity) {
 	RefreshNode(id, 0, capacity);
 }
 
-// Rows from 'from' to 'capacity' start out NULL, so a missing value costs nothing. A LIST reserves room for its
-// elements as it fills: the vectors below it move.
 void JsonScan::RefreshNode(idx_t id, idx_t from, idx_t capacity) {
 	auto &node = global.nodes[id];
 	auto &state = node_states[id];
