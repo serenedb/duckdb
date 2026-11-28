@@ -369,7 +369,7 @@
         "default": "vector<ColumnAcl>()"
       },
       {
-        "id": 16586,
+        "id": 16588,
         "name": "name_bindings",
         "type": "vector<NameBinding>",
         "default": "vector<NameBinding>()"
