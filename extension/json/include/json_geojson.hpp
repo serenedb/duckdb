@@ -18,7 +18,6 @@ class Vector;
 //! GeoJSON has no M dimension, so M is dropped when writing and never produced when reading.
 //! Any "crs" or "bbox" members are ignored: geometries are assumed to already be in the intended CRS.
 struct JSONGeometry {
-	//! Convert WKB to a GeoJSON geometry object, allocated with builder
 	static JSONBuildValue *ToGeoJSON(const string_t &geometry, JSONBuilder &builder);
 	//! Convert a GeoJSON geometry object to a GEOMETRY value stored in result_vector's string heap.
 	//! Returns false and sets error if val is not a well-formed GeoJSON geometry.

@@ -71,7 +71,6 @@ struct TryParseTimeStamp {
 	}
 };
 
-//! The scratch memory and the writer a transform uses
 struct JSONTransformScratch {
 	ArenaAllocator &arena;
 	JSONStringWriter &writer;

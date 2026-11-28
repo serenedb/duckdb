@@ -146,11 +146,9 @@ private:
 	bool WriteAtElements(JSONStringWriter &writer, const JSONNode &root, const vector<JSONPathElement> &elements,
 	                     const JSONNode *new_val) {
 		if (elements.empty()) {
-			// Modify at the document root
 			if (type == JSONModifyType::REMOVE) {
 				return false;
 			}
-			// The root always exists, never overwritten by an insert
 			writer.Value(type == JSONModifyType::INSERT ? root : *new_val);
 			return true;
 		}
@@ -180,7 +178,6 @@ private:
 		remove = false;
 	}
 
-	//! Resolve the parent of the final path element. When creating, missing containers are created like SQLite does
 	bool ResolveElements(const vector<JSONPathElement> &elements) {
 		const auto create = type == JSONModifyType::SET || type == JSONModifyType::INSERT;
 		for (idx_t i = 0; i + 1 < elements.size(); i++) {
@@ -206,7 +203,6 @@ private:
 			if (!create) {
 				return false;
 			}
-			// Create the missing containers based on the next path elements
 			for (idx_t j = i + 1; j < elements.size(); j++) {
 				auto &next = elements[j];
 				idx_t next_position;

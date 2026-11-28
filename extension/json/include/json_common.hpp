@@ -185,15 +185,10 @@ public:
 	}
 
 public:
-	//===--------------------------------------------------------------------===//
-	// Document reading / writing
-	//===--------------------------------------------------------------------===//
-	//! Parse a document with the given parser, or nullptr with the error set
 	static inline const JSONNode *ReadDocumentUnsafe(JSONTreeParser &parser, const string_t &input,
 	                                                 JSONParseError &error) {
 		return parser.Parse(input.GetData(), input.GetSize(), error);
 	}
-	//! Parse a document with the given parser - throws on malformed JSON
 	static inline const JSONNode &ReadDocument(JSONTreeParser &parser, const char *data, idx_t size) {
 		JSONParseError error;
 		auto root = parser.Parse(data, size, error);
@@ -228,7 +223,6 @@ public:
 		}
 		return StringVector::AddString(vector, writer.View().data(), writer.View().size());
 	}
-	//! Write a value with the given writer and add the text to the string heap of the vector
 	static inline string_t WriteVal(const JSONNode &val, JSONStringWriter &writer, Vector &vector) {
 		writer.Clear();
 		writer.Value(val);
@@ -236,7 +230,6 @@ public:
 	}
 	//! Slow and easy ToString for errors
 	static string ValToString(const JSONNode &val, idx_t max_len = DConstants::INVALID_INDEX);
-	//! Throw an error with the printed value
 	static void ThrowValFormatError(string error_string, const JSONNode &val);
 
 public:
@@ -322,7 +315,6 @@ public:
 	//! Get JSON value by walking pre-parsed path elements
 	static const JSONNode *GetPathElements(const JSONNode *val, const vector<JSONPathElement> &elements);
 
-	//! Get JSON pointer (/field/index/... syntax, RFC 6901)
 	static const JSONNode *GetPointer(const JSONNode *val, const char *ptr, idx_t len);
 
 private:

@@ -1292,7 +1292,6 @@ static bool TransformFunctionInternal(const Vector &input, const idx_t count, Ve
 	input.ToUnifiedFormat(input_data);
 	auto inputs = UnifiedVectorFormat::GetData<string_t>(input_data);
 
-	// Read documents: every document of the chunk stays alive until the transform is done
 	JSONTransformScratch scratch {lstate.arena, lstate.writer};
 	auto roots = AllocateScratch<idx_t>(scratch, count);
 	auto vals = AllocateScratch<const JSONNode *>(scratch, count);

@@ -82,13 +82,9 @@ public:
 	static JSONFunctionLocalState &ResetAndGet(ExpressionState &state);
 
 public:
-	//! Scratch memory of the current chunk
 	ArenaAllocator arena;
-	//! Parses the documents of the function's input, one at a time
 	JSONTreeParser parser;
-	//! Parses a second document per row, for the functions that take two
 	JSONTreeParser second_parser;
-	//! Writes the JSON text of the function's results
 	JSONStringWriter writer;
 };
 

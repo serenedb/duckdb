@@ -9,9 +9,7 @@ void JsonSerializer::AddValue(JSONBuildValue *val, const char *tag) {
 	// Array case, just append the value
 	if (current.type == JSONValueType::ARRAY) {
 		JSONBuilder::Append(current, val);
-	}
-	// Object case, use the given tag
-	else if (current.type == JSONValueType::OBJECT) {
+	} else if (current.type == JSONValueType::OBJECT) {
 		JSONBuilder::Add(current, tag, val);
 	}
 	// Else throw

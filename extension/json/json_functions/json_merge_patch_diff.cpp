@@ -101,7 +101,6 @@ static void MergePatchDiffFunction(DataChunk &args, ExpressionState &state, Vect
 		}
 
 		auto &old_root = JSONCommon::ReadDocument(lstate.second_parser, old_inputs[old_idx]);
-		// Both objects: returns the structural diff (or empty object {} if equal). Otherwise: returns a copy of new
 		writer.Clear();
 		if (old_root.type == JSONValueType::OBJECT && new_root.type == JSONValueType::OBJECT) {
 			writer.StartObject();
