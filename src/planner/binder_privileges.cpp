@@ -24,8 +24,6 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
-#include "duckdb/parser/statement/create_statement.hpp"
-#include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/expression_binder/index_binder.hpp"
@@ -34,98 +32,6 @@
 #include <absl/algorithm/container.h>
 
 namespace duckdb {
-
-struct StatementRule {
-	StatementType statement;
-	CatalogType object = CatalogType::INVALID;
-	RoleOption option = RoleOption::None;
-	RoleCapability capability = RoleCapability::None;
-	const char *message = "permission denied: superuser required";
-	bool named = false;
-	const char *detail = nullptr;
-	const char *hint = nullptr;
-};
-
-static constexpr StatementRule STATEMENT_RULES[] = {
-    {.statement = StatementType::EXPORT_STATEMENT},
-    {.statement = StatementType::LOAD_STATEMENT},
-    {.statement = StatementType::UPDATE_EXTENSIONS_STATEMENT},
-    {.statement = StatementType::COPY_DATABASE_STATEMENT},
-    {.statement = StatementType::CONNECT_STATEMENT},
-    {.statement = StatementType::EXTERNAL_RESOURCE_STATEMENT},
-    {.statement = StatementType::DETACH_STATEMENT},
-    {.statement = StatementType::ATTACH_STATEMENT},
-    {.statement = StatementType::CREATE_STATEMENT, .object = CatalogType::SECRET_ENTRY},
-    {.statement = StatementType::DROP_STATEMENT, .object = CatalogType::SECRET_ENTRY},
-    {.statement = StatementType::CREATE_STATEMENT,
-     .object = CatalogType::TABLESPACE_ENTRY,
-     .message = "permission denied to create tablespace \"%s\"",
-     .named = true,
-     .hint = "Must be superuser to create a tablespace."},
-    {.statement = StatementType::CREATE_STATEMENT,
-     .object = CatalogType::DATABASE_ENTRY,
-     .option = RoleOption::CreateDb,
-     .message = "permission denied to create database"},
-    {.statement = StatementType::CREATE_STATEMENT,
-     .object = CatalogType::SUBSCRIPTION_ENTRY,
-     .capability = RoleCapability::CreateSubscription,
-     .message = "permission denied to create subscription",
-     .detail = "Only roles with privileges of the \"pg_create_subscription\" role may create subscriptions."},
-    {.statement = StatementType::CREATE_STATEMENT,
-     .object = CatalogType::ROLE_ENTRY,
-     .option = RoleOption::CreateRole,
-     .message = "permission denied to create role",
-     .detail = "Only roles with the CREATEROLE attribute may create roles."},
-    {.statement = StatementType::DROP_STATEMENT,
-     .object = CatalogType::ROLE_ENTRY,
-     .option = RoleOption::CreateRole,
-     .message = "permission denied to drop role",
-     .detail = "Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles."},
-};
-
-static const CreateInfo *CreateInfoOf(const SQLStatement &statement) {
-	return statement.type == StatementType::CREATE_STATEMENT ? statement.Cast<CreateStatement>().info.get() : nullptr;
-}
-
-static CatalogType StatementObject(const SQLStatement &statement) {
-	if (auto info = CreateInfoOf(statement)) {
-		return info->type;
-	}
-	return statement.type == StatementType::DROP_STATEMENT ? statement.Cast<DropStatement>().info->type
-	                                                       : CatalogType::INVALID;
-}
-
-static const StatementRule *StatementRuleOf(const SQLStatement &statement) {
-	const auto object = StatementObject(statement);
-	const auto rule = absl::c_find_if(STATEMENT_RULES, [&](const StatementRule &rule) {
-		return rule.statement == statement.type && rule.object == object;
-	});
-	return rule == std::end(STATEMENT_RULES) ? nullptr : rule;
-}
-
-bool Binder::MayRun(const RoleAccess &role, const SQLStatement &statement) {
-	const auto rule = StatementRuleOf(statement);
-	return !rule || role.is_superuser || (rule->option != RoleOption::None && role.Has(rule->option)) ||
-	       (rule->capability != RoleCapability::None && role.Has(rule->capability));
-}
-
-void Binder::RequireStatement(const SQLStatement &statement) {
-	if (MayRun(CheckAs(), statement)) {
-		return;
-	}
-	const auto rule = StatementRuleOf(statement);
-	const auto message =
-	    rule->named
-	        ? StringUtil::Format(rule->message, CreateInfoOf(statement)->GetQualifiedName().Name().GetIdentifierName())
-	        : string(rule->message);
-	if (rule->detail) {
-		throw PermissionException::WithDetail(rule->detail, message);
-	}
-	if (rule->hint) {
-		throw PermissionException::WithHint(rule->hint, message);
-	}
-	throw PermissionException(message);
-}
 
 const RoleAccess &Binder::CheckAs() const {
 	return acting.privileges ? *acting.privileges : duckdb::Role(context);
@@ -168,12 +74,12 @@ void Binder::BindStoredDefinition() {
 }
 
 void Binder::Execute(const CatalogEntry &function) {
-	Check(context, Role(), function, AclMode::Execute).Require();
+	Check<AclMode::Execute>(context, Role(), function).Require();
 }
 
 void Binder::Execute(const MacroCatalogEntry &function, const MacroFunction &overload) {
 	const StatementNaming procedure {"procedure", {&function.name, 1}};
-	Check(context, Role(), {function, function.OverloadPermissions(overload)}, AclMode::Execute)
+	Check<AclMode::Execute>(context, Role(), {function, function.OverloadPermissions(overload)})
 	    .Require(overload.is_procedure ? &procedure : nullptr);
 }
 
@@ -211,79 +117,8 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 
 void Binder::RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed) {
 	if (auto tablespace = catalog.PlacementTablespace(context, info, indexed)) {
-		Check(context, CheckAs(), *tablespace, AclMode::Create).Require();
+		Check<AclMode::Create>(context, CheckAs(), *tablespace).Require();
 	}
-}
-
-bool Binder::ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return true;
-	}
-	auto internal = CatalogEntryRetriever::Internal(context);
-	const auto relation = type == CatalogType::TABLE_ENTRY || type == CatalogType::VIEW_ENTRY ||
-	                      type == CatalogType::SEQUENCE_ENTRY || type == CatalogType::INDEX_ENTRY;
-	const auto routine = type == CatalogType::MACRO_ENTRY || type == CatalogType::TABLE_MACRO_ENTRY;
-	auto &path = name.Path();
-	optional_ptr<CatalogEntry> entry;
-	switch (type) {
-	case CatalogType::SCHEMA_ENTRY:
-		if (path.size() < 2) {
-			return true;
-		}
-		entry = internal
-		            .GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::NoRights,
-		                       OnEntryNotFound::RETURN_NULL)
-		            .get();
-		break;
-	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY:
-	case CatalogType::SEQUENCE_ENTRY:
-	case CatalogType::INDEX_ENTRY:
-	case CatalogType::TYPE_ENTRY:
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-	case CatalogType::JOB_ENTRY:
-	case CatalogType::TOKENIZER_ENTRY:
-		for (auto kind : {type, CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY, CatalogType::INDEX_ENTRY,
-		                  CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
-			const auto same_namespace =
-			    kind == type ||
-			    (relation && (kind == CatalogType::TABLE_ENTRY || kind == CatalogType::SEQUENCE_ENTRY ||
-			                  kind == CatalogType::INDEX_ENTRY)) ||
-			    (routine && (kind == CatalogType::MACRO_ENTRY || kind == CatalogType::TABLE_MACRO_ENTRY));
-			if (!entry && same_namespace) {
-				entry = internal.GetEntry(EntryLookupInfo(kind, name), OnEntryNotFound::RETURN_NULL);
-			}
-		}
-		break;
-	default:
-		if (!IsCatalogLevel(type) ||
-		    entry_retriever.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL) ||
-		    !internal.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL)) {
-			return true;
-		}
-		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-			return false;
-		}
-		throw CatalogException::MissingObject(type, name.Name());
-	}
-	if (!entry || CatalogEntryRetriever(context, role).Shows(*entry)) {
-		return true;
-	}
-	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-		return false;
-	}
-	switch (type) {
-	case CatalogType::SCHEMA_ENTRY:
-		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::NoRights,
-		                          OnEntryNotFound::THROW_EXCEPTION);
-		break;
-	default:
-		entry_retriever.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::THROW_EXCEPTION);
-		break;
-	}
-	throw CatalogException::MissingEntry(EntryLookupInfo(type, name), string());
 }
 
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
@@ -341,7 +176,7 @@ RelationChecks Binder::ChecksOf(const StandardEntry &relation) {
 }
 
 RelationChecks Binder::ReadChecks(const StandardEntry &relation, RelationChecks checks) {
-	if (!checks.role || Check(context, *checks.role, relation, AclMode::Select)) {
+	if (!checks.role || Check<AclMode::Select>(context, *checks.role, relation)) {
 		return {};
 	}
 	return checks;
@@ -357,7 +192,7 @@ RelationChecks Binder::ReadChecks(const StandardEntry &relation, TableRefUse use
 	}
 	auto checks = ReadChecks(relation, relation_checks);
 	if (checks.role && use == TableRefUse::READ) {
-		auto check = Check(context, *checks.role, PrivilegeTarget::Columns(relation, {}), AclMode::Select);
+		auto check = Check<AclMode::Select>(context, *checks.role, PrivilegeTarget::Columns(relation, {}));
 		if (!check) {
 			Deny(check, checks);
 			return {};
@@ -404,8 +239,8 @@ void Binder::CheckColumnRead(Binding &binding, const Identifier &column) {
 		return;
 	}
 	const LogicalIndex read(index);
-	Deny(Check(context, *binding.checks.role, PrivilegeTarget::Columns(*binding.GetStandardEntry(), {&read, 1}),
-	           AclMode::Select),
+	Deny(Check<AclMode::Select>(context, *binding.checks.role,
+	                            PrivilegeTarget::Columns(*binding.GetStandardEntry(), {&read, 1})),
 	     binding.checks);
 }
 
@@ -480,12 +315,12 @@ void Binder::RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &
 		return;
 	}
 	if (existing->type != CatalogType::MACRO_ENTRY && existing->type != CatalogType::TABLE_MACRO_ENTRY) {
-		Check(context, role, *existing, AclMode::Own).Require();
+		Check<AclMode::Own>(context, role, *existing).Require();
 		return;
 	}
 	auto &macro = existing->Cast<MacroCatalogEntry>();
 	for (auto &overload : macro.macros) {
-		Check(context, role, {macro, macro.OverloadPermissions(*overload)}, AclMode::Own).Require();
+		Check<AclMode::Own>(context, role, {macro, macro.OverloadPermissions(*overload)}).Require();
 	}
 }
 
@@ -508,7 +343,7 @@ void Binder::RefuseSystemTablespace(const CatalogEntry &entry) {
 
 void Binder::RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info) {
 	auto &schema = relation.ParentSchema(context);
-	Check(context, CheckAs(), schema, AclMode::Create).Require();
+	Check<AclMode::Create>(context, CheckAs(), schema).Require();
 	RequireReplacedOwner(schema, info, info.GetIndexName());
 	RequirePlacement(relation.catalog, info, relation);
 }
@@ -529,7 +364,7 @@ void Binder::RequireTypeUsage(const LogicalType &type, Catalog &catalog) {
 		if (oid != extension->properties.end()) {
 			auto entry = catalog.LookupOwner(catalog.GetCatalogTransaction(context), oid->second.GetValue<idx_t>());
 			if (entry && entry->type == CatalogType::TYPE_ENTRY) {
-				Check(context, CheckAs(), *entry, AclMode::Usage).Require();
+				Check<AclMode::Usage>(context, CheckAs(), *entry).Require();
 			}
 			return;
 		}

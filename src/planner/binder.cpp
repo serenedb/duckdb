@@ -84,7 +84,6 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 }
 
 BoundStatement Binder::Bind(SQLStatement &statement) {
-	RequireStatement(statement);
 	switch (statement.type) {
 	case StatementType::SELECT_STATEMENT:
 		return Bind(statement.Cast<SelectStatement>());

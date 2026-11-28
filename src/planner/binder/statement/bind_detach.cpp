@@ -6,6 +6,7 @@
 namespace duckdb {
 
 BoundStatement Binder::Bind(DetachStatement &stmt) {
+	Check<StatementRule::Detach>(CheckAs()).Require();
 	BoundStatement result;
 	if (Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(stmt.info->name)),
 	                      OnEntryNotFound::RETURN_NULL)) {

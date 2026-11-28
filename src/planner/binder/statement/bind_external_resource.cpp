@@ -27,6 +27,7 @@ void Binder::BindExternalResourceParams(case_insensitive_map_t<unique_ptr<Parsed
 }
 
 BoundStatement Binder::Bind(ExternalResourceStatement &stmt) {
+	Check<StatementRule::ExternalResource>(CheckAs()).Require();
 	if (stmt.operation == ExternalResourceOperation::SHOW) {
 		// SHOW [ALL] EXTERNAL RESOURCES desugars to `SELECT * FROM duckdb_external_resources(all := <all>)`.
 		vector<unique_ptr<ParsedExpression>> children;

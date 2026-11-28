@@ -228,7 +228,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 		}
 		auto &config = DBConfig::GetConfig(context);
 		if (context.config.use_replacement_scans && Settings::Get<EnableExternalAccessSetting>(config) &&
-		    ExtensionHelper::IsFullPath(full_path) && CheckAs().Has(RoleCapability::ReadServerFiles)) {
+		    ExtensionHelper::IsFullPath(full_path) &&
+		    Check<AclMode::Usage>(CheckAs(), PrivilegeTarget::Role(RoleCapability::ReadServerFiles))) {
 			auto &fs = FileSystem::GetFileSystem(context);
 			if (!fs.IsDisabledForPath(full_path) && fs.FileExists(full_path)) {
 				throw BinderException(
@@ -319,7 +320,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 		auto checks = use == TableRefUse::UTILITY_TARGET ? RelationChecks()
 		                                                 : ReadChecks(view_catalog_entry, ChecksOf(view_catalog_entry));
 		if (checks.role) {
-			Check(context, role, PrivilegeTarget::Columns(view_catalog_entry, {}), AclMode::Select).Require();
+			Check<AclMode::Select>(context, role, PrivilegeTarget::Columns(view_catalog_entry, {})).Require();
 		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined

@@ -4,6 +4,7 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -283,7 +284,8 @@ void StatementPreprocessor::ExpandCopyDatabase(vector<unique_ptr<SQLStatement>> 
 			continue;
 		}
 		auto &copy = expanded.back()->Cast<CopyDatabaseStatement>();
-		if (copy.copy_type != CopyDatabaseType::COPY_SCHEMA || !Binder::MayRun(duckdb::Role(context), copy)) {
+		if (copy.copy_type != CopyDatabaseType::COPY_SCHEMA ||
+		    !Check<StatementRule::CopyDatabase>(duckdb::Role(context))) {
 			continue;
 		}
 		auto &source = Catalog::GetCatalog(context, copy.from_database);

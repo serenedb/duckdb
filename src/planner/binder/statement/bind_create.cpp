@@ -507,7 +507,7 @@ idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
 		} else {
-			Check(context, CheckAs(), {existing_macro, existing_macro.OverloadPermissions(*overload)}, AclMode::Own)
+			Check<AclMode::Own>(context, CheckAs(), {existing_macro, existing_macro.OverloadPermissions(*overload)})
 			    .Require();
 		}
 	}
@@ -1194,7 +1194,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		    OnEntryNotFound::RETURN_NULL);
 		if (!role.IsSystem()) {
 			if (authorization) {
-				Check(context, role, *authorization, AclMode::SetRole).Require();
+				Check<AclMode::SetRole>(context, role, *authorization).Require();
 			}
 			Catalog::GetCatalog(context, info.SchemaCatalog())
 			    .AssignOwner(context, info.permissions, CatalogType::SCHEMA_ENTRY, nullptr, owner);
@@ -1409,6 +1409,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
+		Check<StatementRule::CreateSecret>(CheckAs()).Require();
 		CatalogTransaction transaction = CatalogTransaction(Catalog::GetSystemCatalog(context), context);
 		return_type = StatementReturnType::QUERY_RESULT;
 
@@ -1504,6 +1505,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	case CatalogType::TABLESPACE_ENTRY: {
 		auto &info = stmt.info->Cast<CreateTablespaceInfo>();
+		const StatementNaming naming {{}, {&info.GetQualifiedName().Name(), 1}};
+		Check<StatementRule::CreateTablespace>(CheckAs()).Require(&naming);
 		info.permissions.owner = info.owner.empty() ? CheckAs().role : BindRole(info.owner)->oid;
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
@@ -1511,9 +1514,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::DATABASE_ENTRY: {
 		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
 		auto &role = CheckAs();
+		optional_ptr<RoleEntry> owner;
 		if (!info.owner.empty()) {
-			info.permissions.owner =
-			    BindRole(RoleSpec(info.owner), OnEntryNotFound::THROW_EXCEPTION, AclMode::SetRole)->oid;
+			owner = BindRole(RoleSpec(info.owner));
+		}
+		Check<StatementRule::CreateDatabase>(role).Require();
+		if (owner) {
+			Check<AclMode::SetRole>(context, role, *owner).Require();
+			info.permissions.owner = owner->oid;
 		} else if (!role.IsSystem()) {
 			info.permissions.owner = role.role;
 		}
@@ -1544,6 +1552,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::SUBSCRIPTION_ENTRY: {
+		Check<StatementRule::CreateSubscription>(CheckAs()).Require();
 		auto &catalog = Catalog::GetCatalog(context, BindCatalog(stmt.info->GetQualifiedName().Catalog()));
 		stmt.info->SetQualifiedName(
 		    QualifiedName(catalog.GetName(), Identifier(), stmt.info->GetQualifiedName().Name()));

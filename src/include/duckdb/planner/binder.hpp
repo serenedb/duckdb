@@ -470,11 +470,8 @@ public:
 	void BindStoredDefinition();
 	void Execute(const CatalogEntry &function);
 	void Execute(const MacroCatalogEntry &function, const MacroFunction &overload);
-	static bool MayRun(const RoleAccess &role, const SQLStatement &statement);
-	void RequireStatement(const SQLStatement &statement);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
-	bool ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use, AclMode target = AclMode::NoRights);
@@ -693,7 +690,8 @@ private:
 	//! Resolves the base table for DROP TRIGGER, stamps catalog/schema onto stmt.info,
 	//! and registers the catalog modification. IF EXISTS only guards the trigger, not the table.
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
-	void BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties);
+	bool BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties);
+	bool BindDropCatalogLevel(const DropInfo &info, const ObjectReference &object);
 	void BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
 	void ResolveOwned(AlterOwnedInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);

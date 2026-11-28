@@ -53,7 +53,7 @@ static void CheckConfigChange(ClientContext &context, const RoleAccess &caller, 
 
 enum class RoleChange : uint8_t { ALTER, RENAME, DROP, MEMBERS, GRANT, REVOKE };
 
-static void RequireAdminOf(const RoleAccess &caller, const RoleEntry &role, RoleChange change) {
+static void RequireAdminOf(ClientContext &context, const RoleAccess &caller, const RoleEntry &role, RoleChange change) {
 	if (caller.is_superuser) {
 		return;
 	}
@@ -70,7 +70,7 @@ static void RequireAdminOf(const RoleAccess &caller, const RoleEntry &role, Role
 		                       verb),
 		    message);
 	}
-	if (caller.AdminOf(role.oid) && (membership || caller.Has(RoleOption::CreateRole))) {
+	if (membership ? Check<AclMode::Admin>(context, caller, role) : Check<AclMode::Own>(context, caller, role)) {
 		return;
 	}
 	string detail;
@@ -91,7 +91,7 @@ static void CheckMembershipAuthorization(ClientContext &context, const RoleAcces
 	if (!revoke && granted.oid == DBConfig::GetConfig(context).database_owner_role) {
 		throw NotImplementedException("role \"%s\" cannot have explicit members", granted.name.GetIdentifierName());
 	}
-	RequireAdminOf(caller, granted, revoke ? RoleChange::REVOKE : RoleChange::GRANT);
+	RequireAdminOf(context, caller, granted, revoke ? RoleChange::REVOKE : RoleChange::GRANT);
 }
 
 optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound if_not_found, AclMode use) {
@@ -141,7 +141,7 @@ static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, 
 	}
 	auto &grantor = *binder.BindRole(info.granted_by);
 	auto &grantor_name = grantor.name.GetIdentifierName();
-	if (!caller.MemberOf(grantor.oid)) {
+	if (!Check<AclMode::Usage>(context, caller, grantor)) {
 		if (info.revoke) {
 			throw PermissionException::WithDetail(
 			    StringUtil::Format(
@@ -193,7 +193,7 @@ static void BindMemberships(Binder &binder, const RoleAccess &caller, AlterRoleI
 				                ExceptionType::INVALID_INPUT,
 				                StringUtil::Format("role name \"%s\" is reserved", granted->name.GetIdentifierName()));
 			}
-			RequireAdminOf(caller, *granted, RoleChange::MEMBERS);
+			RequireAdminOf(context, caller, *granted, RoleChange::MEMBERS);
 		} else {
 			CheckMembershipAuthorization(context, caller, *granted, info.revoke);
 		}
@@ -218,13 +218,13 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 		    ExceptionType::INVALID_INPUT, StringUtil::Format("role name \"%s\" is reserved", name));
 	}
 	if (rename) {
-		RequireAdminOf(caller, role, RoleChange::RENAME);
+		RequireAdminOf(context, caller, role, RoleChange::RENAME);
 		return;
 	}
 	if (caller.is_superuser) {
 		return;
 	}
-	const bool admin = caller.Has(RoleOption::CreateRole) && caller.AdminOf(role.oid);
+	const bool admin = static_cast<bool>(Check<AclMode::Own>(context, caller, role));
 	if (role.IsSuperuser()) {
 		throw PermissionException::WithDetail(
 		    "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.",
@@ -263,14 +263,20 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 
 void Binder::BindCreateRole(CreateRoleInfo &info) {
 	auto &caller = CheckAs();
-	const auto attributes =
-	    info.options & (RoleOption::Superuser | RoleOption::CreateDb | RoleOption::Replication | RoleOption::BypassRls);
-	for (auto &named : ROLE_OPTIONS) {
-		if (!caller.is_superuser && HasOption(attributes, named.option) && !caller.Has(named.option)) {
-			throw PermissionException::WithDetail(
-			    StringUtil::Format("Only roles with the %s attribute may create roles with the %s attribute.",
-			                       named.keyword, named.keyword),
-			    "permission denied to create role");
+	Check<StatementRule::CreateRole>(caller).Require();
+	struct AttributeRule {
+		RoleOption option;
+		StatementRule rule;
+	};
+	static constexpr AttributeRule ATTRIBUTE_RULES[] = {
+	    {RoleOption::Superuser, StatementRule::CreateSuperuserRole},
+	    {RoleOption::CreateDb, StatementRule::CreateCreateDbRole},
+	    {RoleOption::Replication, StatementRule::CreateReplicationRole},
+	    {RoleOption::BypassRls, StatementRule::CreateBypassRlsRole},
+	};
+	for (auto &attribute : ATTRIBUTE_RULES) {
+		if (HasOption(info.options, attribute.option)) {
+			Check(caller, attribute.rule).Require();
 		}
 	}
 	const auto resolve = [&](RoleSpec &spec) {
@@ -330,7 +336,7 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 		                StringUtil::Format("role name \"%s\" is reserved", role->name.GetIdentifierName()));
 	}
 	if (role && role->oid != caller.role) {
-		RequireAdminOf(caller, *role, RoleChange::ALTER);
+		RequireAdminOf(context, caller, *role, RoleChange::ALTER);
 	}
 	CheckConfig(context, info.set_config, info.reset_config);
 	if (caller.is_superuser) {
@@ -363,7 +369,7 @@ void Binder::BindDropRole(const Identifier &name) {
 		role = BindRole(RoleSpec(name), OnEntryNotFound::RETURN_NULL);
 	}
 	if (role) {
-		RequireAdminOf(caller, *role, RoleChange::DROP);
+		RequireAdminOf(context, caller, *role, RoleChange::DROP);
 	}
 	if (role && role->IsPredefined()) {
 		throw DependencyException("cannot drop role %s because it is required by the database system",

@@ -7,6 +7,8 @@
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/exception/catalog_exception.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
@@ -34,7 +36,58 @@ void Binder::BindDropTrigger(DropInfo &info, StatementProperties &properties) {
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
 
-void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties) {
+static string RelationKind(CatalogType type) {
+	switch (type) {
+	case CatalogType::VIEW_ENTRY:
+		return "view";
+	case CatalogType::INDEX_ENTRY:
+		return "index";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "sequence";
+	default:
+		return "table";
+	}
+}
+
+static string WithArticle(const string &kind) {
+	return (kind == "index" ? "an " : "a ") + kind;
+}
+
+static void RequireRelationKind(CatalogEntryRetriever &retriever, CatalogType type, const QualifiedName &name,
+                                optional_ptr<CatalogEntry> entry) {
+	auto holder = entry;
+	for (idx_t i = 0; !holder && i < std::size(RELATION_KINDS); i++) {
+		if (RELATION_KINDS[i] != type) {
+			holder = retriever.GetEntry(EntryLookupInfo(RELATION_KINDS[i], name), OnEntryNotFound::RETURN_NULL);
+		}
+	}
+	if (!holder || holder->type == type) {
+		return;
+	}
+	auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
+	auto actual_kind = RelationKind(holder->type);
+	extra_info["hint"] =
+	    StringUtil::Format("Use DROP %s to remove %s.", StringUtil::Upper(actual_kind), WithArticle(actual_kind));
+	throw CatalogException(extra_info, StringUtil::Format("\"%s\" is not %s", name.Name().GetIdentifierName(),
+	                                                      WithArticle(RelationKind(type))));
+}
+
+bool Binder::BindDropCatalogLevel(const DropInfo &info, const ObjectReference &object) {
+	auto entry =
+	    entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
+	if (entry && entry->type == CatalogType::TABLESPACE_ENTRY && entry->internal) {
+		throw PermissionException("permission denied for tablespace %s", entry->name.GetIdentifierName());
+	}
+	if (entry || !entry_retriever.Hides(EntryLookupInfo(info.type, object.name))) {
+		return true;
+	}
+	if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingObject(info.type, object.name.Name());
+	}
+	return false;
+}
+
+bool Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties) {
 	object.type = info.type;
 	switch (info.type) {
 	case CatalogType::SCHEMA_ENTRY: {
@@ -46,9 +99,15 @@ void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 		auto &path = object.name.Path();
 		auto &catalog = Catalog::GetCatalog(context, path.front());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::Drop,
-		                          OnEntryNotFound::RETURN_NULL);
-		break;
+		const vector<Identifier> schema_path(path.begin() + 1, path.end());
+		if (entry_retriever.GetSchema(path.front(), schema_path, AclMode::Drop, OnEntryNotFound::RETURN_NULL) ||
+		    !entry_retriever.Hides(path.front(), schema_path)) {
+			return true;
+		}
+		if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
+			return false;
+		}
+		throw CatalogException::MissingEntry(EntryLookupInfo(info.type, object.name), string());
 	}
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::SEQUENCE_ENTRY:
@@ -81,16 +140,18 @@ void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 				object.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
-			EntryLookupInfo entry_lookup(info.type, object.name, AclMode::Drop);
-			auto if_not_found = info.if_not_found;
+			const EntryLookupInfo lookup(info.type, object.name, AclMode::Drop);
+			entry = entry_retriever.GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
 			if (catalog && catalog->Compatibility() == SqlCompatibility::POSTGRES &&
 			    Catalog::InRelationNamespace(info.type)) {
-				if_not_found = OnEntryNotFound::RETURN_NULL;
+				RequireRelationKind(entry_retriever, info.type, object.name, entry);
 			}
-			entry = entry_retriever.GetEntry(entry_lookup, if_not_found);
+			if (!entry && info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				entry = entry_retriever.GetEntry(lookup, OnEntryNotFound::THROW_EXCEPTION);
+			}
 		}
 		if (!entry) {
-			break;
+			return !entry_retriever.Hides(EntryLookupInfo(info.type, object.name));
 		}
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
@@ -103,28 +164,22 @@ void Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 			// we can only drop temporary schema entries in read-only mode
 			properties.RegisterDBModify(entry->ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 		}
-		break;
+		return true;
 	}
 	case CatalogType::ROLE_ENTRY:
+		Check<StatementRule::DropRole>(CheckAs()).Require();
 		BindDropRole(object.name.Name());
-		break;
+		return true;
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY: {
 		auto &catalog = Catalog::GetCatalog(context, BindCatalog(object.name.Catalog()));
 		object.name = QualifiedName(catalog.GetName(), Identifier(), object.name.Name());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
-		break;
+		return BindDropCatalogLevel(info, object);
 	}
 	case CatalogType::TABLESPACE_ENTRY:
-	case CatalogType::DATABASE_ENTRY: {
-		auto entry = entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop),
-		                                      OnEntryNotFound::RETURN_NULL);
-		if (entry && entry->type == CatalogType::TABLESPACE_ENTRY && entry->internal) {
-			throw PermissionException("permission denied for tablespace %s", entry->name.GetIdentifierName());
-		}
-		break;
-	}
+	case CatalogType::DATABASE_ENTRY:
+		return BindDropCatalogLevel(info, object);
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(info.type));
 	}
@@ -142,6 +197,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		properties.requires_valid_transaction = false;
 		break;
 	case CatalogType::SECRET_ENTRY:
+		Check<StatementRule::DropSecret>(CheckAs()).Require();
 		//! Secrets are stored in the secret manager; they can always be dropped
 		properties.requires_valid_transaction = false;
 		break;
@@ -151,8 +207,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	default: {
 		vector<ObjectReference> visible;
 		for (auto &object : info.objects) {
-			BindDrop(info, object, properties);
-			if (ActsOnVisibleTarget(info.type, object.name, info.if_not_found)) {
+			if (BindDrop(info, object, properties)) {
 				visible.push_back(std::move(object));
 			}
 		}

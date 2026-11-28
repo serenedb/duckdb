@@ -33,7 +33,7 @@ static void Execute(optional_ptr<Binder> binder, ClientContext &context, const C
 	if (binder) {
 		binder->Execute(function);
 	} else {
-		Check(context, Role(context), function, AclMode::Execute).Require();
+		Check<AclMode::Execute>(context, Role(context), function).Require();
 	}
 }
 

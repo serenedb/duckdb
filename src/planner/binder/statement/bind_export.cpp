@@ -155,6 +155,7 @@ unique_ptr<LogicalOperator> Binder::UnionOperators(vector<unique_ptr<LogicalOper
 }
 
 BoundStatement Binder::Bind(ExportStatement &stmt) {
+	Check<StatementRule::Export>(CheckAs()).Require();
 	// COPY TO a file
 	BoundStatement result;
 	result.types = {LogicalType::BOOLEAN};

@@ -88,7 +88,7 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
-	Check(context, Role(context, expr.BoundRole()), sequence, OP::MODES | AclMode::Any).Require();
+	Check<OP::MODES | AclMode::Any>(context, Role(context, expr.BoundRole()), sequence).Require();
 	optional_ptr<DuckTransaction> transaction;
 	if (sequence.catalog.IsDuckCatalog()) {
 		transaction = DuckTransaction::Get(context, sequence.catalog);

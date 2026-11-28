@@ -72,32 +72,20 @@ static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclM
 	return held;
 }
 
-AclMode RoleAccess::CapabilityModes(CatalogType type) const {
+AclMode RoleAccess::PredefinedRoleModes(CatalogType type) const {
 	AclMode modes = AclMode::NoRights;
-	if (capabilities == RoleCapability::None) {
+	if (closure.empty()) {
 		return modes;
 	}
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY:
-	case CatalogType::SEQUENCE_ENTRY:
-		if (Has(RoleCapability::ReadAllData)) {
-			modes |= AclMode::Select;
-		}
-		if (Has(RoleCapability::WriteAllData)) {
-			modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
-		}
-		if (Has(RoleCapability::Maintain)) {
-			modes |= AclMode::Maintain;
-		}
-		break;
-	case CatalogType::SCHEMA_ENTRY:
-		if (Has(RoleCapability::ReadAllData) || Has(RoleCapability::WriteAllData)) {
-			modes |= AclMode::Usage;
-		}
-		break;
-	default:
-		break;
+	auto &kind = ObjectKindOf(type);
+	if (Uses(PredefinedRoleOid(RoleCapability::ReadAllData))) {
+		modes |= kind.read_all_data;
+	}
+	if (Uses(PredefinedRoleOid(RoleCapability::WriteAllData))) {
+		modes |= kind.write_all_data;
+	}
+	if (Uses(PredefinedRoleOid(RoleCapability::Maintain))) {
+		modes |= kind.maintain;
 	}
 	return modes;
 }
@@ -110,7 +98,7 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bo
 	const auto done = [&](AclMode have) {
 		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
 	};
-	AclMode have = access.CapabilityModes(type);
+	AclMode have = access.PredefinedRoleModes(type);
 	if (uses_default) {
 		return done(have | defaults);
 	}
@@ -191,29 +179,27 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 	for (auto &[oid, node] : nodes) {
 		by_name.emplace(node.name, oid);
 		auto closure = Reachable(nodes, oid, &Membership::inherit_option);
-		auto capabilities = RoleCapability::None;
-		for (auto member : closure) {
-			capabilities |= nodes.find(member)->second.capabilities;
-		}
 		vector<idx_t> administered;
-		for (auto member : Reachable(nodes, oid, nullptr)) {
+		auto memberships = Reachable(nodes, oid, nullptr);
+		for (auto member : memberships) {
 			for (auto &edge : nodes.find(member)->second.member_of) {
 				if (edge.admin_option) {
 					administered.push_back(edge.role);
 				}
 			}
 		}
-		roles_p.push_back(Role {oid, node.options, capabilities, std::move(closure),
-		                        Reachable(nodes, oid, &Membership::set_option), std::move(administered)});
+		roles_p.push_back(Role {oid, node.options, std::move(closure), Reachable(nodes, oid, &Membership::set_option),
+		                        std::move(administered), std::move(memberships)});
 	}
 	absl::c_sort(roles_p, [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
 	for (auto &role : roles_p) {
 		std::erase(role.closure, role.role);
+		std::erase(role.memberships, role.role);
 		absl::c_sort(role.administered);
 		const auto repeated = std::ranges::unique(role.administered);
 		role.administered.erase(repeated.begin(), repeated.end());
-		total += role.closure.size() + role.settable.size() + role.administered.size();
+		total += role.closure.size() + role.settable.size() + role.administered.size() + role.memberships.size();
 		if (!role.closure.empty()) {
 			total += FilterWords(role.closure.size());
 		}
@@ -224,7 +210,6 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		RoleAccess access;
 		access.role = role.role;
 		access.options = role.options;
-		access.capabilities = role.capabilities;
 		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
 		access.owns_builtins = role.role == bootstrap_role || absl::c_binary_search(role.closure, bootstrap_role);
 		if (!role.closure.empty()) {
@@ -250,6 +235,9 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		const auto administered_begin = arena.size();
 		arena.insert(arena.end(), role.administered.begin(), role.administered.end());
 		access.administered = std::span<const idx_t>(arena.data() + administered_begin, role.administered.size());
+		const auto memberships_begin = arena.size();
+		arena.insert(arena.end(), role.memberships.begin(), role.memberships.end());
+		access.memberships = std::span<const idx_t>(arena.data() + memberships_begin, role.memberships.size());
 		roles.push_back(access);
 	}
 	if (!nodes.count(database_owner_role)) {
@@ -278,8 +266,7 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &catalog, Cat
 		absl::c_sort(member_of, [](const Membership &left, const Membership &right) {
 			return left.role != right.role ? left.role < right.role : left.grantor < right.grantor;
 		});
-		nodes[role.oid] =
-		    Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), std::move(member_of)};
+		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), std::move(member_of)};
 	});
 	unordered_map<string, idx_t> database_owners;
 	catalog.Scan(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
@@ -321,15 +308,6 @@ optional_idx SecuritySnapshot::FindByName(std::string_view name) const {
 std::string_view SecuritySnapshot::NameOf(idx_t role) const {
 	auto node = Find(role);
 	return node ? std::string_view(node->name) : std::string_view();
-}
-
-RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
-	RoleMemberships result;
-	if (role == 0) {
-		return result;
-	}
-	result.members = Reachable(nodes, role, nullptr);
-	return result;
 }
 
 vector<idx_t> SecuritySnapshot::InheritedRoles(idx_t role) const {

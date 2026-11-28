@@ -1001,7 +1001,7 @@ static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEnt
                               const ForeignKeyConstraint &fk) {
 	auto &role = entry_retriever.LookupRole();
 	if (entry.type != CatalogType::TABLE_ENTRY ||
-	    Check(entry_retriever.GetContext(), role, entry, AclMode::References)) {
+	    Check<AclMode::References>(entry_retriever.GetContext(), role, entry)) {
 		return;
 	}
 	auto &table = entry.Cast<TableCatalogEntry>();
@@ -1010,7 +1010,7 @@ static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEnt
 		Identifier name(column);
 		columns.push_back(table.GetColumnIndex(name));
 	}
-	Check(entry_retriever.GetContext(), role, PrivilegeTarget::Columns(table, columns), AclMode::References).Require();
+	Check<AclMode::References>(entry_retriever.GetContext(), role, PrivilegeTarget::Columns(table, columns)).Require();
 }
 
 static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryRetriever &entry_retriever,

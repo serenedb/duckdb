@@ -19,7 +19,7 @@ public:
 	static constexpr const char *Name = "role";
 
 	RoleEntry(Catalog &catalog, Identifier name, idx_t oid, RoleOption options, vector<Membership> member_of,
-	          RoleCapability capabilities, bool predefined);
+	          bool predefined);
 
 	RoleOption Options() const {
 		return options;
@@ -30,9 +30,6 @@ public:
 	const vector<Membership> &MemberOf() const {
 		return member_of;
 	}
-	RoleCapability Capabilities() const {
-		return capabilities;
-	}
 	bool IsPredefined() const {
 		return predefined;
 	}
@@ -40,7 +37,6 @@ public:
 protected:
 	RoleOption options;
 	vector<Membership> member_of;
-	RoleCapability capabilities;
 	bool predefined;
 };
 

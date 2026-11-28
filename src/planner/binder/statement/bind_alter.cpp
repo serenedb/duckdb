@@ -221,10 +221,6 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		result.plan = std::move(plan);
 		return result;
 	}
-	auto &info = *stmt.info;
-	if (!ActsOnVisibleTarget(info.GetCatalogType(), info.GetQualifiedName(), info.if_not_found)) {
-		stmt.info.reset();
-	}
 	result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 	return result;
 }
@@ -237,6 +233,13 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 			throw NotImplementedException("renaming a database is not supported");
 		}
 		properties.RegisterDBModify(Catalog::GetSystemCatalog(context), context, DatabaseModificationType::ALTER_TABLE);
+		const EntryLookupInfo lookup(CatalogType::DATABASE_ENTRY, info->GetQualifiedName());
+		if (!entry_retriever.GetEntry(lookup, OnEntryNotFound::RETURN_NULL) && entry_retriever.Hides(lookup)) {
+			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException::MissingObject(CatalogType::DATABASE_ENTRY, info->GetQualifiedName().Name());
+			}
+			info.reset();
+		}
 		return nullptr;
 	}
 
@@ -246,10 +249,17 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		schema_info.SetQualifiedName(ResolveCatalog(entry_retriever, schema_info.GetQualifiedName()));
 		auto &catalog = Catalog::GetCatalog(context, schema_info.SchemaCatalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
-		entry_retriever.GetSchema(schema_info.SchemaCatalog(), schema_info.SchemaPath(),
-		                          schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? AclMode::Rename
-		                                                                                          : AclMode::Own,
-		                          OnEntryNotFound::RETURN_NULL);
+		if (!entry_retriever.GetSchema(schema_info.SchemaCatalog(), schema_info.SchemaPath(),
+		                               schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? AclMode::Rename
+		                                                                                               : AclMode::Own,
+		                               OnEntryNotFound::RETURN_NULL) &&
+		    entry_retriever.Hides(schema_info.SchemaCatalog(), schema_info.SchemaPath())) {
+			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException::MissingEntry(
+				    EntryLookupInfo(CatalogType::SCHEMA_ENTRY, info->GetQualifiedName()), string());
+			}
+			info.reset();
+		}
 		return nullptr;
 	}
 
@@ -265,7 +275,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		                              type == CatalogType::DATABASE_ENTRY ? OnEntryNotFound::RETURN_NULL
 		                                                                  : OnEntryNotFound::THROW_EXCEPTION)) {
 			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.Name().GetIdentifierName()));
-			info->if_not_found = OnEntryNotFound::RETURN_NULL;
+			info.reset();
 		}
 		return nullptr;
 	}
@@ -292,11 +302,20 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_TABLESPACE) {
-		if (auto tablespace = entry_retriever.GetEntry(
-		        EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName(), AclMode::Rename),
-		        OnEntryNotFound::RETURN_NULL)) {
-			RefuseSystemTablespace(*tablespace);
+		auto tablespace = entry_retriever.GetEntry(
+		    EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName(), AclMode::Rename),
+		    OnEntryNotFound::RETURN_NULL);
+		if (!tablespace) {
+			if (entry_retriever.Hides(EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName()))) {
+				if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+					throw CatalogException::MissingObject(CatalogType::TABLESPACE_ENTRY,
+					                                      info->GetQualifiedName().Name());
+				}
+				info.reset();
+			}
+			return nullptr;
 		}
+		RefuseSystemTablespace(*tablespace);
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_ROLE) {
@@ -450,6 +469,12 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (!entry) {
+		const auto type =
+		    info->type == AlterType::SET_COLUMN_COMMENT ? CatalogType::TABLE_ENTRY : info->GetCatalogType();
+		if (entry_retriever.Hides(EntryLookupInfo(type, info->GetQualifiedName()))) {
+			info.reset();
+			return nullptr;
+		}
 		// Bind types in this binder
 		BindAlterTypes(*this, *info, nullptr);
 		return nullptr;

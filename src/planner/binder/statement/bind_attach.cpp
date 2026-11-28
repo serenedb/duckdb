@@ -22,6 +22,7 @@ void Binder::BindExternalResource(ExternalResourceOptions &external_resource) {
 }
 
 BoundStatement Binder::Bind(AttachStatement &stmt) {
+	Check<StatementRule::Attach>(CheckAs()).Require();
 	BoundStatement result;
 	result.types = {LogicalType::BOOLEAN};
 	result.names = {"Success"};

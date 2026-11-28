@@ -58,7 +58,7 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	auto &context = binder.context;
 	auto &permissions = TargetPermissions(object.overload_oid, entry);
 	const auto owner = permissions.owner;
-	const bool checked = !role.MemberOf(owner);
+	const bool checked = !Check<AclMode::Own>(context, role, {entry, permissions});
 	vector<AclItem> defaults;
 	std::span<const AclItem> stored = permissions.acl;
 	if (checked && permissions.UsesDefaultAcl()) {
@@ -119,8 +119,8 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 		auto &column_name = column.name.get().GetIdentifierName();
 		const auto options = BestGrantor(info.grantors, owner, requested, stored, column.acl).options;
 		const LogicalIndex index(i);
-		if (options == AclMode::NoRights && !Check(context, role, entry, ACL_COLUMN_PRIVILEGES | AclMode::Any) &&
-		    !Check(context, role, PrivilegeTarget::Columns(entry, {&index, 1}), ACL_COLUMN_PRIVILEGES | AclMode::Any)) {
+		if (options == AclMode::NoRights && !Check<ACL_COLUMN_PRIVILEGES | AclMode::Any>(context, role, entry) &&
+		    !Check<ACL_COLUMN_PRIVILEGES | AclMode::Any>(context, role, PrivilegeTarget::Columns(entry, {&index, 1}))) {
 			throw PermissionException("permission denied for column \"%s\" of relation \"%s\"", column_name, name);
 		}
 		WarnUngranted(context, info, requested, options, requested == ACL_COLUMN_PRIVILEGES,
@@ -199,11 +199,11 @@ static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo
 	if (info.granted_by.empty()) {
 		return role;
 	}
-	auto granted_by = binder.BindRole(info.granted_by)->oid;
-	if (!role.MemberOf(granted_by)) {
-		throw PermissionException("must be member of role \"%s\"", binder.RoleName(granted_by));
+	auto &granted_by = *binder.BindRole(info.granted_by);
+	if (!Check<AclMode::Usage>(binder.context, role, granted_by)) {
+		throw PermissionException("must be member of role \"%s\"", granted_by.name.GetIdentifierName());
 	}
-	return duckdb::Role(binder.context, granted_by);
+	return duckdb::Role(binder.context, granted_by.oid);
 }
 
 static const RoleAccess &ResolveGrantors(Binder &binder, AlterPermissionsInfo &info) {
@@ -250,19 +250,17 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, const RoleEntry
 		entry.ParentCatalog().RequireSubscription(context, role, entry, nullptr);
 	}
 	if (!reassigned_schemas) {
-		Check(context, role, new_owner, AclMode::SetRole).Require();
+		Check<AclMode::SetRole>(context, role, new_owner).Require();
 	}
 	const auto container = ObjectKindOf(entry.type).container;
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
-		if (!role.Has(RoleOption::CreateDb)) {
-			throw PermissionException("permission denied to change owner of database");
-		}
+		Check<StatementRule::AlterDatabaseOwner>(role).Require();
 	} else if (entry.type == CatalogType::FOREIGN_SERVER_ENTRY) {
 		auto &wrapper =
 		    Catalog::GetEntry(context, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                      QualifiedName(entry.ParentCatalog().GetName(), Identifier(),
 		                                    Identifier(entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name)));
-		Check(context, duckdb::Role(binder.context, new_owner.oid), wrapper, AclMode::Usage).Require();
+		Check<AclMode::Usage>(context, duckdb::Role(binder.context, new_owner.oid), wrapper).Require();
 	} else if (container == ObjectContainer::DATABASE) {
 		binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY,
 		                                                 QualifiedName(entry.ParentCatalog().GetName()),
@@ -273,7 +271,7 @@ static void RequireNewOwner(Binder &binder, CatalogEntry &entry, const RoleEntry
 	            (!Catalog::InRelationNamespace(entry.type) && entry.type != CatalogType::TYPE_ENTRY))) {
 		auto &schema = entry.ParentSchema(context);
 		if ((!reassigned_schemas || !reassigned_schemas->count(schema.oid)) &&
-		    !Check(context, duckdb::Role(binder.context, new_owner.oid), schema, AclMode::Create)) {
+		    !Check<AclMode::Create>(context, duckdb::Role(binder.context, new_owner.oid), schema)) {
 			throw PermissionException("permission denied for schema %s", schema.name.GetIdentifierName());
 		}
 	}
@@ -294,7 +292,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 		RefuseOwnedSequence(context, entry);
 	}
 	if (!Catalog::InRelationNamespace(entry.type)) {
-		Check(context, role, {entry, permissions}, AclMode::Own).Require();
+		Check<AclMode::Own>(context, role, {entry, permissions}).Require();
 	}
 	RequireNewOwner(binder, entry, new_owner, nullptr);
 }
@@ -305,7 +303,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 		info.grantee_ids.push_back(GranteeId(binder, grantee));
 	}
 	const auto add_role = [&](idx_t role) {
-		if (!binder.CheckAs().MemberOf(role)) {
+		if (!Check<AclMode::Usage>(context, binder.CheckAs(), PrivilegeTarget::Role(role))) {
 			throw PermissionException("permission denied to change default privileges");
 		}
 		info.target_roles.push_back(role);
@@ -333,14 +331,14 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<RoleSpec> &names, const string &action) {
 	vector<idx_t> result;
 	for (auto &name : names) {
-		auto role = binder.BindRole(name)->oid;
-		if (!binder.CheckAs().MemberOf(role)) {
+		auto &role = *binder.BindRole(name);
+		if (!Check<AclMode::Usage>(binder.context, binder.CheckAs(), role)) {
 			throw PermissionException::WithDetail(
 			    StringUtil::Format("Only roles with privileges of role \"%s\" may %s objects owned by it.",
-			                       binder.RoleName(role), action),
+			                       role.name.GetIdentifierName(), action),
 			    "permission denied to %s objects", action);
 		}
-		result.push_back(role);
+		result.push_back(role.oid);
 	}
 	return result;
 }

@@ -601,7 +601,7 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 		if (!schema) {
 			continue;
 		}
-		if (Check(context, Role(context), *schema, AclMode::Usage)) {
+		if (Check<AclMode::Usage>(context, Role(context), *schema)) {
 			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
 		}
 		skipped_unusable = true;

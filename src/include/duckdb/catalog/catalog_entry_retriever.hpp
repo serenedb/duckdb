@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <functional>
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
@@ -125,6 +126,10 @@ public:
 	DUCKDB_API bool Shows(CatalogEntry &entry, const SchemaView &schema) const;
 	DUCKDB_API SchemaView View(const SchemaCatalogEntry &schema) const;
 	DUCKDB_API bool Shows(AttachedDatabase &database) const;
+	DUCKDB_API bool Hides(const EntryLookupInfo &lookup) const;
+	DUCKDB_API bool Hides(const Identifier &catalog, const vector<Identifier> &schema_path) const;
+	DUCKDB_API void
+	VisitSearchSchemas(absl::FunctionRef<void(const Identifier &name, SchemaCatalogEntry &schema)> visit);
 
 private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);

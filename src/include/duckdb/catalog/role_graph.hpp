@@ -71,13 +71,13 @@ struct Membership {
 struct RoleAccess {
 	idx_t role = 0;
 	RoleOption options = RoleOption::None;
-	RoleCapability capabilities = RoleCapability::None;
 	bool is_superuser = false;
 	bool owns_builtins = false;
 	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
 	std::span<const idx_t> administered;
+	std::span<const idx_t> memberships;
 
 	DUCKDB_API static const RoleAccess &System();
 	bool IsSystem() const {
@@ -85,9 +85,6 @@ struct RoleAccess {
 	}
 	bool Has(RoleOption option) const {
 		return HasOption(options, option);
-	}
-	bool Has(RoleCapability capability) const {
-		return is_superuser || (capabilities & capability) == capability;
 	}
 	bool Uses(idx_t other) const;
 	bool MemberOf(idx_t other) const {
@@ -97,7 +94,10 @@ struct RoleAccess {
 	bool AdminOf(idx_t other) const {
 		return absl::c_binary_search(administered, other);
 	}
-	AclMode CapabilityModes(CatalogType type) const;
+	bool BelongsTo(idx_t other) const {
+		return other == role || absl::c_binary_search(memberships, other);
+	}
+	AclMode PredefinedRoleModes(CatalogType type) const;
 	bool Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
@@ -105,28 +105,19 @@ struct RoleAccess {
 	AclMode GrantableModes(std::span<const AclItem> acl) const;
 };
 
-struct RoleMemberships {
-	vector<idx_t> members;
-
-	bool IsMember(idx_t role) const {
-		return absl::c_binary_search(members, role);
-	}
-};
-
 class SecuritySnapshot {
 public:
 	struct Role {
 		idx_t role = 0;
 		RoleOption options = RoleOption::None;
-		RoleCapability capabilities = RoleCapability::None;
 		vector<idx_t> closure;
 		vector<idx_t> settable;
 		vector<idx_t> administered;
+		vector<idx_t> memberships;
 	};
 	struct Node {
 		string name;
 		RoleOption options = RoleOption::None;
-		RoleCapability capabilities = RoleCapability::None;
 		vector<Membership> member_of;
 	};
 
@@ -144,7 +135,6 @@ public:
 	optional_ptr<const Node> Find(idx_t role) const;
 	optional_idx FindByName(std::string_view name) const;
 	std::string_view NameOf(idx_t role) const;
-	RoleMemberships MembershipsOf(idx_t role) const;
 	vector<idx_t> InheritedRoles(idx_t role) const;
 	optional_idx BestAdmin(idx_t member, idx_t role) const;
 

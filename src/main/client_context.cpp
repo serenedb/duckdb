@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
@@ -1132,7 +1133,10 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 		return;
 	}
 	const auto holds = [&](const RoleAccess &role) {
-		return role.is_superuser || (role.capabilities & sufficient) != RoleCapability::None;
+		return role.is_superuser || absl::c_any_of(PREDEFINED_ROLES, [&](RoleCapability predefined) {
+			       return (predefined & sufficient) != RoleCapability::None &&
+			              Check<AclMode::Usage>(role, PrivilegeTarget::Role(predefined));
+		       });
 	};
 	if (!access_scope && holds(*current_role)) {
 		return;

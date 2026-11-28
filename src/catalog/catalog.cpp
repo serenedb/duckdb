@@ -533,41 +533,7 @@ struct CatalogLookup {
 // Generic
 //===--------------------------------------------------------------------===//
 bool Catalog::InRelationNamespace(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY:
-	case CatalogType::INDEX_ENTRY:
-	case CatalogType::SEQUENCE_ENTRY:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static string RelationKind(CatalogType type) {
-	switch (type) {
-	case CatalogType::VIEW_ENTRY:
-		return "view";
-	case CatalogType::INDEX_ENTRY:
-		return "index";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "sequence";
-	default:
-		return "table";
-	}
-}
-
-static string WithArticle(const string &kind) {
-	return (kind == "index" ? "an " : "a ") + kind;
-}
-
-[[noreturn]] static void ThrowWrongRelationKind(const Identifier &name, CatalogType requested, CatalogType actual) {
-	auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
-	auto actual_kind = RelationKind(actual);
-	extra_info["hint"] =
-	    StringUtil::Format("Use DROP %s to remove %s.", StringUtil::Upper(actual_kind), WithArticle(actual_kind));
-	throw CatalogException(extra_info, StringUtil::Format("\"%s\" is not %s", name.GetIdentifierName(),
-	                                                      WithArticle(RelationKind(requested))));
+	return absl::c_linear_search(RELATION_KINDS, type);
 }
 
 void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
@@ -594,39 +560,11 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	}
 
 	auto retriever = CatalogEntryRetriever::Internal(context);
-	EntryLookupInfo lookup_info(info.type, info.GetQualifiedName());
-	if (Compatibility() != SqlCompatibility::POSTGRES || !InRelationNamespace(info.type)) {
-		auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
-		if (!lookup.Found()) {
-			return;
-		}
-		lookup.schema->DropEntry(context, info);
+	auto lookup = LookupEntry(retriever, EntryLookupInfo(info.type, info.GetQualifiedName()), info.if_not_found);
+	if (!lookup.Found()) {
 		return;
 	}
-	auto &name = info.GetQualifiedName().Name();
-	auto lookup = LookupEntry(retriever, lookup_info, OnEntryNotFound::RETURN_NULL);
-	if (lookup.Found()) {
-		if (lookup.entry->type != info.type) {
-			ThrowWrongRelationKind(name, info.type, lookup.entry->type);
-		}
-		lookup.schema->DropEntry(context, info);
-		return;
-	}
-	for (auto other : {CatalogType::TABLE_ENTRY, CatalogType::INDEX_ENTRY, CatalogType::SEQUENCE_ENTRY}) {
-		const bool same_set =
-		    other == info.type || (other == CatalogType::TABLE_ENTRY && info.type == CatalogType::VIEW_ENTRY);
-		if (same_set) {
-			continue;
-		}
-		auto holder =
-		    LookupEntry(retriever, EntryLookupInfo(other, info.GetQualifiedName()), OnEntryNotFound::RETURN_NULL);
-		if (holder.Found()) {
-			ThrowWrongRelationKind(name, info.type, holder.entry->type);
-		}
-	}
-	if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-		LookupEntry(retriever, lookup_info, OnEntryNotFound::THROW_EXCEPTION);
-	}
+	lookup.schema->DropEntry(context, info);
 }
 
 SchemaCatalogEntry &Catalog::GetSchema(ClientContext &context, const Identifier &schema) {
@@ -1287,7 +1225,7 @@ static SchemaAccess RestrictToRole(CatalogEntryRetriever &retriever, CatalogEntr
 		result = CatalogEntryLookup();
 		return SchemaAccess::HIDDEN;
 	}
-	if (!Check(retriever.GetContext(), retriever.LookupRole(), *result.schema, AclMode::Usage)) {
+	if (!Check<AclMode::Usage>(retriever.GetContext(), retriever.LookupRole(), *result.schema)) {
 		return SchemaAccess::NO_USAGE;
 	}
 	if (result.Found() && !retriever.Shows(*result.entry, view)) {
@@ -1347,7 +1285,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
 		if (RestrictToRole(retriever, result) == SchemaAccess::NO_USAGE) {
-			Check(context, role, *result.schema, AclMode::Usage).Require();
+			Check<AclMode::Usage>(context, role, *result.schema).Require();
 		}
 		if (result.Found()) {
 			return result;
@@ -1523,7 +1461,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
 		const auto access = RestrictToRole(retriever, result);
 		if (access == SchemaAccess::NO_USAGE && !IsInvalidSchema(lookup_info.GetSchema())) {
-			Check(context, role, *result.schema, AclMode::Usage).Require();
+			Check<AclMode::Usage>(context, role, *result.schema).Require();
 		}
 		if (access != SchemaAccess::USABLE) {
 			result = {nullptr, nullptr, ErrorData()};

@@ -25,7 +25,10 @@ namespace duckdb {
 
 const Permissions &PermissionsOf(const PrivilegeTarget &target) {
 	static const Permissions UNOWNED {.acl = {{.grantee = ACL_ID_PUBLIC, .privs = ACL_GRANTABLE & ~AclMode::Create}}};
-	auto &entry = target.entry;
+	if (!target.entry) {
+		return target.permissions;
+	}
+	auto &entry = *target.entry;
 	const bool unowned =
 	    entry.permissions.owner == 0 || (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 	const bool system_view = entry.type == CatalogType::VIEW_ENTRY && entry.ParentCatalog().IsSystemCatalog();
@@ -117,12 +120,12 @@ bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit
 }
 
 SchemaView ViewOf(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema) {
-	const bool shown = static_cast<bool>(Check(context, role, schema, AclMode::See));
+	const bool shown = static_cast<bool>(Check<AclMode::See>(context, role, schema));
 	return {shown, shown && role.MemberOf(schema.permissions.owner)};
 }
 
 bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target) {
-	auto &entry = target.entry;
+	auto &entry = *target.entry;
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
 		return entry.name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName() ||
 		       Holds(role, target, AclMode::Connect);
@@ -158,22 +161,47 @@ bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const 
 	}
 	default: {
 		const auto &kind = ObjectKindOf(entry.type);
-		return (role.CapabilityModes(kind.acl_class) & kind.privileges) != AclMode::NoRights ||
+		return (role.PredefinedRoleModes(kind.acl_class) & kind.privileges) != AclMode::NoRights ||
 		       ForEachSeer(entry, [&](idx_t seer) { return seer == ACL_ID_PUBLIC || role.Uses(seer); });
 	}
 	}
 }
 
 bool CatalogEntryRetriever::Shows(CatalogEntry &entry) const {
-	return static_cast<bool>(Check(context, LookupRole(), entry, AclMode::See));
+	return static_cast<bool>(Check<AclMode::See>(context, LookupRole(), entry));
 }
 
 bool CatalogEntryRetriever::Shows(CatalogEntry &entry, const SchemaView &schema) const {
-	return static_cast<bool>(Check(context, LookupRole(), PrivilegeTarget::In(entry, schema), AclMode::See));
+	return static_cast<bool>(Check<AclMode::See>(context, LookupRole(), PrivilegeTarget::In(entry, schema)));
 }
 
 SchemaView CatalogEntryRetriever::View(const SchemaCatalogEntry &schema) const {
 	return ViewOf(context, LookupRole(), schema);
+}
+
+bool CatalogEntryRetriever::Hides(const EntryLookupInfo &lookup) const {
+	auto entry = Internal(context).GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
+	return entry && !Shows(*entry);
+}
+
+bool CatalogEntryRetriever::Hides(const Identifier &catalog, const vector<Identifier> &schema_path) const {
+	auto schema = Internal(context).GetSchema(catalog, schema_path, AclMode::NoRights, OnEntryNotFound::RETURN_NULL);
+	return schema && !Shows(*schema);
+}
+
+void CatalogEntryRetriever::VisitSearchSchemas(
+    absl::FunctionRef<void(const Identifier &name, SchemaCatalogEntry &schema)> visit) {
+	auto &role = LookupRole();
+	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+	for (auto &entry : GetSearchPath().Get()) {
+		if (!entry.GetCatalog().empty() && entry.GetCatalog() != database) {
+			continue;
+		}
+		auto schema = Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
+		if (schema && Check<AclMode::Usage>(context, role, *schema)) {
+			visit(entry.GetSchema(), *schema);
+		}
+	}
 }
 
 bool CatalogEntryRetriever::Shows(AttachedDatabase &database) const {
@@ -183,11 +211,11 @@ bool CatalogEntryRetriever::Shows(AttachedDatabase &database) const {
 	}
 	if (!database.IsReadOnly()) {
 		if (auto entry = SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName())) {
-			return static_cast<bool>(Check(context, role, *entry, AclMode::See));
+			return static_cast<bool>(Check<AclMode::See>(context, role, *entry));
 		}
 	}
 	auto server = ServerOf(context, database);
-	return server && Check(context, role, *server, AclMode::Usage);
+	return server && Check<AclMode::Usage>(context, role, *server);
 }
 
 static string ObjectNounOf(CatalogType type) {
@@ -195,50 +223,81 @@ static string ObjectNounOf(CatalogType type) {
 	return noun.empty() ? StringUtil::Lower(CatalogTypeToString(type)) : string(noun);
 }
 
-static bool IsFunction(const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::SCALAR_FUNCTION_ENTRY:
-	case CatalogType::TABLE_FUNCTION_ENTRY:
-	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
-	case CatalogType::PRAGMA_FUNCTION_ENTRY:
-	case CatalogType::WINDOW_FUNCTION_ENTRY:
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return true;
-	default:
-		return false;
-	}
-}
-
 static bool Uses(AclMode use, AclMode modes) {
 	return (use & modes) != AclMode::NoRights;
 }
 
-bool PrivilegeCheck::Holds(const RoleAccess &role, const PrivilegeTarget &target, AclMode use) {
-	auto &entry = target.entry;
-	const auto modes = use & ACL_GRANTABLE;
-	const bool any = Uses(use, AclMode::Any);
-	if (!target.of_columns) {
-		auto &permissions = PermissionsOf(target);
-		if (Uses(use, AclMode::Execute) && IsFunction(entry) && permissions.owner == 0) {
-			const auto capability = entry.Cast<FunctionEntry>().required_capability;
-			return capability == RoleCapability::None || role.Has(capability) || role.owns_builtins;
+static bool HoldsRequiredRole(const RoleAccess &role, RoleCapability required) {
+	return role.owns_builtins || (required != RoleCapability::Superuser && role.MemberOf(PredefinedRoleOid(required)));
+}
+
+template <class F>
+static bool OnColumns(const PrivilegeTarget &target, F &&granted) {
+	if (!target.entry) {
+		auto &list = *target.column_list;
+		if (target.columns.empty()) {
+			return absl::c_any_of(list.Logical(),
+			                      [&](const ColumnDefinition &column) { return granted(column.Acl()); });
 		}
-		if (modes == AclMode::NoRights) {
-			return true;
-		}
-		const auto type = ObjectKindOf(entry.type).acl_class;
-		return any ? role.CanAny(type, permissions, modes) : role.Can(type, permissions, modes);
+		return absl::c_all_of(target.columns,
+		                      [&](LogicalIndex column) { return granted(list.GetColumn(column).Acl()); });
 	}
-	auto &relation = entry.Cast<StandardEntry>();
-	const auto granted = [&](std::span<const AclItem> acl) {
-		return any ? (role.HeldModes(acl) & modes) != AclMode::NoRights
-		           : role.Can(CatalogType::TABLE_ENTRY, acl, modes);
-	};
+	auto &relation = target.entry->Cast<StandardEntry>();
 	if (target.columns.empty()) {
 		return AnyColumnAcl(relation, granted);
 	}
 	return absl::c_all_of(target.columns, [&](LogicalIndex column) { return granted(ColumnAclOf(relation, column)); });
+}
+
+static bool HoldsRole(const RoleAccess &role, idx_t other, AclMode use) {
+	const auto wanted = use & (AclMode::Usage | AclMode::Member | AclMode::Admin);
+	auto held = AclMode::NoRights;
+	if (Uses(wanted, AclMode::Usage) && role.MemberOf(other)) {
+		held |= AclMode::Usage;
+	}
+	if (Uses(wanted, AclMode::Member) && role.BelongsTo(other)) {
+		held |= AclMode::Member;
+	}
+	if (Uses(wanted, AclMode::Admin) && role.AdminOf(other)) {
+		held |= AclMode::Admin;
+	}
+	return Uses(use, AclMode::Any) && wanted != AclMode::NoRights ? held != AclMode::NoRights : held == wanted;
+}
+
+bool PrivilegeCheck::Holds(const RoleAccess &role, const PrivilegeTarget &target, AclMode use) {
+	if (target.type == CatalogType::ROLE_ENTRY) {
+		return HoldsRole(role, target.oid, use);
+	}
+	const auto modes = use & ACL_GRANTABLE;
+	const bool any = Uses(use, AclMode::Any);
+	if (Uses(use, AclMode::GrantOption)) {
+		auto &permissions = PermissionsOf(target);
+		if (role.MemberOf(permissions.owner)) {
+			return true;
+		}
+		const auto grantable = [&](std::span<const AclItem> acl) {
+			const auto held = role.GrantableModes(acl) & modes;
+			return any ? held != AclMode::NoRights : held == modes;
+		};
+		return target.of_columns ? OnColumns(target, grantable) : grantable(permissions.acl);
+	}
+	if (target.of_columns) {
+		return OnColumns(target, [&](std::span<const AclItem> acl) {
+			return any ? (role.HeldModes(acl) & modes) != AclMode::NoRights
+			           : role.Can(CatalogType::TABLE_ENTRY, acl, modes);
+		});
+	}
+	auto &permissions = PermissionsOf(target);
+	if (Uses(use, AclMode::Execute) && permissions.owner == 0 && target.entry && ObjectKindOf(target.type).routine) {
+		const auto required = target.entry->Cast<FunctionEntry>().required_capability;
+		return required == RoleCapability::None || HoldsRequiredRole(role, required);
+	}
+	if (modes == AclMode::NoRights ||
+	    (target.capability != RoleCapability::None && HoldsRequiredRole(role, target.capability))) {
+		return true;
+	}
+	const auto type = ObjectKindOf(target.type).acl_class;
+	return any ? role.CanAny(type, permissions, modes) : role.Can(type, permissions, modes);
 }
 
 const RoleAccess &Role(ExpressionState &state) {
@@ -246,10 +305,11 @@ const RoleAccess &Role(ExpressionState &state) {
 }
 
 PrivilegeCheck PrivilegeCheck::Ownership(const RoleAccess &role, const PrivilegeTarget &target) {
-	auto &entry = target.entry;
-	if (entry.type != CatalogType::ROLE_ENTRY) {
-		return role.MemberOf(target.permissions.owner) ? PrivilegeCheck() : PrivilegeCheck(Denial::NotOwner, entry);
+	if (target.type != CatalogType::ROLE_ENTRY) {
+		return role.MemberOf(target.permissions.owner) ? PrivilegeCheck()
+		                                               : PrivilegeCheck(Denial::NotOwner, target.entry);
 	}
+	auto &entry = *target.entry;
 	if (entry.Cast<RoleEntry>().IsSuperuser()) {
 		return {Denial::SuperuserRole, entry};
 	}
@@ -276,10 +336,9 @@ PrivilegeCheck PrivilegeCheck::Rules(ClientContext &context, const RoleAccess &r
 	if (Uses(use, AclMode::See)) {
 		return Sees(context, role, target) ? PrivilegeCheck() : PrivilegeCheck(Denial::Hidden, target.entry);
 	}
-	auto &entry = target.entry;
-	const auto container = ObjectKindOf(entry.type).container;
-	if (Uses(use, AclMode::SetRole) && !role.CanSet(entry.oid)) {
-		return {Denial::NoSetRole, entry};
+	const auto container = ObjectKindOf(target.type).container;
+	if (Uses(use, AclMode::SetRole) && !role.CanSet(target.oid)) {
+		return {Denial::NoSetRole, target.entry};
 	}
 	if (Uses(use, AclMode::Own | AclMode::Rename)) {
 		if (auto check = Ownership(role, target); !check) {
@@ -287,6 +346,7 @@ PrivilegeCheck PrivilegeCheck::Rules(ClientContext &context, const RoleAccess &r
 		}
 	}
 	if (Uses(use, AclMode::Rename) && container != ObjectContainer::CLUSTER) {
+		auto &entry = *target.entry;
 		auto parent = container == ObjectContainer::DATABASE
 		                  ? SystemEntry(context, CatalogType::DATABASE_ENTRY, entry.ParentCatalog().GetName())
 		                  : optional_ptr<CatalogEntry>(entry.ParentSchema(context));
@@ -297,24 +357,102 @@ PrivilegeCheck PrivilegeCheck::Rules(ClientContext &context, const RoleAccess &r
 		}
 	}
 	if (Uses(use, AclMode::Drop) && (container == ObjectContainer::DATABASE || container == ObjectContainer::CLUSTER ||
-	                                 !role.MemberOf(entry.ParentSchema(context).permissions.owner))) {
+	                                 !role.MemberOf(target.entry->ParentSchema(context).permissions.owner))) {
 		if (auto check = Ownership(role, target); !check) {
 			return check;
 		}
 	}
-	if (entry.type == CatalogType::SCHEMA_ENTRY && Uses(use, AclMode::Create)) {
-		if (auto check = CreateIn(context, role, entry, Denial::Privilege); !check) {
+	if (target.entry && target.type == CatalogType::SCHEMA_ENTRY && Uses(use, AclMode::Create) &&
+	    !Uses(use, AclMode::GrantOption)) {
+		auto check = CreateIn(context, role, *target.entry, Denial::Privilege);
+		use = use & ~AclMode::Create;
+		const bool others = Uses(use, ACL_GRANTABLE);
+		if (Uses(use, AclMode::Any) ? check || !others : !check || !others) {
 			return check;
 		}
-		use = use & ~AclMode::Create;
 	}
 	if (Holds(role, target, use & ~(AclMode::Own | AclMode::Drop | AclMode::Rename | AclMode::SetRole))) {
 		return {};
 	}
-	return {Denial::Privilege, entry};
+	return {Denial::Privilege, target.entry};
+}
+
+struct StatementRequirement {
+	RoleOption option = RoleOption::None;
+	RoleCapability capability = RoleCapability::None;
+	const char *message = "permission denied: superuser required";
+	bool named = false;
+	const char *detail = nullptr;
+	const char *hint = nullptr;
+};
+
+static constexpr StatementRequirement STATEMENT_RULES[] = {
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {.message = "permission denied to create tablespace \"%s\"",
+     .named = true,
+     .hint = "Must be superuser to create a tablespace."},
+    {.option = RoleOption::CreateDb, .message = "permission denied to create database"},
+    {.option = RoleOption::CreateDb, .message = "permission denied to change owner of database"},
+    {.capability = RoleCapability::CreateSubscription,
+     .message = "permission denied to create subscription",
+     .detail = "Only roles with privileges of the \"pg_create_subscription\" role may create subscriptions."},
+    {.option = RoleOption::CreateRole,
+     .message = "permission denied to create role",
+     .detail = "Only roles with the CREATEROLE attribute may create roles."},
+    {.option = RoleOption::Superuser,
+     .message = "permission denied to create role",
+     .detail = "Only roles with the SUPERUSER attribute may create roles with the SUPERUSER attribute."},
+    {.option = RoleOption::CreateDb,
+     .message = "permission denied to create role",
+     .detail = "Only roles with the CREATEDB attribute may create roles with the CREATEDB attribute."},
+    {.option = RoleOption::Replication,
+     .message = "permission denied to create role",
+     .detail = "Only roles with the REPLICATION attribute may create roles with the REPLICATION attribute."},
+    {.option = RoleOption::BypassRls,
+     .message = "permission denied to create role",
+     .detail = "Only roles with the BYPASSRLS attribute may create roles with the BYPASSRLS attribute."},
+    {.option = RoleOption::CreateRole,
+     .message = "permission denied to drop role",
+     .detail = "Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles."},
+    {.message = "permission denied to set session authorization \"%s\"", .named = true},
+};
+
+static_assert(std::size(STATEMENT_RULES) == static_cast<idx_t>(StatementRule::SetSessionAuthorization) + 1);
+
+PrivilegeCheck PrivilegeCheck::Runs(const RoleAccess &role, StatementRule rule) {
+	auto &requirement = STATEMENT_RULES[static_cast<idx_t>(rule)];
+	if ((requirement.option != RoleOption::None && role.Has(requirement.option)) ||
+	    (requirement.capability != RoleCapability::None && role.MemberOf(PredefinedRoleOid(requirement.capability)))) {
+		return {};
+	}
+	PrivilegeCheck check(Denial::Statement, nullptr);
+	check.rule = rule;
+	return check;
 }
 
 void PrivilegeCheck::Throw(optional_ptr<const StatementNaming> naming) const {
+	if (denial == Denial::Statement) {
+		auto &statement = STATEMENT_RULES[static_cast<idx_t>(rule)];
+		const auto message = statement.named
+		                         ? StringUtil::Format(statement.message, naming->name.back().GetIdentifierName())
+		                         : string(statement.message);
+		if (statement.detail) {
+			throw PermissionException::WithDetail(statement.detail, message);
+		}
+		if (statement.hint) {
+			throw PermissionException::WithHint(statement.hint, message);
+		}
+		throw PermissionException(message);
+	}
 	auto &entry = *object;
 	const auto named = [&]() {
 		if (!naming) {
@@ -350,6 +488,7 @@ void PrivilegeCheck::Throw(optional_ptr<const StatementNaming> naming) const {
 		                          entry.name.GetIdentifierName());
 	case Denial::Hidden:
 		throw InternalException("a visibility check was asked to throw");
+	case Denial::Statement:
 	case Denial::None:
 		break;
 	}

@@ -38,42 +38,44 @@ constexpr RoleCapability &operator|=(RoleCapability &a, RoleCapability b) {
 	return a;
 }
 
-constexpr RoleCapability PredefinedRoleCapability(idx_t role) {
+inline constexpr RoleCapability PREDEFINED_ROLES[] = {RoleCapability::DatabaseOwner, RoleCapability::ReadAllData, RoleCapability::WriteAllData, RoleCapability::Monitor, RoleCapability::ReadAllSettings, RoleCapability::ReadAllStats, RoleCapability::StatScanTables, RoleCapability::ReadServerFiles, RoleCapability::WriteServerFiles, RoleCapability::ExecuteServerProgram, RoleCapability::SignalBackend, RoleCapability::Checkpoint, RoleCapability::Maintain, RoleCapability::UseReservedConnections, RoleCapability::CreateSubscription, RoleCapability::SignalAutovacuumWorker};
+
+constexpr idx_t PredefinedRoleOid(RoleCapability role) {
 	switch (role) {
-	case 6171:
-		return RoleCapability::DatabaseOwner;
-	case 6181:
-		return RoleCapability::ReadAllData;
-	case 6182:
-		return RoleCapability::WriteAllData;
-	case 3373:
-		return RoleCapability::Monitor;
-	case 3374:
-		return RoleCapability::ReadAllSettings;
-	case 3375:
-		return RoleCapability::ReadAllStats;
-	case 3377:
-		return RoleCapability::StatScanTables;
-	case 4569:
-		return RoleCapability::ReadServerFiles;
-	case 4570:
-		return RoleCapability::WriteServerFiles;
-	case 4571:
-		return RoleCapability::ExecuteServerProgram;
-	case 4200:
-		return RoleCapability::SignalBackend;
-	case 4544:
-		return RoleCapability::Checkpoint;
-	case 6337:
-		return RoleCapability::Maintain;
-	case 4550:
-		return RoleCapability::UseReservedConnections;
-	case 6304:
-		return RoleCapability::CreateSubscription;
-	case 6392:
-		return RoleCapability::SignalAutovacuumWorker;
+	case RoleCapability::DatabaseOwner:
+		return 6171;
+	case RoleCapability::ReadAllData:
+		return 6181;
+	case RoleCapability::WriteAllData:
+		return 6182;
+	case RoleCapability::Monitor:
+		return 3373;
+	case RoleCapability::ReadAllSettings:
+		return 3374;
+	case RoleCapability::ReadAllStats:
+		return 3375;
+	case RoleCapability::StatScanTables:
+		return 3377;
+	case RoleCapability::ReadServerFiles:
+		return 4569;
+	case RoleCapability::WriteServerFiles:
+		return 4570;
+	case RoleCapability::ExecuteServerProgram:
+		return 4571;
+	case RoleCapability::SignalBackend:
+		return 4200;
+	case RoleCapability::Checkpoint:
+		return 4544;
+	case RoleCapability::Maintain:
+		return 6337;
+	case RoleCapability::UseReservedConnections:
+		return 4550;
+	case RoleCapability::CreateSubscription:
+		return 6304;
+	case RoleCapability::SignalAutovacuumWorker:
+		return 6392;
 	default:
-		return RoleCapability::None;
+		return 0;
 	}
 }
 

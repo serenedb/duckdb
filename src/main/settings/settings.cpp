@@ -186,7 +186,8 @@ void Settings::CheckChange(const RoleAccess &role, const Identifier &name, const
 }
 
 bool Settings::CanRead(const RoleAccess &role, const SettingAccess &access) {
-	return !access.superuser_read || role.Has(RoleCapability::ReadAllSettings);
+	return !access.superuser_read ||
+	       Check<AclMode::Usage>(role, PrivilegeTarget::Role(RoleCapability::ReadAllSettings));
 }
 
 void Settings::CheckRead(ClientContext &context, const Identifier &name, const RoleAccess &role) {
