@@ -530,6 +530,8 @@ enum class ResultModifierType : uint8_t;
 
 enum class ResultOrdering : uint8_t;
 
+enum class RewriteGuard : uint8_t;
+
 enum class RoleOption : uint32_t;
 
 enum class RowGroupAppendMode : uint8_t;
@@ -1452,6 +1454,9 @@ const char* EnumUtil::ToChars<ResultModifierType>(ResultModifierType value);
 
 template<>
 const char* EnumUtil::ToChars<ResultOrdering>(ResultOrdering value);
+
+template<>
+const char* EnumUtil::ToChars<RewriteGuard>(RewriteGuard value);
 
 template<>
 const char* EnumUtil::ToChars<RoleOption>(RoleOption value);
@@ -2461,6 +2466,9 @@ ResultModifierType EnumUtil::FromString<ResultModifierType>(std::string_view val
 
 template<>
 ResultOrdering EnumUtil::FromString<ResultOrdering>(std::string_view value);
+
+template<>
+RewriteGuard EnumUtil::FromString<RewriteGuard>(std::string_view value);
 
 template<>
 RoleOption EnumUtil::FromString<RoleOption>(std::string_view value);

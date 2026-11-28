@@ -233,6 +233,7 @@
 #include "duckdb/parser/tableref/showref.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/bound_result_modifier.hpp"
+#include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/filter/table_filter_functions.hpp"
 #include "duckdb/planner/logical_operator_repeatability.hpp"
 #include "duckdb/planner/logical_plan_verification_result.hpp"
@@ -5883,6 +5884,26 @@ const char* EnumUtil::ToChars<ResultOrdering>(ResultOrdering value) {
 template<>
 ResultOrdering EnumUtil::FromString<ResultOrdering>(std::string_view value) {
 	return static_cast<ResultOrdering>(StringUtil::StringToEnum(GetResultOrderingValues(), 3, "ResultOrdering", value));
+}
+
+const StringUtil::EnumStringLiteral *GetRewriteGuardValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(RewriteGuard::NONE), "NONE" },
+		{ static_cast<uint32_t>(RewriteGuard::SCORED), "SCORED" },
+		{ static_cast<uint32_t>(RewriteGuard::FIXED_CHILDREN), "FIXED_CHILDREN" },
+		{ static_cast<uint32_t>(RewriteGuard::UNSCORED), "UNSCORED" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<RewriteGuard>(RewriteGuard value) {
+	return StringUtil::EnumToString(GetRewriteGuardValues(), 4, "RewriteGuard", static_cast<uint32_t>(value));
+}
+
+template<>
+RewriteGuard EnumUtil::FromString<RewriteGuard>(std::string_view value) {
+	return static_cast<RewriteGuard>(StringUtil::StringToEnum(GetRewriteGuardValues(), 4, "RewriteGuard", value));
 }
 
 const StringUtil::EnumStringLiteral *GetRoleOptionValues() {
