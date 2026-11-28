@@ -378,29 +378,19 @@ static void ListReassigned(Binder &binder, AlterOwnedInfo &info, const RoleEntry
 		     .type = entry.type,
 		     .overload_oid = overload});
 	};
-	auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
-	const auto transaction = catalog.GetCatalogTransaction(context);
-	catalog.ScanOwned(transaction, [&](CatalogEntry &entry) {
-		if (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY) {
-			if (reassigned(entry.permissions.owner)) {
-				add(transaction, entry, 0);
-			}
-			return;
-		}
-		auto &macro = entry.Cast<MacroCatalogEntry>();
-		for (auto &overload : macro.macros) {
-			if (reassigned(macro.OverloadPermissions(*overload).owner)) {
-				add(transaction, entry, macro.OverloadOid(*overload));
-			}
-		}
-	});
-	auto &system = Catalog::GetSystemCatalog(context);
-	const auto system_transaction = system.GetCatalogTransaction(context);
-	system.ScanOwned(system_transaction, [&](CatalogEntry &entry) {
-		if (reassigned(entry.permissions.owner)) {
-			add(system_transaction, entry, 0);
-		}
-	});
+	const auto scan = [&](Catalog &catalog) {
+		const auto transaction = catalog.GetCatalogTransaction(context);
+		catalog.ScanOwned(transaction, [&](CatalogEntry &entry) {
+			AnyRoleReference(entry, [&](const RoleReference &reference) {
+				if (reference.use == RoleUse::Owner && !reference.default_acl && reassigned(reference.role)) {
+					add(transaction, entry, reference.overload_oid);
+				}
+				return false;
+			});
+		});
+	};
+	scan(Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)));
+	scan(Catalog::GetSystemCatalog(context));
 }
 
 void Binder::ResolveOwned(AlterOwnedInfo &info) {

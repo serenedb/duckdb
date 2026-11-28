@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/database_entry.hpp"
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
@@ -121,6 +122,64 @@ bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit
 		return visit(ACL_ID_PUBLIC);
 	}
 	return VisitSeers(entry, visit);
+}
+
+bool AnyRoleReference(const CatalogEntry &entry, absl::FunctionRef<bool(const RoleReference &)> visit) {
+	const auto acl = [&](std::span<const AclItem> items, RoleReference reference) {
+		reference.use = RoleUse::Acl;
+		return absl::c_any_of(items, [&](const AclItem &item) {
+			reference.role = item.grantee;
+			if (visit(reference)) {
+				return true;
+			}
+			reference.role = item.grantor;
+			return visit(reference);
+		});
+	};
+	const auto held = [&](const Permissions &permissions, RoleReference reference) {
+		reference.role = permissions.owner;
+		return visit(reference) || acl(permissions.acl, reference);
+	};
+	switch (entry.type) {
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		return absl::c_any_of(macro.macros, [&](const unique_ptr<MacroFunction> &overload) {
+			return held(macro.OverloadPermissions(*overload), {.overload_oid = macro.OverloadOid(*overload)});
+		});
+	}
+	case CatalogType::TABLE_ENTRY: {
+		auto &table = entry.Cast<TableCatalogEntry>();
+		return held(entry.permissions, {}) ||
+		       (table.has_column_acls &&
+		        absl::c_any_of(table.GetColumns().Logical(), [&](const ColumnDefinition &column) {
+			        return acl(column.Acl(), {.column = &column.Name()});
+		        }));
+	}
+	case CatalogType::VIEW_ENTRY:
+		return held(entry.permissions, {}) ||
+		       absl::c_any_of(entry.Cast<ViewCatalogEntry>().column_acls,
+		                      [&](const ColumnAcl &column) { return acl(column.acl, {.column = &column.column}); });
+	case CatalogType::DATABASE_ENTRY: {
+		auto &database = entry.Cast<DatabaseEntry>();
+		return held(entry.permissions, {}) ||
+		       absl::c_any_of(database.DefaultAcls(),
+		                      [&](const DefaultAcl &row) {
+			                      return visit({.role = row.role, .default_acl = &row}) ||
+			                             acl(row.acl, {.default_acl = &row});
+		                      }) ||
+		       absl::c_any_of(database.Settings(), [&](const DatabaseSetting &row) {
+			       return visit({.role = row.role, .use = RoleUse::Setting});
+		       });
+	}
+	case CatalogType::ROLE_ENTRY:
+		return held(entry.permissions, {}) ||
+		       absl::c_any_of(entry.Cast<RoleEntry>().MemberOf(), [&](const Membership &edge) {
+			       return visit({.role = edge.grantor, .use = RoleUse::Grantor});
+		       });
+	default:
+		return held(entry.permissions, {});
+	}
 }
 
 SchemaView ViewOf(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema) {

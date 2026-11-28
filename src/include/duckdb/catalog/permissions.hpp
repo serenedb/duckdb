@@ -119,10 +119,21 @@ constexpr bool UseFits(AclMode use, CatalogType type) {
 	return (use & ACL_GRANTABLE & ~privileges) == AclMode::NoRights;
 }
 
+enum class RoleUse : uint8_t { Owner, Acl, Setting, Grantor };
+
+struct RoleReference {
+	idx_t role = 0;
+	RoleUse use = RoleUse::Owner;
+	idx_t overload_oid = 0;
+	optional_ptr<const Identifier> column;
+	optional_ptr<const DefaultAcl> default_acl;
+};
+
 DUCKDB_API const Permissions &PermissionsOf(const PrivilegeTarget &target);
 DUCKDB_API const RoleAccess &Role(ClientContext &context, optional_idx bound = optional_idx());
 DUCKDB_API const RoleAccess &Role(ExpressionState &state);
 DUCKDB_API bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit);
+DUCKDB_API bool AnyRoleReference(const CatalogEntry &entry, absl::FunctionRef<bool(const RoleReference &)> visit);
 DUCKDB_API SchemaView ViewOf(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema);
 
 class PrivilegeCheck;
