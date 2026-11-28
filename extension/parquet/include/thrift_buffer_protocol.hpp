@@ -14,6 +14,7 @@
 
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/serializer/encoding_util.hpp"
 #include "duckdb/common/typedefs.hpp"
 
 #include <cstring>
@@ -54,7 +55,7 @@ public:
 		}
 		const auto delta = UnsafeNumericCast<int16_t>(header >> 4);
 		if (delta == 0) {
-			field_id = static_cast<int16_t>(ZigZag32(static_cast<uint32_t>(ReadVarint())));
+			field_id = static_cast<int16_t>(EncodingUtil::ZigZagDecode(static_cast<uint32_t>(ReadVarint())));
 		} else {
 			field_id = static_cast<int16_t>(last_field_id + delta);
 		}
@@ -128,19 +129,19 @@ public:
 
 	uint32_t readI16(int16_t &value) {
 		const auto start = pos;
-		value = static_cast<int16_t>(ZigZag32(static_cast<uint32_t>(ReadVarint())));
+		value = static_cast<int16_t>(EncodingUtil::ZigZagDecode(static_cast<uint32_t>(ReadVarint())));
 		return Read(start);
 	}
 
 	uint32_t readI32(int32_t &value) {
 		const auto start = pos;
-		value = ZigZag32(static_cast<uint32_t>(ReadVarint()));
+		value = EncodingUtil::ZigZagDecode(static_cast<uint32_t>(ReadVarint()));
 		return Read(start);
 	}
 
 	uint32_t readI64(int64_t &value) {
 		const auto start = pos;
-		value = ZigZag64(ReadVarint());
+		value = EncodingUtil::ZigZagDecode(ReadVarint());
 		return Read(start);
 	}
 
@@ -186,8 +187,6 @@ private:
 		CT_MAP = 0x0B,
 		CT_STRUCT = 0x0C
 	};
-	//! A varint holds at most 64 bits, 7 in each byte
-	static constexpr idx_t MAX_VARINT_BYTES = 10;
 	//! A struct is read only within the recursion limit of the protocol (TInputRecursionTracker), so the field ids of
 	//! the enclosing structs are kept for as many
 	static constexpr idx_t MAX_DEPTH = duckdb_apache::thrift::protocol::DEFAULT_RECURSION_LIMIT;
@@ -214,14 +213,6 @@ private:
 			ThrowUnknownType(type);
 		}
 		return TYPES[type];
-	}
-
-	[[gnu::always_inline]] static int32_t ZigZag32(uint32_t value) {
-		return static_cast<int32_t>((value >> 1) ^ (~(value & 1) + 1));
-	}
-
-	[[gnu::always_inline]] static int64_t ZigZag64(uint64_t value) {
-		return static_cast<int64_t>((value >> 1) ^ (~(value & 1) + 1));
 	}
 
 	[[gnu::always_inline]] uint32_t Read(const_data_ptr_t start) const {
@@ -259,15 +250,16 @@ private:
 		if (!(*pos & 0x80)) {
 			return *pos++;
 		}
-		uint64_t result = 0;
-		for (idx_t i = 0; i < MAX_VARINT_BYTES; i++) {
-			const auto byte = ReadByte();
-			result |= static_cast<uint64_t>(byte & 0x7f) << (7 * i);
-			if (!(byte & 0x80)) {
-				return result;
+		uint64_t result;
+		const auto size = EncodingUtil::TryDecodeUnsignedLEB128(pos, Remaining(), result);
+		if (size == 0) {
+			if (Remaining() < EncodingUtil::MaxLEB128Size<uint64_t>()) {
+				ThrowEndOfData();
 			}
+			ThrowVarintTooLong();
 		}
-		ThrowVarintTooLong();
+		pos += size;
+		return result;
 	}
 
 	const_data_ptr_t pos;
