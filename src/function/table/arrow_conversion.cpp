@@ -482,12 +482,12 @@ static void SetVectorString(Vector &vector, idx_t size, char *cdata, T *offsets,
 template <class ROWS>
 static void SetVectorStringView(Vector &vector, idx_t size, ArrowArray &array, idx_t current_pos, const ROWS &rows,
                                 bool utf8) {
-	auto strings = FlatVector::Writer<string_t>(vector, size);
+	auto strings = FlatVector::GetDataMutable<string_t>(vector);
+	const auto &validity = FlatVector::Validity(vector);
 	auto arrow_string = ArrowBufferData<arrow_string_view_t>(array, 1) + current_pos;
 
 	for (idx_t row_idx = 0; row_idx < size; row_idx++) {
-		if (FlatVector::IsNull(vector, row_idx)) {
-			strings.WriteNull();
+		if (!validity.RowIsValid(row_idx)) {
 			continue;
 		}
 		auto &source = arrow_string[rows[row_idx]];
@@ -512,7 +512,7 @@ static void SetVectorStringView(Vector &vector, idx_t size, ArrowArray &array, i
 		if (utf8) {
 			VerifyUtf8(data, length);
 		}
-		strings.WriteStringRef(string_t(data, length));
+		MakeString(data, length, reinterpret_cast<const char *>(&source) + sizeof(source), strings[row_idx]);
 	}
 }
 
