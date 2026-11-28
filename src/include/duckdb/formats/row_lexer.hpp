@@ -104,6 +104,14 @@ struct RowFields {
 	idx_t event_head = 0;
 };
 
+struct RowQuoteScan {
+	idx_t pos = 0;
+	uint64_t in_quotes = 0;
+	uint64_t after_delimiter = 0;
+	uint64_t after_term = 1;
+	uint64_t after_closer = 0;
+};
+
 struct RowCursor {
 	idx_t origin = 0;
 	idx_t anchor = 0;
@@ -199,6 +207,8 @@ public:
 		return dialect.delimiter_size - 1;
 	}
 	void Start(RowCursor &cursor, idx_t begin, bool settled, bool check_arity = true) const;
+	bool ScansQuotes() const;
+	bool ScanQuotes(RowQuoteScan &scan, const char *data, idx_t base, idx_t end, bool &end_quoted) const;
 	bool Feed(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const;
 	bool Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool eof, RowFields *fields,
 	            CSVState origin_state, CsvRangeEntry &entry) const;

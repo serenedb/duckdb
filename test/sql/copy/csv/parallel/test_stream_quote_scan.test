@@ -1,0 +1,59 @@
+# name: test/sql/copy/csv/parallel/test_stream_quote_scan.test
+# description: A compressed file cut where quote parity places its rows returns what the uncompressed file returns in one sequential scan, and so does one with quotes parity cannot place
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+CREATE TABLE quoted AS SELECT i AS id, CASE i % 4 WHEN 0 THEN 'x' || chr(10) || 'y,z' || repeat('w', i % 90) WHEN 1 THEN repeat('v', i % 70) WHEN 2 THEN ',' || chr(10) || chr(10) ELSE '' END AS note, i * 2 AS twice FROM range(4000) t(i);
+
+statement ok
+COPY (FROM quoted ORDER BY id) TO '{TEMP_DIR}/quote_scan.csv' (HEADER false);
+
+statement ok
+COPY (FROM quoted ORDER BY id) TO '{TEMP_DIR}/quote_scan.csv.gz' (HEADER false, COMPRESSION gzip);
+
+statement ok
+CREATE TABLE literal AS SELECT CASE WHEN i % 5 = 0 THEN 'a' || i || '"b,' || i || ',"q' || chr(10) || 'r"' WHEN i % 5 = 1 THEN '"p' || chr(13) || 'q",' || i || ',' || repeat('s', i % 77) WHEN i % 5 = 3 THEN '"ab"c,' || i || ',"' || repeat('m', i % 40) || '"' ELSE '"t,u",' || i || ',' || repeat('k', i % 50) END AS line, i FROM range(4000) t(i);
+
+statement ok
+COPY (SELECT line FROM literal ORDER BY i) TO '{TEMP_DIR}/quote_literal.csv' (HEADER false, QUOTE '', DELIMITER '|');
+
+statement ok
+COPY (SELECT line FROM literal ORDER BY i) TO '{TEMP_DIR}/quote_literal.csv.gz' (HEADER false, QUOTE '', DELIMITER '|', COMPRESSION gzip);
+
+foreach buffer_size 128 700 4096 1048576
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_scan.csv.gz', columns = {'id': 'INTEGER', 'note': 'VARCHAR', 'twice': 'BIGINT'}, header = false, auto_detect = false, quote = '"', escape = '"', delim = ',', new_line = '\n', buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_scan.csv', columns = {'id': 'INTEGER', 'note': 'VARCHAR', 'twice': 'BIGINT'}, header = false, auto_detect = false, quote = '"', escape = '"', delim = ',', new_line = '\n', buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_scan.csv', columns = {'id': 'INTEGER', 'note': 'VARCHAR', 'twice': 'BIGINT'}, header = false, auto_detect = false, quote = '"', escape = '"', delim = ',', new_line = '\n', buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_scan.csv.gz', columns = {'id': 'INTEGER', 'note': 'VARCHAR', 'twice': 'BIGINT'}, header = false, auto_detect = false, quote = '"', escape = '"', delim = ',', new_line = '\n', buffer_size = {buffer_size}))
+)
+----
+0
+
+query III
+SELECT count(*), sum(twice), count(*) FILTER (WHERE note = (SELECT note FROM quoted q WHERE q.id = t.id)) FROM read_csv('{TEMP_DIR}/quote_scan.csv.gz', columns = {'id': 'INTEGER', 'note': 'VARCHAR', 'twice': 'BIGINT'}, header = false, auto_detect = false, quote = '"', escape = '"', delim = ',', new_line = '\n', buffer_size = {buffer_size}) t
+----
+4000	15996000	3000
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_literal.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_literal.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_literal.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_literal.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size}))
+)
+----
+0
+
+query II
+SELECT count(*), sum(b) FROM read_csv('{TEMP_DIR}/quote_literal.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size})
+----
+4000	7998000
+
+endloop

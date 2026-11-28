@@ -58,6 +58,37 @@ struct PlainBlockMasks {
 	uint64_t field_bits;
 };
 
+struct QuotedBlockMasks {
+	uint64_t in;
+	uint64_t terms;
+	uint64_t delims;
+	uint64_t from_delims;
+	uint64_t after_terms;
+	uint64_t field_starts;
+	uint64_t openers;
+	uint64_t closers;
+};
+
+[[gnu::always_inline]] inline QuotedBlockMasks QuotedMasks(uint64_t raw_quote, uint64_t line_feed, uint64_t delimiter,
+                                                           uint64_t in_quotes, uint64_t after_delimiter,
+                                                           uint64_t after_term) {
+	QuotedBlockMasks masks;
+	masks.in = (raw_quote ? CsvPrefixXor(raw_quote) : 0) ^ CsvSpread(in_quotes);
+	masks.terms = line_feed & ~masks.in;
+	masks.delims = delimiter & ~masks.in;
+	masks.from_delims = (masks.delims << 1) | after_delimiter;
+	masks.after_terms = (masks.terms << 1) | after_term;
+	masks.field_starts = masks.from_delims | masks.after_terms;
+	masks.openers = raw_quote & masks.in;
+	masks.closers = raw_quote & ~masks.in;
+	return masks;
+}
+
+[[gnu::always_inline]] inline uint64_t MisplacedQuotes(const QuotedBlockMasks &masks, uint64_t follow,
+                                                       uint64_t after_closer) {
+	return (masks.openers & ~masks.field_starts) | (((masks.closers << 1) | after_closer) & ~follow);
+}
+
 inline uint64_t Lowest(uint64_t bits) {
 	return bits & (0 - bits);
 }
@@ -274,6 +305,68 @@ void RowLexer::Start(RowCursor &cursor, idx_t begin, bool settled, bool check_ar
 	cursor.field_start = begin;
 	cursor.settled = settled || dialect.quoting == RowQuoting::NONE;
 	cursor.check_arity = check_arity;
+}
+
+bool RowLexer::ScansQuotes() const {
+	return lean && dialect.quoting == RowQuoting::FIELD_START;
+}
+
+bool RowLexer::ScanQuotes(RowQuoteScan &scan, const char *data, idx_t base, idx_t end, bool &end_quoted) const {
+	D_ASSERT(ScansQuotes());
+	const char quote = dialect.quote;
+	const char delimiter = dialect.delimiter;
+	D_ASSERT(!dialect.escape || dialect.escape == quote);
+	auto state = scan;
+	while (state.pos + CSV_BLOCK_BYTES <= end) {
+		const char *block = data + (state.pos - base);
+		const CsvVector vector(block);
+		if (!state.after_closer && !vector.ContainsAny('\r', quote)) {
+			if (!state.in_quotes) {
+				state.after_delimiter = block[CSV_BLOCK_BYTES - 1] == delimiter;
+				state.after_term = block[CSV_BLOCK_BYTES - 1] == '\n';
+			}
+			state.pos += CSV_BLOCK_BYTES;
+			continue;
+		}
+		if (vector.ContainsAny('\r')) {
+			return false;
+		}
+		const uint64_t line_feed = vector.Equal('\n');
+		const uint64_t delimiters = vector.Equal(delimiter);
+		const auto quoted = QuotedMasks(vector.Equal(quote), line_feed, delimiters, state.in_quotes,
+		                                state.after_delimiter, state.after_term);
+		if (MisplacedQuotes(quoted, delimiters | line_feed, state.after_closer)) {
+			return false;
+		}
+		state.in_quotes = (quoted.in >> (CSV_BLOCK_BYTES - 1)) & 1;
+		state.after_delimiter = quoted.delims >> (CSV_BLOCK_BYTES - 1);
+		state.after_term = quoted.terms >> (CSV_BLOCK_BYTES - 1);
+		state.after_closer = quoted.closers >> (CSV_BLOCK_BYTES - 1);
+		state.pos += CSV_BLOCK_BYTES;
+	}
+	scan = state;
+	bool in_quotes = state.in_quotes;
+	bool field_start = state.after_delimiter | state.after_term;
+	bool after_closer = state.after_closer;
+	for (idx_t pos = state.pos; pos < end; pos++) {
+		const char byte = data[pos - base];
+		if (byte == '\r' || (after_closer && byte != delimiter && byte != '\n')) {
+			return false;
+		}
+		after_closer = false;
+		if (byte == quote) {
+			in_quotes = !in_quotes;
+			if (in_quotes && !field_start) {
+				return false;
+			}
+			after_closer = !in_quotes;
+			field_start = false;
+			continue;
+		}
+		field_start = !in_quotes && (byte == delimiter || byte == '\n');
+	}
+	end_quoted = in_quotes;
+	return true;
 }
 
 bool RowLexer::Feed(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const {
@@ -570,20 +663,21 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		}
 		const uint64_t line_feed = vector.Equal('\n');
 		const uint64_t delimiter = vector.Equal(d.delimiter);
-		const uint64_t in = (raw_quote ? CsvPrefixXor(raw_quote) : 0) ^ CsvSpread(in_quotes);
-		const uint64_t terms = line_feed & ~in;
-		const uint64_t delims = delimiter & ~in;
-		const uint64_t from_delims = (delims << 1) | after_delimiter;
-		const uint64_t after_terms = (terms << 1) | after_term;
-		const uint64_t field_starts = from_delims | after_terms;
+		const auto quoted = QuotedMasks(raw_quote, line_feed, delimiter, in_quotes, after_delimiter, after_term);
+		const uint64_t in = quoted.in;
+		const uint64_t terms = quoted.terms;
+		const uint64_t delims = quoted.delims;
+		const uint64_t from_delims = quoted.from_delims;
+		const uint64_t after_terms = quoted.after_terms;
+		const uint64_t field_starts = quoted.field_starts;
 		bool block_settled = settled;
 		uint64_t next_closer = after_closer;
 		uint64_t next_opener = after_opener;
 		if (raw_quote | after_closer | after_opener) {
-			const uint64_t openers = raw_quote & in;
-			const uint64_t closers = raw_quote & ~in;
+			const uint64_t openers = quoted.openers;
+			const uint64_t closers = quoted.closers;
 			const uint64_t follow = delimiter | line_feed;
-			if ((openers & ~field_starts) | (((closers << 1) | after_closer) & ~follow)) {
+			if (MisplacedQuotes(quoted, follow, after_closer)) {
 				break;
 			}
 			if (!settled && no_quoted_newline) {

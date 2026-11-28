@@ -105,6 +105,8 @@ struct RowSearch {
 	idx_t scanned_to = 0;
 	bool quoted = false;
 	bool plain = true;
+	bool scan_quotes = false;
+	RowQuoteScan quotes;
 	RowCursor probe;
 };
 

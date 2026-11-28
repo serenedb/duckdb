@@ -931,6 +931,9 @@ void RowRangeReader::StartSearch(RowSearch &search) const {
 	search.quoted = false;
 	search.plain = !QuoteParity(dialect) && !dialect.backslash &&
 	               (!strict_lines || dialect.new_line == NewLineIdentifier::SINGLE_N);
+	search.scan_quotes = lexer.ScansQuotes() && origin != CSVState::CARRIAGE_RETURN;
+	search.quotes = RowQuoteScan();
+	search.quotes.pos = lex_start;
 	lexer.Start(search.probe, lex_start, true, false);
 	search.probe.file_start = origin == CSVState::NOT_SET && ranges.file_start;
 	search.probe.after_cr = origin == CSVState::CARRIAGE_RETURN;
@@ -950,9 +953,12 @@ idx_t RowRangeReader::CutIntake(RowSearch &search, bool idle) const {
 		search.plain = !Contains(scan, dialect.quote) && !(dialect.unquoted_escape && Contains(scan, dialect.escape));
 	}
 	search.scanned_to = read_to;
+	if (!quote_parity && !search.plain && search.scan_quotes) {
+		search.scan_quotes = lexer.ScanQuotes(search.quotes, bytes.data, bytes.offset, read_to, search.quoted);
+	}
 	RowCursor last;
 	idx_t limit = read_to;
-	if (quote_parity) {
+	if (quote_parity || (!search.plain && search.scan_quotes)) {
 		limit = idle ? read_to : read_to - 1;
 		QuoteParityTerm(bytes, search.searched_to, limit, search.quoted, last);
 	} else if (dialect.backslash) {
