@@ -640,8 +640,6 @@ bool JSONTransform::TransformObject(const JSONNode *objects[], JSONTransformScra
 	auto found_keys = AllocateScratch<uint8_t>(scratch, column_count);
 
 	bool success = true;
-	// The column of the exact match of the key at each position in the previous object: the objects of a column
-	// mostly list their keys in the same order, so one comparison often replaces the hash lookups
 	vector<optional_idx> predicted;
 
 	for (idx_t i = 0; i < count; i++) {

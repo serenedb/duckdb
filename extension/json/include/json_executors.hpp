@@ -45,7 +45,6 @@ public:
 			const char *ptr = info.ptr;
 			const idx_t &len = info.len;
 			if (info.use_steps) {
-				// Only the value at the path becomes nodes
 				UnaryExecutor::Execute<string_t, T>(inputs, result, [&](string_t input) -> optional<T> {
 					auto val = JSONCommon::ReadPath(lstate.parser, input, info.steps);
 					if (SET_NULL_IF_NOT_FOUND && !val) {
@@ -177,7 +176,6 @@ public:
 
 			const JSONNode *root = nullptr;
 			if (info.use_steps) {
-				// Only the values at the paths become nodes
 				const auto &input = inputs[idx];
 				if (!lstate.parser.ParsePaths(input.GetData(), input.GetSize(), info.steps.data(), num_paths,
 				                              vals.data(), error)) {

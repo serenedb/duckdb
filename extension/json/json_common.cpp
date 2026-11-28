@@ -324,7 +324,6 @@ bool JSONCommon::PathSteps(const vector<JSONPathElement> &elements, vector<JSONP
 			steps.push_back({false, false, std::string_view(), element.index});
 			break;
 		case JSONPathElementType::APPEND:
-			// [#] leads nowhere: no array has this index
 			steps.push_back({false, false, std::string_view(), NumericLimits<idx_t>::Maximum()});
 			break;
 		default:

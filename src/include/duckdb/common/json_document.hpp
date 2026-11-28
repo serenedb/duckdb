@@ -42,7 +42,6 @@ enum class JSONReadFlags : uint32_t {
 	BIGNUM_AS_RAW = 1 << 3,
 	NUMBER_AS_RAW = 1 << 4,
 	ALLOW_COMMENTS = 1 << 5,
-	//! The path functions check the whole document, not only what they read on the way to the values
 	VALIDATE_PATHS = 1 << 6
 };
 
@@ -166,10 +165,8 @@ struct JSONParseError {
 	string message;
 };
 
-//! One step of a path that JSONTreeParser::ParsePaths follows: an object key, or an array index when is_key is false
 struct JSONPathStep {
 	bool is_key;
-	//! Whether key holds a backslash
 	bool escaped;
 	std::string_view key;
 	idx_t index;
@@ -195,20 +192,11 @@ public:
 	optional_idx ParseAppend(const char *data, idx_t len, JSONParseError &error);
 	optional_idx ParseAppend(const char *data, idx_t len, idx_t readable, JSONParseError &error);
 	bool Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error);
-	//! Parses a document as Parse does and sets values[i] to the value that paths[i] (at least one step) leads to, or
-	//! to nullptr, as JSONNode::Get would; only those values are kept as nodes. Returns false, with the error set,
-	//! when Parse fails.
 	bool ParsePaths(const char *data, idx_t len, const vector<JSONPathStep> *paths, idx_t count,
 	                const JSONNode **values, JSONParseError &error);
-	//! Clears the writer and writes the document with it, as Parse and JSONStringWriter::Value would, without
-	//! building nodes. Returns false, with the error set, when Parse fails.
 	bool Write(const char *data, idx_t len, JSONStringWriter &writer, JSONParseError &error);
-	//! Clears the writer and writes the value that the path leads to (the root when it has no step), as ParsePaths and
-	//! JSONStringWriter::Value would; found is false when there is none. Returns false, with the error set, when Parse
-	//! fails.
 	bool WritePath(const char *data, idx_t len, const vector<JSONPathStep> &path, JSONStringWriter &writer, bool &found,
 	               JSONParseError &error);
-	//! Whether Parse would succeed, without keeping nodes; sets the error as Parse when not
 	bool IsValid(const char *data, idx_t len, JSONParseError &error);
 	bool IsPlain(const char *data, idx_t len);
 	const JSONNode *ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error);
@@ -228,7 +216,6 @@ private:
 struct JSONBuildValue {
 	JSONValueType type;
 	bool boolean;
-	//! Whether the key is ASCII without characters to escape, written as it is
 	bool key_verbatim;
 	uint32_t size;
 	uint32_t key_size;
@@ -257,7 +244,6 @@ public:
 	void String(std::string_view value);
 	void StartObject();
 	void Key(std::string_view key, bool verbatim = false);
-	//! A string that needs no escaping and is valid UTF-8, written as it is
 	void VerbatimString(std::string_view value);
 	void EndObject();
 	void StartArray();
@@ -271,18 +257,12 @@ public:
 	string ToString() const {
 		return string(buffer.data(), used);
 	}
-	//! Whether a string is ASCII without characters to escape, so that its JSON text is itself between quotes
 	static bool IsVerbatim(std::string_view value);
-	//! The room that WriteDouble(char *) needs: simdjson's to_chars writes in blocks
 	static constexpr idx_t MAX_DOUBLE_LENGTH = 48;
-	//! Writes the text of a double at out, returning its end; nullptr for NaN and Infinity unless the flags allow them
 	static char *WriteDouble(char *out, double value, JSONWriteFlags flags);
-	//! The most bytes that WriteString(char *) writes for a string of this length
 	static constexpr idx_t MaxStringLength(idx_t length) {
 		return 6 * length + 2 + 64;
 	}
-	//! Writes a string, quoted and escaped, at out, returning its end; nullptr when it is not UTF-8 unless the flags
-	//! allow it
 	static char *WriteString(char *out, std::string_view value, JSONWriteFlags flags);
 	static char *WriteSignedInteger(char *out, int64_t value);
 	static char *WriteUnsignedInteger(char *out, uint64_t value);
@@ -306,16 +286,13 @@ private:
 
 	void BeforeValue();
 	void Indent(idx_t depth);
-	//! The text of a value or a key, without the separator before it
 	void PutUnsignedInteger(uint64_t value);
 	void PutSignedInteger(int64_t value);
 	void PutDouble(double value);
 	void PutString(std::string_view value, bool verbatim);
 	void PutKey(std::string_view key, bool verbatim);
-	//! Before an element or a member of a container that a tree writer opened, at this depth below it
 	void PutSeparator(bool first, idx_t depth);
 	void PutClose(bool object, bool empty, idx_t depth);
-	//! Makes room for n more bytes, returning where they go
 	char *Reserve(idx_t n) {
 		if (used + n > buffer.size()) {
 			Grow(n);
@@ -331,8 +308,6 @@ private:
 		memcpy(Reserve(n), text, n);
 		used += n;
 	}
-	//! Copies n bytes: short copies are fixed-size loads and stores that overlap, as a memcpy of a variable length
-	//! is a call
 	static void CopyShort(char *out, const char *text, idx_t n) {
 		if (n >= 8 && n <= 16) {
 			uint64_t first;
@@ -356,7 +331,6 @@ private:
 			memcpy(out, text, n);
 		}
 	}
-	//! Writes a string that needs no escaping between quotes
 	static char *WriteQuoted(char *out, std::string_view text) {
 		out[0] = '"';
 		CopyShort(out + 1, text.data(), text.size());
@@ -371,7 +345,6 @@ private:
 private:
 	JSONWriteFlags flags;
 	bool pretty;
-	//! The text is the first used bytes; the rest is room to write
 	string buffer;
 	idx_t used = 0;
 	vector<uint32_t> counts;

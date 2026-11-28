@@ -186,7 +186,6 @@ struct JSONStateAllocator {
 	bool operator==(const JSONStateAllocator<U> &other) const {
 		return allocator == other.allocator;
 	}
-	//! Leaves the nodes that resize() adds uninitialized: the builders write every node they keep
 	template <class U>
 	void construct(U *pointer) {
 		::new (static_cast<void *>(pointer)) U;
@@ -234,13 +233,10 @@ struct JSONTreeParserState {
 	ondemand::parser parser;
 	AllocatedData input;
 	string cleaned;
-	//! A document that simdjson rejected, without its trailing commas
 	string uncommaed;
 	JSONNodes nodes;
 	vector<JSONBuildFrame> frames;
-	//! The open containers of the visitors' JSONNodeWriter
 	vector<idx_t> open;
-	//! The node of each value that ParsePaths finds
 	vector<optional_idx> path_roots;
 	ArenaAllocator strings;
 };
@@ -292,15 +288,12 @@ struct JSONBuildContext {
 	JSONNodes &nodes;
 	vector<JSONBuildFrame> &frames;
 	optional_ptr<ArenaAllocator> keep;
-	//! The document that simdjson reads
 	const char *input;
 	const char *input_end;
 
 	simdjson_inline JSONNode MakeString(JSONValueType type, std::string_view text) {
 		auto node = MakeJSONNode(type);
 		node.size = NumericCast<uint32_t>(text.size());
-		// A string that simdjson leaves in the document had no escape: it holds no character that JSON escapes, and it
-		// is valid UTF-8, so it is written as it is (see JSONStringWriter::Value)
 		node.boolean = type == JSONValueType::STRING && text.data() >= input && text.data() < input_end;
 		node.str = keep && !text.empty() ? Keep(text) : text.data();
 		return node;
@@ -312,7 +305,6 @@ struct JSONBuildContext {
 	}
 };
 
-//! Appends nodes to a JSONBuildContext, for the visitors of ondemand::document::visit
 class JSONNodeWriter {
 public:
 	JSONNodeWriter(JSONBuildContext &context_p, vector<idx_t> &open_p, idx_t reserve)
@@ -321,7 +313,6 @@ public:
 		Grow(context.nodes.size(), reserve);
 	}
 
-	//! Drops the nodes reserved but not written
 	simdjson_inline void Finish() {
 		context.nodes.resize(Size());
 	}
@@ -343,7 +334,6 @@ public:
 		Add() = context.MakeString(JSONValueType::STRING, value);
 	}
 	simdjson_inline void SignedInteger(int64_t value, const char *raw) {
-		// as the On-Demand builder: -0 is signed
 		auto &node = Add();
 		node =
 		    MakeJSONNode(value >= 0 && raw[0] != '-' ? JSONValueType::UNSIGNED_INTEGER : JSONValueType::SIGNED_INTEGER);
@@ -379,7 +369,6 @@ private:
 		const auto used = Size();
 		Grow(used, MaxValue<idx_t>(used, 16));
 	}
-	//! Makes room for extra nodes after the used ones
 	void Grow(idx_t used, idx_t extra) {
 		context.nodes.resize(used + extra);
 		first = context.nodes.data();
@@ -394,8 +383,6 @@ private:
 	JSONNode *end;
 };
 
-//! Appends the nodes of a document as ondemand::document::visit walks it. simdjson reads strict JSON: for anything
-//! else, visit() fails and the On-Demand builder reads the document.
 class JSONNodeVisitor {
 public:
 	JSONNodeVisitor(JSONBuildContext &context, vector<idx_t> &open, idx_t len) : writer(context, open, len / 8 + 16) {
@@ -454,7 +441,6 @@ private:
 	JSONNodeWriter writer;
 };
 
-//! Writes a document as ondemand::document::visit walks it: the same text as building its nodes and writing them
 class JSONWriteVisitor {
 public:
 	JSONWriteVisitor(JSONStringWriter &writer_p, const char *input_p, idx_t len)
@@ -490,7 +476,6 @@ public:
 		return simdjson::SUCCESS;
 	}
 	simdjson::error_code on_int64(int64_t value, const char *raw) {
-		// as JSONNodeWriter: -0 is a signed integer, written as 0
 		if (value >= 0 && raw[0] != '-') {
 			writer.UnsignedInteger(static_cast<uint64_t>(value));
 		} else {
@@ -516,7 +501,6 @@ public:
 	}
 
 private:
-	//! A string that simdjson leaves in the document had no escape (see JSONBuildContext::MakeString)
 	bool InDocument(std::string_view text) const {
 		return text.data() >= input && text.data() < input_end;
 	}
@@ -526,7 +510,6 @@ private:
 	const char *input_end;
 };
 
-//! Writes nothing: visit() with it checks the document
 struct JSONCheckVisitor {
 	simdjson::error_code on_object_start() {
 		return simdjson::SUCCESS;
@@ -636,8 +619,6 @@ static simdjson::error_code BuildJSONNumber(VALUE &value, JSONBuildContext &cont
 	}
 }
 
-//! simdjson reads NaN and Infinity only when built with SIMDJSON_ENABLE_NAN_INF, which would apply to every parser in
-//! the binary: the builder reads the token itself
 template <class VALUE>
 static simdjson::error_code BuildJSONInfOrNan(VALUE &value, JSONBuildContext &context, simdjson::error_code error) {
 	std::string_view token;
@@ -1080,8 +1061,6 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		readable = len;
 	}
 	auto root = ParseCleanJSON(st, flags, data, len, readable, append, error, consumed);
-	// simdjson accepts trailing commas only when built with SIMDJSON_ALLOW_TRAILING_COMMAS, which would apply to every
-	// parser in the binary: a rejected document is parsed again without them
 	if (!root.IsValid() && HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS) &&
 	    RemoveTrailingCommas(data, len, st.uncommaed)) {
 		JSONParseError retry;
@@ -1113,7 +1092,6 @@ static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags,
 	JSONBuildContext context {flags, st.nodes, st.frames, append ? &st.strings : nullptr, data, data + len};
 	const bool visitable = !consumed && !HasFlag(flags, JSONReadFlags::NUMBER_AS_RAW);
 	if (visitable && len <= ondemand::parser::MAX_ONE_PASS_VISIT) {
-		// simdjson reads a small document in one pass, without stage 1
 		JSONNodeVisitor visitor(context, st.open, len);
 		const auto code = st.parser.visit(simdjson::padded_string_view(data, len, readable), visitor);
 		if (code == simdjson::MEMALLOC && st.buffers.error.HasError()) {
@@ -1141,7 +1119,6 @@ static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags,
 			visitor.Finish();
 			return root;
 		}
-		// visit() rewinds the document
 		st.nodes.resize(root);
 	}
 	const bool started = !code;
@@ -1214,7 +1191,6 @@ static bool JSONVisitable(JSONReadFlags flags, const char *data, idx_t len) {
 	return (static_cast<uint32_t>(flags) & rewritten) == 0 && !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
 }
 
-//! Copies the document into the input buffer, followed by simdjson's padding
 static const char *PadJSONInput(JSONTreeParserState &st, const char *data, idx_t len) {
 	const idx_t readable = len + JSONTreeParser::PADDING;
 	if (readable > st.input.GetSize()) {
@@ -1230,7 +1206,6 @@ static const char *ReadableJSONInput(JSONTreeParserState &st, const char *data, 
 	return JSONPaddingReadable(data, len) ? data : PadJSONInput(st, data, len);
 }
 
-//! Starts simdjson on a padded document; rethrows the allocation failures of the buffer allocator
 static simdjson::error_code IterateJSON(JSONTreeParserState &st, const char *input, idx_t len,
                                         ondemand::document &document) {
 	const auto code = st.parser.iterate(input, len, len + JSONTreeParser::PADDING).get(document);
@@ -1242,7 +1217,6 @@ static simdjson::error_code IterateJSON(JSONTreeParserState &st, const char *inp
 	return code;
 }
 
-//! Visits a padded document; simdjson reads documents of at most 32 bytes in one pass, without stage 1
 template <class V>
 static simdjson::error_code VisitJSON(JSONTreeParserState &st, const char *input, idx_t len, V &visitor) {
 	const auto code = st.parser.visit(simdjson::padded_string_view(input, len, len + JSONTreeParser::PADDING), visitor);
@@ -1266,8 +1240,6 @@ static simdjson::error_code ValidateJSON(JSONTreeParserState &st, const char *in
 	return document.validate();
 }
 
-//! Starts On-Demand on a padded document. With VALIDATE_PATHS (the json_strict_paths setting), the whole document is
-//! checked first; otherwise, as with On-Demand, only what the path functions read on the way to the values is.
 static simdjson::error_code CheckAndIterateJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *input,
                                                 idx_t len, ondemand::document &document) {
 	if (auto error = IterateJSON(st, input, len, document)) {
@@ -1296,7 +1268,6 @@ static simdjson::error_code StepJSONPath(VALUE &value, const JSONPathStep &step,
 			if (auto error = std::move(member).get(field)) {
 				return error;
 			}
-			// Unescaping shortens a key: a raw key of the same length matches only as it is, and a shorter one never
 			const auto raw = field.escaped_key();
 			bool equal = raw.size() == step.key.size() && raw == step.key && !step.escaped;
 			if (raw.size() > step.key.size() && memchr(raw.data(), '\\', raw.size())) {
@@ -1331,7 +1302,6 @@ static simdjson::error_code StepJSONPath(VALUE &value, const JSONPathStep &step,
 	return simdjson::SUCCESS;
 }
 
-//! Builds the nodes of the value a path leads to, with the visitor that builds whole documents
 static simdjson::error_code BuildJSONPathValue(ondemand::value &value, JSONBuildContext &context, vector<idx_t> &open) {
 	JSONNodeVisitor visitor(context, open, 0);
 	const auto error = value.visit(visitor);
@@ -1339,8 +1309,6 @@ static simdjson::error_code BuildJSONPathValue(ondemand::value &value, JSONBuild
 	return error;
 }
 
-//! Moves through a document along a path that has steps; the On-Demand iterators skip the values that it does not go
-//! through
 static simdjson::error_code FindJSONPath(ondemand::document &document, const vector<JSONPathStep> &steps,
                                          ondemand::value &value, bool &found) {
 	if (auto error = StepJSONPath(document, steps[0], value, found)) {
@@ -1373,12 +1341,9 @@ bool JSONTreeParser::ParsePaths(const char *data, idx_t len, const vector<JSONPa
 	auto &st = *state;
 	st.nodes.clear();
 	if (JSONVisitable(flags, data, len)) {
-		// On-Demand skips to the values and builds only them; with VALIDATE_PATHS, visit() first checks the whole
-		// document. On any error, the document goes to Parse, for the exact result or error.
 		const char *input = PadJSONInput(st, data, len);
 		ondemand::document document;
 		if (!CheckAndIterateJSON(st, flags, input, len, document)) {
-			// rewinding resets the string buffer: the strings of earlier paths are copied
 			const bool copy = count > 1;
 			if (copy) {
 				st.strings.Reset();
@@ -1449,7 +1414,6 @@ bool JSONTreeParser::WritePath(const char *data, idx_t len, const vector<JSONPat
 	auto &st = *state;
 	writer.Clear();
 	if (JSONVisitable(flags, data, len)) {
-		// as ParsePaths, but the value goes to the writer instead of nodes
 		const char *input = ReadableJSONInput(st, data, len);
 		ondemand::document document;
 		if (!CheckAndIterateJSON(st, flags, input, len, document)) {
@@ -1729,8 +1693,6 @@ void JSONStringWriter::EndArray() {
 }
 
 void JSONStringWriter::Value(const JSONNode &root) {
-	// The containers of the tree keep their own frames: the separators and indentation follow the depth below the
-	// root, on top of the containers that the writer already has open
 	BeforeValue();
 	const auto base = node_frames.size();
 	auto node = &root;
@@ -1798,7 +1760,6 @@ void JSONStringWriter::Value(const JSONNode &root) {
 }
 
 void JSONStringWriter::Value(const JSONBuildValue &root) {
-	// as Value(const JSONNode &)
 	BeforeValue();
 	const auto base = build_frames.size();
 	auto value = &root;
@@ -1881,12 +1842,9 @@ char *JSONStringWriter::WriteDouble(char *out, double value, JSONWriteFlags flag
 		memcpy(out, "0.0", 3);
 		return out + 3;
 	}
-	// simdjson's to_chars writes the shortest digits that round-trip (as Ryu). In fixed notation, from 1e-4 to 1e15,
-	// its text is ours: digits, a decimal point, and at least one digit after it
 	if (value >= 1e-4 && value < 1e15) {
 		return simdjson::internal::to_chars(out, out + simdjson::internal::to_chars_buffer_size, value);
 	}
-	// elsewhere, take the digits and the position of the decimal point, then lay them out as JavaScript does
 	char text[simdjson::internal::to_chars_buffer_size];
 	const char *end = simdjson::internal::to_chars(text, text + sizeof(text), value);
 	char digits[24];
@@ -1958,7 +1916,6 @@ char *JSONStringWriter::WriteDouble(char *out, double value, JSONWriteFlags flag
 	return std::to_chars(out, out + 8, dot - 1).ptr;
 }
 
-//! Writes one byte of a string, escaped as JSON needs: \u00XX in uppercase where there is no short escape
 static inline char *EscapeJSONByte(char *out, uint8_t c) {
 	static constexpr char HEX[] = "0123456789ABCDEF";
 	if (c >= 0x20 && c != '"' && c != '\\') {
@@ -2003,13 +1960,10 @@ static inline uint64_t SpecialJSONBytes(uint64_t word) {
 	       SwarWord::MaybeZeroBytes(word ^ SwarWord::Repeat('\\'));
 }
 
-//! Escapes a short string eight bytes at a time, and tells whether it holds bytes beyond ASCII. Writes up to eight
-//! bytes past its end.
 static char *EscapeShortJSONString(char *out, std::string_view value, bool &ascii) {
 	const auto data = reinterpret_cast<const uint8_t *>(value.data());
 	const idx_t size = value.size();
 	if (size < 8 && std::endian::native == std::endian::little) {
-		// padded with a letter, which needs no escape; fixed-size loads, as a memcpy of a variable length is a call
 		uint64_t word = SwarWord::Repeat('a');
 		if (size >= 4) {
 			uint32_t low;
@@ -2048,7 +2002,6 @@ static char *EscapeShortJSONString(char *out, std::string_view value, bool &asci
 		}
 	}
 	if (i < size && size >= 8) {
-		// the last eight bytes overlap the ones written: when none needs an escape, those were copied as they are
 		const idx_t rest = size - i;
 		uint64_t word;
 		memcpy(&word, data + size - 8, 8);
@@ -2097,7 +2050,6 @@ char *JSONStringWriter::WriteString(char *out, std::string_view value, JSONWrite
 	}
 	const auto written = simdjson::internal::escape_best::write_string_escaped(value, out);
 	if (written != value.size()) {
-		// simdjson writes the \u00XX escapes of control characters in lowercase, DuckDB in uppercase
 		for (idx_t i = 0; i < written; i++) {
 			if (out[i] != '\\') {
 				continue;

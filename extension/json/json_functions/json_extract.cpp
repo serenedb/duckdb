@@ -22,7 +22,6 @@ static void ExtractFunction(DataChunk &args, ExpressionState &state, Vector &res
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &info = func_expr.BindInfo()->Cast<JSONReadFunctionData>();
 	if (info.constant && info.writable) {
-		// The value goes from the parser to the writer, without nodes
 		auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
 		JSONParseError error;
 		UnaryExecutor::Execute<string_t, string_t>(

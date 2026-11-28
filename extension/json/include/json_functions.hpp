@@ -43,12 +43,9 @@ public:
 	//! Path elements parsed once at bind time (constant regular '$' paths only)
 	vector<JSONPathElement> elements;
 	bool use_elements = false;
-	//! The elements as steps that the parser follows while it parses, when they have no reverse index
 	vector<JSONPathStep> steps;
 	bool use_steps = false;
-	//! Whether JSONTreeParser::WritePath can write the value at the path (steps, or none for the root)
 	bool writable = false;
-	//! For a wildcard path that starts with keys and indexes: those as steps, and the rest of the path after '$'
 	bool use_wildcard_steps = false;
 	string wildcard_rest;
 };
@@ -67,7 +64,6 @@ public:
 	//! Per-path elements parsed once at bind time (regular '$' paths only)
 	vector<vector<JSONPathElement>> elements;
 	vector<bool> use_elements;
-	//! The paths as steps that the parser follows while it parses, when every path can be
 	vector<vector<JSONPathStep>> steps;
 	bool use_steps = false;
 };

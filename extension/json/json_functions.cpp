@@ -54,10 +54,8 @@ JSONReadFunctionData::JSONReadFunctionData(bool constant, string path_p, idx_t l
 		elements = JSONCommon::ParsePathElements(ptr, len, false);
 		use_elements = true;
 		use_steps = JSONCommon::PathSteps(elements, steps);
-		// the root path, or one that ParsePaths follows, can be written as the parser reads it
 		writable = elements.empty() || use_steps;
 	} else if (constant && len != 0 && path[0] == '$' && path_type == JSONPathType::WILDCARD) {
-		// The parser follows the keys and indexes before the first wildcard and builds only the value there
 		JSONPathIterator iterator(ptr, len, false);
 		JSONPathElement element;
 		const char *rest = iterator.Position();
@@ -123,7 +121,6 @@ JSONReadManyFunctionData::JSONReadManyFunctionData(vector<string> paths_p, vecto
 			use_elements.push_back(false);
 		}
 	}
-	// after the loop: the steps point into the keys of elements
 	steps.resize(paths.size());
 	use_steps = !paths.empty();
 	for (idx_t i = 0; i < paths.size(); i++) {
