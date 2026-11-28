@@ -220,8 +220,12 @@ void StringColumnReader::PlainFilter(shared_ptr<ResizeableBuffer> &plain_data, u
 		}
 		const auto length = values.read<uint32_t>();
 		values.available(length);
-		const auto value = ascii_page ? string_t(const_char_ptr_cast(values.ptr), length)
-		                              : VerifyString(const_char_ptr_cast(values.ptr), length);
+		string_t value;
+		if (ascii_page) {
+			MakeString(const_char_ptr_cast(values.ptr), length, const_char_ptr_cast(values.ptr) + values.len, value);
+		} else {
+			value = VerifyString(const_char_ptr_cast(values.ptr), length);
+		}
 		values.inc(length);
 		if (RawPasses(raw_predicates, value.GetData(), value.GetSize(), false)) {
 			data[row] = value;

@@ -12,6 +12,7 @@
 #include "duckdb/common/types/arrow_aux_data.hpp"
 #include "duckdb/common/types/arrow_string_view_type.hpp"
 #include "duckdb/common/types/blob.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "duckdb/function/table/arrow.hpp"
 
 #include "duckdb/common/bswap.hpp"
@@ -459,8 +460,10 @@ static void SetVectorString(Vector &vector, idx_t size, char *cdata, T *offsets,
 		utf8 = false;
 	}
 	auto strings = FlatVector::GetDataMutable<string_t>(vector);
+	const auto &validity = FlatVector::Validity(vector);
+	const char *limit = ROWS::SELECTED || size == 0 ? cdata : cdata + offsets[size];
 	for (idx_t row_idx = 0; row_idx < size; row_idx++) {
-		if (FlatVector::IsNull(vector, row_idx)) {
+		if (!validity.RowIsValid(row_idx)) {
 			continue;
 		}
 		auto source_idx = rows[row_idx];
@@ -472,7 +475,7 @@ static void SetVectorString(Vector &vector, idx_t size, char *cdata, T *offsets,
 		if (utf8) {
 			VerifyUtf8(cptr, str_len);
 		}
-		strings[row_idx] = string_t(cptr, UnsafeNumericCast<uint32_t>(str_len));
+		MakeString(cptr, str_len, limit, strings[row_idx]);
 	}
 }
 

@@ -80,35 +80,6 @@ bool LeanDecodes(const LogicalType &type) {
 	}
 }
 
-[[gnu::always_inline]] inline void MakeString(const char *value, idx_t size, const char *limit, string_t &out) {
-	if constexpr (string_t::INLINE_LENGTH == 12 && string_t::PREFIX_LENGTH == 4) {
-		uint64_t words[2];
-		if (size <= 12 && value + 12 <= limit) {
-			uint32_t head;
-			uint64_t tail;
-			memcpy(&head, value, sizeof(head));
-			memcpy(&tail, value + 4, sizeof(tail));
-			const idx_t head_bytes = MinValue<idx_t>(size, 4);
-			const idx_t tail_bytes = size > 4 ? size - 4 : 0;
-			head &= head_bytes == 4 ? ~uint32_t(0) : (uint32_t(1) << (head_bytes * 8)) - 1;
-			tail &= tail_bytes == 8 ? ~uint64_t(0) : (uint64_t(1) << (tail_bytes * 8)) - 1;
-			words[0] = size | (uint64_t(head) << 32);
-			words[1] = tail;
-			memcpy(&out, words, sizeof(words));
-			return;
-		}
-		if (size > 12) {
-			uint32_t prefix;
-			memcpy(&prefix, value, sizeof(prefix));
-			words[0] = size | (uint64_t(prefix) << 32);
-			words[1] = reinterpret_cast<uintptr_t>(value);
-			memcpy(&out, words, sizeof(words));
-			return;
-		}
-	}
-	out = string_t(value, UnsafeNumericCast<uint32_t>(size));
-}
-
 inline bool LeanUnquote(const char *data, char quote, idx_t open_end, bool spaced, idx_t &begin, idx_t &end) {
 	const bool unterminated = end == open_end;
 	idx_t open = begin;

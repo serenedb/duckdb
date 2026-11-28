@@ -7,6 +7,7 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/formats/csv_simd.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -1637,8 +1638,8 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			if (token.size() >= 2 && token.front() == '"') {
 				const auto content = token.substr(1, token.size() - 2);
 				if (PlainString(content)) {
-					reinterpret_cast<string_t *>(direct_data[column])[row] =
-					    string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
+					MakeString(content.data(), content.size(), data + size + JSON_PADDING,
+					           reinterpret_cast<string_t *>(direct_data[column])[row]);
 					continue;
 				}
 			}

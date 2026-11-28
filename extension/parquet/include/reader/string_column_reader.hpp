@@ -20,6 +20,7 @@
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/formats/raw_predicates.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "resizable_buffer.hpp"
 
 namespace duckdb {
@@ -116,7 +117,12 @@ struct StringParquetValueConversion {
 		    scr.fixed_width_string_length == 0 ? plain_data.read<uint32_t>() : scr.fixed_width_string_length;
 		plain_data.available(str_len);
 		auto plain_str = char_ptr_cast(plain_data.ptr);
-		auto ret_str = scr.ascii_page ? string_t(plain_str, str_len) : scr.VerifyString(plain_str, str_len);
+		string_t ret_str;
+		if (scr.ascii_page) {
+			MakeString(plain_str, str_len, plain_str + plain_data.len, ret_str);
+		} else {
+			ret_str = scr.VerifyString(plain_str, str_len);
+		}
 		plain_data.inc(str_len);
 		return ret_str;
 	}
