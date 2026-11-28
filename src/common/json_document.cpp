@@ -1208,7 +1208,6 @@ static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags,
 	return root;
 }
 
-//! Whether visit() may read the document: the inputs that ParseInto rewrites or reads as raw numbers go to it
 static bool JSONVisitable(JSONReadFlags flags, const char *data, idx_t len) {
 	constexpr auto rewritten = static_cast<uint32_t>(
 	    JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE | JSONReadFlags::NUMBER_AS_RAW);
