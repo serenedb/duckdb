@@ -1,5 +1,6 @@
 #include "duckdb/formats/block_codecs.hpp"
 
+#include "duckdb/common/bswap.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/numeric_utils.hpp"
@@ -40,6 +41,31 @@ LZ4F_preferences_t Lz4FramePreferences(int level) {
 	memset(&preferences, 0, sizeof(preferences));
 	preferences.compressionLevel = level == BlockCompressor::DEFAULT_LEVEL ? 0 : level;
 	return preferences;
+}
+
+bool TryLz4HadoopFrames(const_data_ptr_t src, idx_t src_size, data_ptr_t dst, idx_t room, idx_t &produced) {
+	produced = 0;
+	while (src_size >= 2 * sizeof(uint32_t)) {
+		uint32_t frame[2];
+		memcpy(frame, src, sizeof(frame));
+		const uint32_t decompressed = BSwapIfLE(frame[0]);
+		const uint32_t compressed = BSwapIfLE(frame[1]);
+		src += sizeof(frame);
+		src_size -= sizeof(frame);
+		if (compressed > src_size || decompressed > room - produced ||
+		    MaxValue(compressed, decompressed) > static_cast<uint32_t>(NumericLimits<int32_t>::Maximum())) {
+			return false;
+		}
+		if (duckdb_lz4::LZ4_decompress_safe(const_char_ptr_cast(src), char_ptr_cast(dst + produced),
+		                                    static_cast<int>(compressed),
+		                                    static_cast<int>(decompressed)) != static_cast<int>(decompressed)) {
+			return false;
+		}
+		src += compressed;
+		src_size -= compressed;
+		produced += decompressed;
+	}
+	return src_size == 0;
 }
 
 struct BrotliDecoderDeleter {
@@ -163,6 +189,8 @@ bool BlockDecompressor::Decompress(BlockCodec codec, const_data_ptr_t src, idx_t
 		return Zstd(src, src_size, out, error);
 	case BlockCodec::LZ4:
 		return Lz4(src, src_size, out, error);
+	case BlockCodec::LZ4_HADOOP:
+		return Lz4Hadoop(src, src_size, out, error);
 	case BlockCodec::LZ4_FRAME:
 		return Lz4Frame(src, src_size, out, error);
 	case BlockCodec::BROTLI:
@@ -303,6 +331,15 @@ bool BlockDecompressor::Lz4(const_data_ptr_t src, idx_t src_size, Output &out, s
 	}
 	out.Advance(NumericCast<idx_t>(ret));
 	return true;
+}
+
+bool BlockDecompressor::Lz4Hadoop(const_data_ptr_t src, idx_t src_size, Output &out, string &error) {
+	idx_t produced;
+	if (out.Fixed() && TryLz4HadoopFrames(src, src_size, out.Position(), out.Room(), produced)) {
+		out.Advance(produced);
+		return true;
+	}
+	return Lz4(src, src_size, out, error);
 }
 
 bool BlockDecompressor::Lz4Frame(const_data_ptr_t src, idx_t src_size, Output &out, string &error) {
@@ -450,6 +487,8 @@ idx_t BlockCompressor::MaxCompressedSize(idx_t size) {
 		}
 		return bound;
 	}
+	case BlockCodec::LZ4_HADOOP:
+		break;
 	}
 	throw InternalException("Unknown block codec");
 }

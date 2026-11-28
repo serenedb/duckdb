@@ -21,6 +21,9 @@ inline bool TryGetParquetBlockCodec(duckdb_parquet::CompressionCodec::type codec
 	case duckdb_parquet::CompressionCodec::LZ4_RAW:
 		result = BlockCodec::LZ4;
 		return true;
+	case duckdb_parquet::CompressionCodec::LZ4:
+		result = BlockCodec::LZ4_HADOOP;
+		return true;
 	case duckdb_parquet::CompressionCodec::SNAPPY:
 		result = BlockCodec::SNAPPY;
 		return true;

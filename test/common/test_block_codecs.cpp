@@ -1,6 +1,8 @@
 #include "catch.hpp"
 #include "duckdb/common/allocator.hpp"
+#include "duckdb/common/bswap.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/formats/block_codecs.hpp"
 
 #include <span>
@@ -51,6 +53,13 @@ bool DecompressGrowing(BlockDecompressor &decompressor, BlockCodec codec, const 
 	}
 	output.assign(const_char_ptr_cast(out.get()), size);
 	return true;
+}
+
+string HadoopLz4Frame(idx_t decompressed, const string &input) {
+	const auto block = Compress(BlockCodec::LZ4, input);
+	const uint32_t sizes[] = {BSwapIfLE(NumericCast<uint32_t>(decompressed)),
+	                          BSwapIfLE(NumericCast<uint32_t>(block.size()))};
+	return string(const_char_ptr_cast(sizes), sizeof(sizes)) + block;
 }
 
 } // namespace
@@ -187,6 +196,45 @@ TEST_CASE("Block codecs read concatenated frames and gzip members", "[formats]")
 			REQUIRE(output == input);
 		}
 	}
+}
+
+TEST_CASE("Hadoop LZ4 reads its frames, and one raw LZ4 block when the framing does not fit", "[formats]") {
+	const auto input = BlockInput();
+	const auto first = input.substr(0, input.size() / 2);
+	const auto second = input.substr(first.size());
+	const auto framed = HadoopLz4Frame(first.size(), first) + HadoopLz4Frame(second.size(), second);
+	const auto raw = Compress(BlockCodec::LZ4, input);
+	BlockDecompressor decompressor;
+	string error;
+	for (auto &compressed : {framed, raw}) {
+		string output(input.size(), '\0');
+		REQUIRE(Decompress(decompressor, BlockCodec::LZ4_HADOOP, compressed, compressed.size(), output, error));
+		REQUIRE(output == input);
+
+		string shorter(input.size() - 1, '\0');
+		REQUIRE_FALSE(Decompress(decompressor, BlockCodec::LZ4_HADOOP, compressed, compressed.size(), shorter, error));
+		REQUIRE_FALSE(error.empty());
+
+		error.clear();
+		REQUIRE_FALSE(
+		    Decompress(decompressor, BlockCodec::LZ4_HADOOP, compressed, compressed.size() - 1, output, error));
+		REQUIRE_FALSE(error.empty());
+		error.clear();
+	}
+
+	const auto understated = HadoopLz4Frame(first.size() - 1, first) + HadoopLz4Frame(second.size(), second);
+	string output(input.size(), '\0');
+	REQUIRE_FALSE(Decompress(decompressor, BlockCodec::LZ4_HADOOP, understated, understated.size(), output, error));
+	REQUIRE_FALSE(error.empty());
+
+	string nothing;
+	REQUIRE(Decompress(decompressor, BlockCodec::LZ4_HADOOP, string(), 0, nothing, error));
+
+	AllocatedData out;
+	REQUIRE_THROWS_AS(DecompressGrowing(decompressor, BlockCodec::LZ4_HADOOP, framed, out, output, error),
+	                  InternalException);
+	BlockCompressor compressor(BlockCodec::LZ4_HADOOP);
+	REQUIRE_THROWS_AS(compressor.MaxCompressedSize(input.size()), InternalException);
 }
 
 TEST_CASE("Block codecs grow the output for data that compresses many times over", "[formats]") {

@@ -23,7 +23,7 @@ struct LZ4F_cctx_s;
 
 namespace duckdb {
 
-enum class BlockCodec : uint8_t { DEFLATE, GZIP, SNAPPY, ZSTD, LZ4, LZ4_FRAME, BROTLI };
+enum class BlockCodec : uint8_t { DEFLATE, GZIP, SNAPPY, ZSTD, LZ4, LZ4_FRAME, BROTLI, LZ4_HADOOP };
 
 class BlockDecompressor {
 public:
@@ -45,6 +45,7 @@ private:
 	bool Snappy(const_data_ptr_t src, idx_t src_size, Output &out, string &error);
 	bool Zstd(const_data_ptr_t src, idx_t src_size, Output &out, string &error);
 	bool Lz4(const_data_ptr_t src, idx_t src_size, Output &out, string &error);
+	bool Lz4Hadoop(const_data_ptr_t src, idx_t src_size, Output &out, string &error);
 	bool Lz4Frame(const_data_ptr_t src, idx_t src_size, Output &out, string &error);
 	bool Brotli(const_data_ptr_t src, idx_t src_size, Output &out, string &error);
 
