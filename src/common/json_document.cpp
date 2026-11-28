@@ -1482,11 +1482,12 @@ bool JSONTreeParser::WritePath(const char *data, idx_t len, const vector<JSONPat
 }
 
 bool JSONTreeParser::IsValid(const char *data, idx_t len, JSONParseError &error) {
+	return IsPlain(data, len) || Parse(data, len, error) != nullptr;
+}
+
+bool JSONTreeParser::IsPlain(const char *data, idx_t len) {
 	auto &st = *state;
-	if (JSONVisitable(flags, data, len) && !ValidateJSON(st, ReadableJSONInput(st, data, len), len)) {
-		return true;
-	}
-	return Parse(data, len, error) != nullptr;
+	return JSONVisitable(flags, data, len) && !ValidateJSON(st, ReadableJSONInput(st, data, len), len);
 }
 
 bool JSONTreeParser::Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error) {

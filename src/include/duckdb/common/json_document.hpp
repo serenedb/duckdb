@@ -210,6 +210,7 @@ public:
 	               JSONParseError &error);
 	//! Whether Parse would succeed, without keeping nodes; sets the error as Parse when not
 	bool IsValid(const char *data, idx_t len, JSONParseError &error);
+	bool IsPlain(const char *data, idx_t len);
 	const JSONNode *ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error);
 	void Clear();
 	const JSONNode *Node(idx_t index) const;

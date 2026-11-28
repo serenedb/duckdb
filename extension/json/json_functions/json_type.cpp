@@ -1,3 +1,4 @@
+#include "duckdb/formats/json_ranges.hpp"
 #include "json_executors.hpp"
 
 namespace duckdb {
@@ -7,7 +8,16 @@ static inline optional<string_t> GetType(const JSONNode *val, JSONFunctionLocalS
 }
 
 static void UnaryTypeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	JSONExecutors::UnaryExecute<string_t>(args, state, result, GetType);
+	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
+	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, [&](string_t input) -> optional<string_t> {
+		const auto data = input.GetData();
+		const auto size = input.GetSize();
+		const idx_t root = JsonSkipSpace(data, size, 0);
+		if (root < size && (data[root] == '{' || data[root] == '[') && lstate.parser.IsPlain(data, size)) {
+			return string_t(data[root] == '{' ? JSONCommon::TYPE_STRING_OBJECT : JSONCommon::TYPE_STRING_ARRAY);
+		}
+		return GetType(&JSONCommon::ReadDocument(lstate.parser, input), lstate, result);
+	});
 }
 
 static void BinaryTypeFunction(DataChunk &args, ExpressionState &state, Vector &result) {

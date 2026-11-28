@@ -64,6 +64,45 @@ inline idx_t JsonContainerEnd(const char *data, idx_t size) {
 	return found;
 }
 
+inline idx_t JsonSkipSpace(const char *data, idx_t size, idx_t position) {
+	while (position < size &&
+	       (data[position] == ' ' || data[position] == '\t' || data[position] == '\n' || data[position] == '\r')) {
+		position++;
+	}
+	return position;
+}
+
+inline idx_t JsonArrayLength(const char *data, idx_t size) {
+	const idx_t first = JsonSkipSpace(data, size, 1);
+	if (first < size && data[first] == ']') {
+		return 0;
+	}
+	uint64_t escape_carry = 0;
+	uint64_t in_string = 0;
+	int64_t depth = 0;
+	idx_t commas = 0;
+	ScanJsonBlocks(data, size, escape_carry, in_string,
+	               [&](idx_t, const CsvVector &vector, uint64_t strings, uint64_t) {
+		               const uint64_t opens = (vector.Equal('{') | vector.Equal('[')) & ~strings;
+		               const uint64_t closes = (vector.Equal('}') | vector.Equal(']')) & ~strings;
+		               const uint64_t separators = vector.Equal(',') & ~strings;
+		               for (uint64_t marks = opens | closes | separators; marks; marks &= marks - 1) {
+			               const uint64_t mark = marks & (~marks + 1);
+			               if (opens & mark) {
+				               depth++;
+			               } else if (closes & mark) {
+				               if (--depth == 0) {
+					               return false;
+				               }
+			               } else if (depth == 1) {
+				               commas++;
+			               }
+		               }
+		               return true;
+	               });
+	return commas + 1;
+}
+
 enum class JsonRangeOrigin : uint8_t { BEFORE_ARRAY, OUTSIDE, STRING, ESCAPED };
 
 constexpr idx_t JSON_RANGE_ORIGINS = 4;
