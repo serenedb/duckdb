@@ -260,7 +260,7 @@ ORDER BY id
 NULL
 [1, NULL, {"a":2}]
 
-# VARCHAR to LIST(JSON) requires valid JSON containing an array
+# VARCHAR to LIST(JSON) requires valid JSON containing an array, or an array literal of valid JSON values
 query T
 SELECT TRY_CAST(v AS JSON[]) FROM (VALUES ('not json')) t(v)
 ----
@@ -269,7 +269,15 @@ NULL
 query T
 SELECT TRY_CAST(v AS JSON[]) FROM (VALUES ('{}')) t(v)
 ----
+[]
+
+query T
+SELECT TRY_CAST(v AS JSON[]) FROM (VALUES ('{"[1]",NULL,"{\"a\": 2}"}'), ('{"[1]","x"}'), ('{1,2'), (' {7} ')) t(v)
+----
+[[1], NULL, {"a": 2}]
 NULL
+NULL
+[7]
 
 query T
 SELECT TRY_CAST(v AS JSON[]) FROM (VALUES ('[1,null,{"a":2}]')) t(v)

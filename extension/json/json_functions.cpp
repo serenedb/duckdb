@@ -8,6 +8,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
+#include "duckdb/function/cast/vector_cast_helpers.hpp"
 #include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -368,12 +369,59 @@ static bool CastJSONListToVarchar(Vector &source, Vector &result, idx_t count, C
 	return true;
 }
 
+static bool StartsArrayLiteral(const string_t &input) {
+	const auto data = input.GetData();
+	const auto size = input.GetSize();
+	idx_t pos = 0;
+	while (pos < size && StringUtil::CharacterIsSpace(data[pos])) {
+		pos++;
+	}
+	return pos < size && data[pos] == '{';
+}
+
+static optional<list_entry_t> CastArrayLiteralToJSONList(const string_t &input, Vector &result,
+                                                         JSONFunctionLocalState &lstate, CastParameters &parameters,
+                                                         bool &success) {
+	const auto current_size = ListVector::GetListSize(result);
+	ListVector::Reserve(result, current_size + VectorStringToList::CountPartsList(input, parameters));
+	auto &child = ListVector::GetChildMutable(result);
+	const auto elements = FlatVector::GetDataMutable<string_t>(child);
+	idx_t end = current_size;
+	string error_message;
+	if (!VectorStringToList::SplitStringList(input, elements, end, child, parameters)) {
+		error_message = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+		                                   input.GetString(), result.GetType().ToString());
+	}
+	for (idx_t i = current_size; error_message.empty() && i < end; i++) {
+		JSONParseError error;
+		if (!FlatVector::IsNull(child, i) &&
+		    !lstate.parser.IsValid(elements[i].GetData(), elements[i].GetSize(), error)) {
+			error_message = JSONCommon::FormatParseError(elements[i].GetData(), elements[i].GetSize(), error);
+		}
+	}
+	if (!error_message.empty()) {
+		for (idx_t i = current_size; i < end; i++) {
+			FlatVector::SetNull(child, i, false);
+		}
+		if (success) {
+			HandleCastError::AssignError(error_message, parameters);
+			success = false;
+		}
+		return nullopt;
+	}
+	ListVector::SetListSize(result, end);
+	return list_entry_t {current_size, end - current_size};
+}
+
 static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
 
 	bool success = true;
 	UnaryExecutor::Execute<string_t, list_entry_t>(
 	    source, result, count, [&](const string_t &input) -> optional<list_entry_t> {
+		    if (StartsArrayLiteral(input)) {
+			    return CastArrayLiteralToJSONList(input, result, lstate, parameters, success);
+		    }
 		    // Figure out if the cast can succeed
 		    JSONParseError error;
 		    const auto doc = JSONCommon::ReadDocumentUnsafe(lstate.parser, input, error);
