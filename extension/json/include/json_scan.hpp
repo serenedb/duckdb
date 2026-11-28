@@ -86,7 +86,6 @@ public:
 	                        JSONReaderOptions &options);
 
 	//! Determine the names/types that are read from the given set of files - performing auto-detection if required.
-	//! The files that were opened during auto-detection are stored in "sampled_sources" so they can be re-used
 	static void BindSchema(ClientContext &context, JSONScanData &json_data, MultiFileList &files,
 	                       vector<shared_ptr<JsonSource>> &sampled_sources, vector<LogicalType> &return_types,
 	                       vector<Identifier> &names);
