@@ -37,7 +37,6 @@ struct CSVWriterOptions {
 	string newline = "\n";
 	//! The size of the CSV file (in bytes) that we buffer before we flush it to disk
 	idx_t flush_size = 4096ULL * 8ULL;
-	//! The bytes that make the CSV file quote a field containing them
 	CsvSpecials specials;
 	//! How to write newlines
 	CSVNewLineMode newline_writing_mode = CSVNewLineMode::WRITE_BEFORE;
