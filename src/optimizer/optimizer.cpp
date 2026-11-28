@@ -130,17 +130,22 @@ void Optimizer::AddExpressionRules(ExpressionRewriter &rewriter) {
 #endif
 }
 
-unique_ptr<Expression> Optimizer::OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr) {
+void Optimizer::OptimizeExpressions(ClientContext &context, vector<unique_ptr<Expression>> &expressions) {
 	if (OptimizerDisabled(context, OptimizerType::EXPRESSION_REWRITER)) {
-		return expr;
+		return;
 	}
 	ExpressionRewriter rewriter(context);
 	AddExpressionRules(rewriter);
-	vector<unique_ptr<Expression>> expressions;
-	expressions.push_back(std::move(expr));
 	LogicalProjection projection(TableIndex(0), std::move(expressions));
 	rewriter.VisitOperator(projection);
-	return std::move(projection.expressions[0]);
+	expressions = std::move(projection.expressions);
+}
+
+unique_ptr<Expression> Optimizer::OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr) {
+	vector<unique_ptr<Expression>> expressions;
+	expressions.push_back(std::move(expr));
+	OptimizeExpressions(context, expressions);
+	return std::move(expressions[0]);
 }
 
 ClientContext &Optimizer::GetContext() {
