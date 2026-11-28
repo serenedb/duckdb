@@ -15,6 +15,7 @@
 #include "duckdb/common/swar.hpp"
 #include "duckdb/common/types/cast_helpers.hpp"
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
@@ -288,6 +289,53 @@ template <class T>
 	return true;
 }
 
+[[gnu::always_inline]] inline bool FastTimestamp(const char *value, idx_t size, timestamp_t &out) {
+	static constexpr idx_t SECONDS_END = 19;
+	static constexpr idx_t MAX_FRACTION = 6;
+	if (size < SECONDS_END || (size > SECONDS_END && (size == SECONDS_END + 1 || value[SECONDS_END] != '.' ||
+	                                                  size > SECONDS_END + 1 + MAX_FRACTION))) {
+		return false;
+	}
+	if (value[10] != ' ' && value[10] != 'T') {
+		return false;
+	}
+	date_t date;
+	if (!FastDate(value, 10, date)) {
+		return false;
+	}
+	uint64_t clock;
+	memcpy(&clock, value + 11, sizeof(clock));
+	static constexpr uint64_t COLONS = 0x0000FF0000FF0000ULL;
+	if ((clock & COLONS) != 0x00003A00003A0000ULL) {
+		return false;
+	}
+	const uint64_t digits = (clock & ~COLONS) | 0x0000300000300000ULL;
+	if (!DigitsAreValid(digits)) {
+		return false;
+	}
+	const uint64_t numbers = digits & 0x0F0F0F0F0F0F0F0FULL;
+	const auto hour = static_cast<int64_t>((numbers & 0xFF) * 10 + ((numbers >> 8) & 0xFF));
+	const auto minute = static_cast<int64_t>(((numbers >> 24) & 0xFF) * 10 + ((numbers >> 32) & 0xFF));
+	const auto second = static_cast<int64_t>(((numbers >> 48) & 0xFF) * 10 + (numbers >> 56));
+	if (hour > 23 || minute > 59 || second > 59) {
+		return false;
+	}
+	int64_t micros = 0;
+	idx_t pos = SECONDS_END + 1;
+	for (; pos < size; pos++) {
+		const auto digit = static_cast<uint8_t>(value[pos] - '0');
+		if (digit > 9) {
+			return false;
+		}
+		micros = micros * 10 + digit;
+	}
+	static constexpr int64_t SCALE[] = {1000000, 100000, 10000, 1000, 100, 10, 1};
+	micros *= SCALE[size > SECONDS_END ? size - SECONDS_END - 1 : 0];
+	out = timestamp_t(static_cast<int64_t>(date.days) * Interval::MICROS_PER_DAY +
+	                  ((hour * 60 + minute) * 60 + second) * Interval::MICROS_PER_SEC + micros);
+	return true;
+}
+
 template <class T>
 struct ParsedAs {
 	using type = T;
@@ -430,6 +478,9 @@ bool WithValueParser(const LogicalType &type, const ValueParseContext &context, 
 			});
 		}
 		return fn(ParsedAs<timestamp_t>(), [tz, strict](const char *value, idx_t size, timestamp_t &out) {
+			if (!tz && FastTimestamp(value, size, out)) {
+				return true;
+			}
 			return Timestamp::TryConvertTimestamp(value, size, out, tz, nullptr, strict) ==
 			       TimestampCastResult::SUCCESS;
 		});

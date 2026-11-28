@@ -114,3 +114,41 @@ TEST_CASE("An ISO date parses to the date DuckDB's calendar gives", "[formats]")
 		REQUIRE(!FastDate(buffer, text.size(), fast));
 	}
 }
+
+TEST_CASE("An ISO timestamp parses to the timestamp DuckDB's parser gives", "[formats]") {
+	static constexpr int POWERS[] = {1, 10, 100, 1000, 10000, 100000, 1000000};
+	std::mt19937_64 random(42);
+	for (idx_t i = 0; i < 200000; i++) {
+		const auto year = static_cast<int>(random() % 9999 + 1);
+		const auto month = static_cast<int>(random() % 12 + 1);
+		const auto day = static_cast<int>(random() % 31 + 1);
+		const auto clock = static_cast<int>(random() % 86400);
+		const auto digits = static_cast<int>(random() % 7);
+		char buffer[48] = {};
+		auto size = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d%c%02d:%02d:%02d", year, month, day,
+		                     random() % 2 ? ' ' : 'T', clock / 3600, clock / 60 % 60, clock % 60);
+		if (digits > 0) {
+			size += snprintf(buffer + size, sizeof(buffer) - static_cast<size_t>(size), ".%0*d", digits,
+			                 static_cast<int>(random() % POWERS[digits]));
+		}
+		INFO(buffer);
+		timestamp_t expected;
+		const bool valid = Timestamp::TryConvertTimestamp(buffer, static_cast<idx_t>(size), expected, false, nullptr,
+		                                                  true) == TimestampCastResult::SUCCESS;
+		timestamp_t fast;
+		REQUIRE(FastTimestamp(buffer, static_cast<idx_t>(size), fast) == valid);
+		if (valid) {
+			REQUIRE(fast == expected);
+		}
+	}
+	for (const string text :
+	     {"2024-01-01 24:00:00", "2024-01-01 23:60:00", "2024-01-01 23:59:60", "2024-01-01 23:59:59.1234567",
+	      "2024-01-01 23:59:59.", "2024-01-01 23:59", "2024-01-01x23:59:59", "2024-01-01 23-59-59",
+	      "2024-01-01 2a:59:59", "2024-01-01 23:59:59+02", "2024-02-30 10:00:00", "2024-01-01 23:59:59.12a"}) {
+		char buffer[48] = {};
+		memcpy(buffer, text.data(), text.size());
+		timestamp_t fast;
+		INFO(text);
+		REQUIRE(!FastTimestamp(buffer, text.size(), fast));
+	}
+}
