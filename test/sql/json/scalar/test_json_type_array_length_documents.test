@@ -63,3 +63,13 @@ statement error
 SELECT json_array_length('{"a": 1} {"b": 2, "padding": "padding padding padding"}')
 ----
 Malformed JSON
+
+statement error
+SELECT json_type('  ')
+----
+Malformed JSON at byte 0 of input: input data is empty
+
+statement error
+SELECT json_array_length('')
+----
+Malformed JSON at byte 0 of input: input length is 0
