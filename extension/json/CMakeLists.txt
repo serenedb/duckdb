@@ -10,6 +10,7 @@ include_directories(include)
 add_subdirectory(json_functions)
 
 set(JSON_EXTENSION_FILES
+    json_direct.cpp
     json_engine.cpp
     json_extension.cpp
     json_common.cpp
