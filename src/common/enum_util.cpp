@@ -145,7 +145,6 @@
 #include "duckdb/execution/reservoir_sample.hpp"
 #include "duckdb/formats/copy_fields.hpp"
 #include "duckdb/formats/copy_options.hpp"
-#include "duckdb/formats/csv_scan.hpp"
 #include "duckdb/formats/json_ranges.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 #include "duckdb/formats/row_ranges.hpp"
@@ -1800,28 +1799,6 @@ const char* EnumUtil::ToChars<CryptoHashFunction>(CryptoHashFunction value) {
 template<>
 CryptoHashFunction EnumUtil::FromString<CryptoHashFunction>(std::string_view value) {
 	return static_cast<CryptoHashFunction>(StringUtil::StringToEnum(GetCryptoHashFunctionValues(), 3, "CryptoHashFunction", value));
-}
-
-const StringUtil::EnumStringLiteral *GetCsvRawKindValues() {
-	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(CsvRawKind::COMPARE), "COMPARE" },
-		{ static_cast<uint32_t>(CsvRawKind::IN_LIST), "IN_LIST" },
-		{ static_cast<uint32_t>(CsvRawKind::IS_NULL), "IS_NULL" },
-		{ static_cast<uint32_t>(CsvRawKind::IS_NOT_NULL), "IS_NOT_NULL" },
-		{ static_cast<uint32_t>(CsvRawKind::LIKE), "LIKE" },
-		{ static_cast<uint32_t>(CsvRawKind::NOT_LIKE), "NOT_LIKE" }
-	};
-	return values;
-}
-
-template<>
-const char* EnumUtil::ToChars<CsvRawKind>(CsvRawKind value) {
-	return StringUtil::EnumToString(GetCsvRawKindValues(), 6, "CsvRawKind", static_cast<uint32_t>(value));
-}
-
-template<>
-CsvRawKind EnumUtil::FromString<CsvRawKind>(std::string_view value) {
-	return static_cast<CsvRawKind>(StringUtil::StringToEnum(GetCsvRawKindValues(), 6, "CsvRawKind", value));
 }
 
 const StringUtil::EnumStringLiteral *GetDataFileTypeValues() {

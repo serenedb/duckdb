@@ -178,8 +178,6 @@ enum class CopyToType : uint8_t;
 
 enum class CryptoHashFunction : uint8_t;
 
-enum class CsvRawKind : uint8_t;
-
 enum class DataFileType : uint8_t;
 
 enum class DateCastResult : uint8_t;
@@ -940,9 +938,6 @@ const char* EnumUtil::ToChars<CopyToType>(CopyToType value);
 
 template<>
 const char* EnumUtil::ToChars<CryptoHashFunction>(CryptoHashFunction value);
-
-template<>
-const char* EnumUtil::ToChars<CsvRawKind>(CsvRawKind value);
 
 template<>
 const char* EnumUtil::ToChars<DataFileType>(DataFileType value);
@@ -1973,9 +1968,6 @@ CopyToType EnumUtil::FromString<CopyToType>(std::string_view value);
 
 template<>
 CryptoHashFunction EnumUtil::FromString<CryptoHashFunction>(std::string_view value);
-
-template<>
-CsvRawKind EnumUtil::FromString<CsvRawKind>(std::string_view value);
 
 template<>
 DataFileType EnumUtil::FromString<DataFileType>(std::string_view value);
