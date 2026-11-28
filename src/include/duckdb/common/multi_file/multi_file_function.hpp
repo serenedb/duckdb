@@ -1043,8 +1043,6 @@ public:
 				continue;
 			} else if (current_reader_data.file_state == MultiFileFileState::SKIPPED ||
 			           current_reader_data.file_state == MultiFileFileState::CLOSED) {
-				//! This file does not need to be opened or closed: the filters have determined that this file can be
-				//! skipped entirely, or the last thread that scanned it out of order closed it
 				++gstate.file_index;
 				continue;
 			}
