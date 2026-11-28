@@ -387,18 +387,27 @@ bool JsonDirectDecoder::Struct(idx_t id, simdjson::ondemand::value &value, idx_t
 			if (node.unknown_key_error && options.error_unknown_key) {
 				return false;
 			}
+			skipped = true;
 			continue;
 		}
 		if (found[hint.column]) {
 			if (options.error_duplicate_key) {
 				return false;
 			}
+			skipped = true;
 			continue;
 		}
 		found[hint.column] = 1;
 		auto child = std::move(field).value();
 		if (!Decode(node.children[hint.column], child, row)) {
 			return false;
+		}
+	}
+	if (options.error_missing_key) {
+		for (idx_t i = 0; i < node.children.size(); i++) {
+			if (!found[i]) {
+				return false;
+			}
 		}
 	}
 	return true;

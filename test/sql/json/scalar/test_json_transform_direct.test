@@ -1,0 +1,185 @@
+# name: test/sql/json/scalar/test_json_transform_direct.test
+# description: from_json, json_transform and casts of JSON to structs and lists decode documents directly, with the results and errors of the node tree transform
+# group: [scalar]
+
+require json
+
+query IIII
+SELECT r.a, r.b, r.c[1], r.c[2] FROM (SELECT from_json('{"a": 1, "b": "x", "c": [1, 2]}', '{"a": "INTEGER", "b": "VARCHAR", "c": ["BIGINT"]}') AS r);
+----
+1	x	1	2
+
+query I
+SELECT from_json('{"a": {"b": {"c": "deep"}}, "z": 5}', '{"a": {"b": {"c": "VARCHAR"}}}').a.b.c;
+----
+deep
+
+query IIIII
+SELECT len(r), r[1].a, r[2].a, r[3] IS NULL, r[4].a IS NULL FROM (SELECT from_json('[{"a": 1}, {"a": 2, "x": 3}, null, {"b": 4}]', '[{"a": "INTEGER"}]') AS r);
+----
+4	1	2	true	true
+
+query I
+SELECT from_json('{"s": "tab\there \"quoted\" é"}', '{"s": "VARCHAR"}').s = 'tab' || chr(9) || 'here "quoted" é';
+----
+true
+
+query II
+SELECT r.ka, r.a FROM (SELECT from_json('{"ka": 1, "a": 2}', '{"ka": "INTEGER", "a": "INTEGER"}') AS r);
+----
+1	2
+
+query I
+SELECT from_json('{"a": 1, "a": 2}', '{"a": "INTEGER"}').a;
+----
+1
+
+statement error
+SELECT json_transform_strict('{"a": 1, "a": 2}', '{"a": "INTEGER"}');
+----
+has duplicate key "a"
+
+query I
+SELECT json_transform_strict('{"a": 1, "b": 2}', '{"a": "INTEGER"}').a;
+----
+1
+
+statement error
+SELECT json_transform_strict('{"b": 2}', '{"a": "INTEGER", "b": "INTEGER"}');
+----
+does not have key "a"
+
+query II
+SELECT r.a, r.b FROM (SELECT from_json('{"b": 2}', '{"a": "INTEGER", "b": "INTEGER"}') AS r);
+----
+NULL	2
+
+statement error
+SELECT from_json('{"a": 1, "b": tru}', '{"a": "INTEGER"}');
+----
+invalid literal, expected 'true'
+
+statement error
+SELECT from_json('{"a": 1, "b": [1,}', '{"a": "INTEGER"}');
+----
+Malformed JSON at byte 17
+
+statement error
+SELECT from_json('{"a": 1, "b": tru}', '{"a": "INTEGER", "b": "BOOLEAN"}');
+----
+invalid literal, expected 'true'
+
+statement error
+SELECT from_json('{"a": 1, "a": tru}', '{"a": "INTEGER"}');
+----
+invalid literal, expected 'true'
+
+statement error
+SELECT from_json('{"a": 1, "b": [1, nul]}', '{"a": "INTEGER", "b": ["INTEGER"]}');
+----
+invalid literal, expected 'null'
+
+query II
+SELECT from_json('5', '{"a": "INTEGER"}').a, from_json('"str"', '["INTEGER"]') IS NULL;
+----
+NULL	true
+
+query I
+SELECT from_json(NULL, '{"a": "INTEGER"}') IS NULL;
+----
+true
+
+query I
+SELECT from_json('{"A": 1}', '{"a": "INTEGER"}').a;
+----
+1
+
+query III
+SELECT r.d, r.e, r.u FROM (SELECT from_json('{"d": 12.345, "e": "2024-01-02", "u": "00000000-0000-0000-0000-000000000001"}', '{"d": "DECIMAL(10,2)", "e": "DATE", "u": "UUID"}') AS r);
+----
+12.35	2024-01-02	00000000-0000-0000-0000-000000000001
+
+query III
+SELECT r.j, r.m['k1'], r.m['k2'] FROM (SELECT from_json('{"j": {"x": [1, {"y": 2}]}, "m": {"k1": 1, "k2": 2}}', '{"j": "JSON", "m": "MAP(VARCHAR, INTEGER)"}') AS r);
+----
+{"x":[1,{"y":2}]}	1	2
+
+query II
+SELECT from_json('{"a": 99999999999}', '{"a": "INTEGER"}').a, from_json('{"a": "not a number"}', '{"a": "INTEGER"}').a;
+----
+NULL	NULL
+
+statement error
+SELECT json_transform_strict('{"a": 99999999999}', '{"a": "INTEGER"}');
+----
+Failed to cast value to numerical: 99999999999
+
+query III
+SELECT r.a, r.b[1], len(r.b) FROM (SELECT from_json('{"a": NaN, "b": [1, 2,], }', '{"a": "DOUBLE", "b": ["INTEGER"]}') AS r);
+----
+nan	1	2
+
+query I
+SELECT list_transform(from_json('{"a": [1, "2", true, null, 3.7]}', '{"a": ["INTEGER"]}').a, lambda x: coalesce(x::VARCHAR, 'none'));
+----
+[1, 2, 1, none, 4]
+
+query I
+SELECT array_to_string(from_json('{"a": [1, "2", true, null, 3.7]}', '{"a": ["VARCHAR"]}').a, '|');
+----
+1|2|true|3.7
+
+query II
+SELECT from_json('{"a": {"b": 1}}', '{"a": ["INTEGER"]}').a IS NULL, from_json('{"a": [1, 2]}', '{"a": {"b": "INTEGER"}}').a.b IS NULL;
+----
+true	true
+
+query II
+SELECT r.a, r.b[1] FROM (SELECT ('{"a": 1, "b": [true]}'::JSON)::STRUCT(a INTEGER, b BOOLEAN[]) AS r);
+----
+1	true
+
+statement error
+SELECT ('{"a": 1}'::JSON)::STRUCT(a INTEGER, b BOOLEAN[]);
+----
+does not have key "b"
+
+statement error
+SELECT ('{"a": 1, "c": 2}'::JSON)::STRUCT(a INTEGER);
+----
+has unknown key "c"
+
+query III
+SELECT r.a, r.b, r.c FROM (SELECT from_json('{"a": -0, "b": -0.0, "c": 1e400}', '{"a": "DOUBLE", "b": "DOUBLE", "c": "DOUBLE"}') AS r);
+----
+0.0	-0.0	inf
+
+query II
+SELECT r.a, r.b FROM (SELECT from_json('{"a": 18446744073709551615, "b": -9223372036854775808}', '{"a": "UBIGINT", "b": "BIGINT"}') AS r);
+----
+18446744073709551615	-9223372036854775808
+
+query IIII
+SELECT count(*), sum(r.id), sum(length(r.v)), sum(len(r.l)) FROM (SELECT from_json(j, '{"id": "INTEGER", "v": "VARCHAR", "l": ["INTEGER"]}') AS r FROM (SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE printf('{"id": %d, "v": "value-%d", "l": [%d, %d]}', i, i, i, i + 1) END AS j FROM range(10000) t(i)));
+----
+10000	42852858	84760	17142
+
+statement error
+SELECT from_json(chr(65279) || '{"a": 1}', '{"a": "INTEGER"}');
+----
+byte order mark (BOM) is not supported
+
+query I
+SELECT from_json('{"a": 1} ', '{"a": "INTEGER"}').a;
+----
+1
+
+statement error
+SELECT from_json('{"a": 1} {"a": 2}', '{"a": "INTEGER"}');
+----
+unexpected content after document
+
+query III
+SELECT from_json('[]', '{"a": "INTEGER"}').a, len(from_json('{}', '[{"a": "INTEGER"}]')), from_json('{"a": {}}', '{"a": {"b": "INTEGER"}}').a.b;
+----
+NULL	NULL	NULL

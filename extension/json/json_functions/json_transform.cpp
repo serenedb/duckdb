@@ -20,6 +20,8 @@
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/formats/value_parsers.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
+#include "json_direct.hpp"
 #include "json_functions.hpp"
 #include "json_scan.hpp"
 
@@ -1284,16 +1286,116 @@ bool JSONTransform::Transform(const JSONNode *vals[], JSONTransformScratch &scra
 	}
 }
 
+namespace {
+
+static_assert(JSONTreeParser::PADDING >= simdjson::SIMDJSON_PADDING);
+
+struct JSONTransformLocalState : public JSONFunctionLocalState {
+	explicit JSONTransformLocalState(Allocator &allocator) : JSONFunctionLocalState(allocator), memory(allocator) {
+		document_parser.set_allocator(&memory.callbacks);
+	}
+	explicit JSONTransformLocalState(ClientContext &context)
+	    : JSONFunctionLocalState(context), memory(BufferAllocator::Get(context)) {
+		document_parser.set_allocator(&memory.callbacks);
+	}
+
+	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
+	                                           FunctionData *bind_data) {
+		return make_uniq<JSONTransformLocalState>(state.GetContext());
+	}
+	static unique_ptr<FunctionLocalState> InitCast(CastLocalStateParameters &parameters) {
+		return parameters.context ? make_uniq<JSONTransformLocalState>(*parameters.context)
+		                          : make_uniq<JSONTransformLocalState>(Allocator::DefaultAllocator());
+	}
+
+	vector<JsonDirectNode> nodes;
+	idx_t root = DConstants::INVALID_INDEX;
+	JsonParserMemory memory;
+	simdjson::ondemand::parser document_parser;
+	vector<char> documents;
+};
+
+bool DecodesDirectly(const LogicalType &type) {
+	if (type.HasAlias()) {
+		return false;
+	}
+	return (type.id() == LogicalTypeId::STRUCT && StructType::GetChildCount(type) != 0) ||
+	       type.id() == LogicalTypeId::LIST;
+}
+
+bool TransformDirect(const UnifiedVectorFormat &input_data, const string_t *inputs, const idx_t count, Vector &result,
+                     JSONTransformLocalState &lstate, JSONTransformOptions &options, JSONTransformScratch &scratch) {
+	namespace ondemand = simdjson::ondemand;
+	constexpr idx_t padding = JSONTreeParser::PADDING;
+	if (lstate.root == DConstants::INVALID_INDEX) {
+		lstate.root = PlanJsonNode(lstate.nodes, result.GetType(), nullptr);
+		for (auto &node : lstate.nodes) {
+			if (node.kind == JsonDirectKind::VALUE && node.fast == JsonDirectFast::STRING) {
+				node.fast = JsonDirectFast::NONE;
+			}
+		}
+	}
+	idx_t total = 0;
+	for (idx_t i = 0; i < count; i++) {
+		const auto idx = input_data.sel->get_index(i);
+		if (input_data.validity.RowIsValid(idx)) {
+			total += inputs[idx].GetSize() + padding;
+		}
+	}
+	if (lstate.documents.size() < total) {
+		lstate.documents.resize(total);
+	}
+	Vector direct(result.GetType(), count);
+	JsonDirectDecoder decoder(lstate.nodes, options, lstate.parser, lstate.writer);
+	decoder.Bind(lstate.root, direct, count);
+	char *document_data = lstate.documents.data();
+	for (idx_t i = 0; i < count; i++) {
+		const auto idx = input_data.sel->get_index(i);
+		if (!input_data.validity.RowIsValid(idx)) {
+			decoder.Null(lstate.root, i);
+			continue;
+		}
+		const auto size = inputs[idx].GetSize();
+		memcpy(document_data, inputs[idx].GetData(), size);
+		if (size >= 3 && memcmp(document_data, "\xEF\xBB\xBF", 3) == 0) {
+			return false;
+		}
+		ondemand::document document;
+		auto code = lstate.document_parser.iterate(document_data, size, size + padding).get(document);
+		if (code == simdjson::MEMALLOC && lstate.memory.error.HasError()) {
+			auto allocation_error = std::move(lstate.memory.error);
+			lstate.memory.error = ErrorData();
+			allocation_error.Throw();
+		}
+		ondemand::value value;
+		if (code || document.get_value().get(value) || !decoder.Decode(lstate.root, value, i) || !document.at_end()) {
+			return false;
+		}
+		if (decoder.skipped) {
+			decoder.skipped = false;
+			document.rewind();
+			if (document.validate()) {
+				return false;
+			}
+		}
+		document_data += size + padding;
+	}
+	if (!decoder.Finish(lstate.root, count, scratch, lstate.documents.data() + total)) {
+		return false;
+	}
+	result.Reference(direct);
+	return true;
+}
+
+} // namespace
+
 static bool TransformFunctionInternal(const Vector &input, const idx_t count, Vector &result,
-                                      JSONFunctionLocalState &lstate, JSONTransformOptions &options) {
+                                      JSONTransformLocalState &lstate, JSONTransformOptions &options) {
 	UnifiedVectorFormat input_data;
 	input.ToUnifiedFormat(input_data);
 	auto inputs = UnifiedVectorFormat::GetData<string_t>(input_data);
 
 	JSONTransformScratch scratch {lstate.arena, lstate.writer};
-	auto roots = AllocateScratch<idx_t>(scratch, count);
-	auto vals = AllocateScratch<const JSONNode *>(scratch, count);
-	auto &result_validity = FlatVector::ValidityMutable(result);
 	auto &parser = lstate.parser;
 	if (TypeVisitor::Contains(result.GetType(), LogicalTypeId::DECIMAL) ||
 	    TypeVisitor::Contains(result.GetType(), LogicalTypeId::BIGNUM)) {
@@ -1303,6 +1405,17 @@ static bool TransformFunctionInternal(const Vector &input, const idx_t count, Ve
 		parser.SetFlags(JSONCommon::READ_FLAG);
 	}
 	parser.Clear();
+	if (DecodesDirectly(result.GetType())) {
+		if (TransformDirect(input_data, inputs, count, result, lstate, options, scratch)) {
+			return true;
+		}
+		parser.Clear();
+		options.error_message.clear();
+		options.object_index = DConstants::INVALID_INDEX;
+	}
+	auto roots = AllocateScratch<idx_t>(scratch, count);
+	auto vals = AllocateScratch<const JSONNode *>(scratch, count);
+	auto &result_validity = FlatVector::ValidityMutable(result);
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = input_data.sel->get_index(i);
 		if (!input_data.validity.RowIsValid(idx)) {
@@ -1325,7 +1438,7 @@ static bool TransformFunctionInternal(const Vector &input, const idx_t count, Ve
 
 template <bool strict>
 static void TransformFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
+	auto &lstate = JSONFunctionLocalState::ResetAndGet(state).Cast<JSONTransformLocalState>();
 
 	JSONTransformOptions options(strict, strict, strict, false);
 	options.parameters.context = &state.GetContext();
@@ -1336,7 +1449,7 @@ static void TransformFunction(DataChunk &args, ExpressionState &state, Vector &r
 
 static void GetTransformFunctionInternal(ScalarFunctionSet &set, const LogicalType &input_type) {
 	ScalarFunction fun({}, LogicalType::ANY, TransformFunction<false>, JSONTransformBind, nullptr,
-	                   JSONFunctionLocalState::Init);
+	                   JSONTransformLocalState::Init);
 	fun.GetSignature().AddParameter("json", input_type).AddParameter("structure", LogicalType::VARCHAR);
 	set.AddFunction(fun);
 }
@@ -1351,7 +1464,7 @@ ScalarFunctionSet JSONFunctions::GetTransformFunction() {
 
 static void GetTransformStrictFunctionInternal(ScalarFunctionSet &set, const LogicalType &input_type) {
 	ScalarFunction fun({}, LogicalType::ANY, TransformFunction<true>, JSONTransformBind, nullptr,
-	                   JSONFunctionLocalState::Init);
+	                   JSONTransformLocalState::Init);
 	fun.GetSignature().AddParameter("json", input_type).AddParameter("structure", LogicalType::VARCHAR);
 	set.AddFunction(fun);
 }
@@ -1365,7 +1478,7 @@ ScalarFunctionSet JSONFunctions::GetTransformStrictFunction() {
 }
 
 static bool JSONToAnyCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
+	auto &lstate = parameters.local_state->Cast<JSONTransformLocalState>();
 	lstate.arena.Reset();
 
 	JSONTransformOptions options(true, true, true, true);
@@ -1380,7 +1493,7 @@ static bool JSONToAnyCast(Vector &source, Vector &result, idx_t count, CastParam
 }
 
 static BoundCastInfo JSONToAnyCastBind(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
-	return BoundCastInfo(JSONToAnyCast, nullptr, JSONFunctionLocalState::InitCastLocalState);
+	return BoundCastInfo(JSONToAnyCast, nullptr, JSONTransformLocalState::InitCast);
 }
 
 void JSONFunctions::RegisterJSONTransformCastFunctions(ExtensionLoader &loader) {

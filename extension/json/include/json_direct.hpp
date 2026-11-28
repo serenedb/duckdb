@@ -105,6 +105,9 @@ public:
 	           simdjson::ondemand::value &value, idx_t row);
 	bool WriteJsonValues(const std::string_view *raws, idx_t count, Vector &target);
 
+public:
+	bool skipped = false;
+
 private:
 	void Refresh(idx_t id, idx_t from, idx_t capacity);
 	bool Struct(idx_t id, simdjson::ondemand::value &value, idx_t row);
