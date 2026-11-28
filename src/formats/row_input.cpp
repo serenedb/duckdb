@@ -294,4 +294,29 @@ RowInput::RowInput(ClientContext &context, CSVBufferManager &manager, const stri
 	}
 }
 
+ScanFile::ScanFile(ClientContext &context, OpenFileInfo file_p, shared_ptr<CSVBufferManager> manager_p)
+    : file(std::move(file_p)), manager(std::move(manager_p)) {
+	input = make_uniq<RowInput>(context, *manager, file.path, true, &consumed);
+}
+
+idx_t ScanFile::FileSize() const {
+	return input->host_stream ? 0 : manager->file_handle->FileSize();
+}
+
+void ScanFile::ReadInOrder() {
+	if (input->file) {
+		input->file->in_order = true;
+	}
+}
+
+double ScanFile::Progress() const {
+	const idx_t size = FileSize();
+	if (size == 0) {
+		return 0;
+	}
+	const double position =
+	    Stream() ? manager->file_handle->GetProgress() : static_cast<double>(skipped + consumed.load());
+	return MinValue<double>(position / static_cast<double>(size), 1.0);
+}
+
 } // namespace duckdb

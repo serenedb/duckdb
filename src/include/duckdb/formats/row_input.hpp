@@ -150,4 +150,43 @@ public:
 	idx_t size;
 };
 
+class ScanFile {
+public:
+	ScanFile(ClientContext &context, OpenFileInfo file, shared_ptr<CSVBufferManager> manager);
+
+	const string &Path() const {
+		return file.path;
+	}
+	RowSource &Rows() const {
+		return input->Rows();
+	}
+	bool Stream() const {
+		return input->stream;
+	}
+	bool HostStream() const {
+		return input->host_stream != nullptr;
+	}
+	idx_t Size() const {
+		return input->size;
+	}
+	idx_t FileSize() const;
+	void ReadInOrder();
+	void Consume(idx_t bytes) {
+		consumed += bytes;
+	}
+	void Rewind() {
+		consumed = 0;
+	}
+	double Progress() const;
+
+public:
+	OpenFileInfo file;
+	idx_t skipped = 0;
+
+private:
+	shared_ptr<CSVBufferManager> manager;
+	unique_ptr<RowInput> input;
+	atomic<idx_t> consumed {0};
+};
+
 } // namespace duckdb

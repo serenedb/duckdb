@@ -695,25 +695,15 @@ void JsonParserMemory::Deallocate(void *context, void *pointer, size_t size) noe
 	static_cast<JsonParserMemory *>(context)->allocator.FreeData(static_cast<data_ptr_t>(pointer), size);
 }
 
-JsonSource::JsonSource(ClientContext &context, OpenFileInfo file_p, FileCompressionType compression)
-    : file(std::move(file_p)) {
+static shared_ptr<CSVBufferManager> OpenJsonFile(ClientContext &context, const OpenFileInfo &file,
+                                                 FileCompressionType compression) {
 	CSVReaderOptions options;
 	options.compression = compression;
-	manager = CSVBufferManager::Open(context, options, file);
-	input = make_uniq<RowInput>(context, *manager, file.path, true, &consumed);
+	return CSVBufferManager::Open(context, options, file);
 }
 
-idx_t JsonSource::FileSize() const {
-	return input->host_stream ? 0 : manager->file_handle->FileSize();
-}
-
-double JsonSource::Progress() const {
-	const idx_t size = FileSize();
-	if (size == 0) {
-		return 0;
-	}
-	const double position = Stream() ? manager->file_handle->GetProgress() : static_cast<double>(consumed.load());
-	return MinValue<double>(position / static_cast<double>(size), 1.0);
+JsonSource::JsonSource(ClientContext &context, OpenFileInfo file_p, FileCompressionType compression)
+    : ScanFile(context, file_p, OpenJsonFile(context, file_p, compression)) {
 }
 
 JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bind_p, shared_ptr<JsonSource> source_p,
