@@ -17,8 +17,7 @@ namespace {
 }
 
 [[noreturn]] void ThrowNotInLatin1(std::string_view utf8) {
-	const auto checked = simdutf::validate_utf8_with_errors(utf8.data(), utf8.size());
-	const idx_t valid = checked.error == simdutf::error_code::SUCCESS ? utf8.size() : checked.count;
+	const idx_t valid = Utf8ValidPrefix(utf8);
 	for (idx_t at = 0; at < valid;) {
 		const auto lead = static_cast<uint8_t>(utf8[at]);
 		const idx_t length = Utf8SequenceLength(lead);

@@ -70,6 +70,10 @@ string CopyPrintout(std::string_view value);
 
 idx_t Utf8SequenceLength(uint8_t lead);
 
+idx_t Utf8ValidPrefix(std::string_view bytes);
+
+bool CopyValidText(std::string_view bytes);
+
 string CopyInvalidUtf8(std::string_view bytes);
 
 string CopyContext(const string &table, idx_t line, const string &column, bool has_value, const string &value);

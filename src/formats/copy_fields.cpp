@@ -5,6 +5,7 @@
 #include "simdutf.h"
 
 #include <bit>
+#include <cstring>
 
 namespace duckdb {
 
@@ -37,7 +38,7 @@ bool IsEndMarkerPrefix(std::string_view bytes) {
 } // namespace
 
 static void VerifyEscapedBytes(std::string_view value) {
-	if (!simdutf::validate_utf8(value.data(), value.size()) || value.find('\0') != std::string_view::npos) {
+	if (!CopyValidText(value)) {
 		ThrowCopyError("22021", CopyInvalidUtf8(value));
 	}
 }
@@ -364,9 +365,17 @@ idx_t Utf8SequenceLength(uint8_t lead) {
 	return lead >= 0xC0 && lead < 0xE0 ? 2 : 1;
 }
 
-string CopyInvalidUtf8(std::string_view bytes) {
+idx_t Utf8ValidPrefix(std::string_view bytes) {
 	const auto checked = simdutf::validate_utf8_with_errors(bytes.data(), bytes.size());
-	const idx_t valid = checked.error == simdutf::error_code::SUCCESS ? bytes.size() : checked.count;
+	return checked.error == simdutf::error_code::SUCCESS ? bytes.size() : checked.count;
+}
+
+bool CopyValidText(std::string_view bytes) {
+	return simdutf::validate_utf8(bytes.data(), bytes.size()) && !memchr(bytes.data(), '\0', bytes.size());
+}
+
+string CopyInvalidUtf8(std::string_view bytes) {
+	const idx_t valid = Utf8ValidPrefix(bytes);
 	idx_t offset = bytes.substr(0, valid).find('\0');
 	idx_t length = 1;
 	if (offset == std::string_view::npos) {
