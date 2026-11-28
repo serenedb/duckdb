@@ -257,7 +257,6 @@ public:
 	string ToString() const {
 		return string(buffer.data(), used);
 	}
-	static bool IsVerbatim(std::string_view value);
 	static constexpr idx_t MAX_DOUBLE_LENGTH = 48;
 	static char *WriteDouble(char *out, double value, JSONWriteFlags flags);
 	static constexpr idx_t MaxStringLength(idx_t length) {
@@ -366,23 +365,15 @@ public:
 	JSONBuildValue *Raw(std::string_view value);
 	JSONBuildValue *Object();
 	JSONBuildValue *Array();
-	JSONBuildValue *Copy(const JSONNode &node);
 	static void Add(JSONBuildValue &object, std::string_view key, JSONBuildValue *value, bool verbatim = false);
 	static void Append(JSONBuildValue &array, JSONBuildValue *value);
 
 private:
-	struct CopyFrame {
-		JSONBuildValue *container;
-		uint32_t remaining;
-		const JSONNode *next;
-	};
-
 	JSONBuildValue *Make(JSONValueType type);
 	const char *CopyString(std::string_view value);
 
 private:
 	ArenaAllocator &arena;
-	vector<CopyFrame> frames;
 };
 
 class JSONValue {

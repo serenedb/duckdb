@@ -2023,16 +2023,6 @@ static char *EscapeShortJSONString(char *out, std::string_view value, bool &asci
 	return out;
 }
 
-bool JSONStringWriter::IsVerbatim(std::string_view value) {
-	for (auto c : value) {
-		const auto byte = static_cast<uint8_t>(c);
-		if (byte < 0x20 || byte >= 0x80 || byte == '"' || byte == '\\') {
-			return false;
-		}
-	}
-	return true;
-}
-
 char *JSONStringWriter::WriteString(char *out, std::string_view value, JSONWriteFlags flags) {
 	const bool validate = !HasFlag(flags, JSONWriteFlags::ALLOW_INVALID_UNICODE);
 	*out++ = '"';
@@ -2172,76 +2162,6 @@ void JSONBuilder::Add(JSONBuildValue &object, std::string_view key, JSONBuildVal
 void JSONBuilder::Append(JSONBuildValue &array, JSONBuildValue *value) {
 	D_ASSERT(array.type == JSONValueType::ARRAY);
 	AppendJSONChild(array, value);
-}
-
-JSONBuildValue *JSONBuilder::Copy(const JSONNode &root) {
-	const auto base = frames.size();
-	JSONBuildValue *result = nullptr;
-	std::string_view key;
-	auto node = &root;
-	while (true) {
-		JSONBuildValue *value;
-		switch (node->type) {
-		case JSONValueType::JSON_NULL:
-			value = Null();
-			break;
-		case JSONValueType::BOOLEAN:
-			value = Boolean(node->boolean);
-			break;
-		case JSONValueType::UNSIGNED_INTEGER:
-			value = UnsignedInteger(node->unsigned_integer);
-			break;
-		case JSONValueType::SIGNED_INTEGER:
-			value = SignedInteger(node->signed_integer);
-			break;
-		case JSONValueType::DOUBLE:
-			value = Double(node->real);
-			break;
-		case JSONValueType::STRING:
-			value = String(node->GetString());
-			break;
-		case JSONValueType::RAW:
-			value = Raw(node->GetString());
-			break;
-		case JSONValueType::ARRAY:
-			value = Array();
-			break;
-		case JSONValueType::OBJECT:
-			value = Object();
-			break;
-		default:
-			frames.resize(base);
-			throw InternalException("Cannot copy an invalid JSON value");
-		}
-		if (frames.size() == base) {
-			result = value;
-		} else if (frames.back().container->type == JSONValueType::OBJECT) {
-			Add(*frames.back().container, key, value);
-		} else {
-			Append(*frames.back().container, value);
-		}
-		if (node->IsContainer()) {
-			frames.push_back({value, node->size, node->First()});
-		}
-		while (true) {
-			if (frames.size() == base) {
-				return result;
-			}
-			auto &frame = frames.back();
-			if (frame.remaining == 0) {
-				frames.pop_back();
-				continue;
-			}
-			frame.remaining--;
-			node = frame.next;
-			if (frame.container->type == JSONValueType::OBJECT) {
-				key = std::string_view(CopyString(node->GetString()), node->size);
-				node++;
-			}
-			frame.next = node->Next();
-			break;
-		}
-	}
 }
 
 JSONValue::JSONValue() : node(nullptr) {
