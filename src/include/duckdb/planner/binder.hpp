@@ -8,8 +8,10 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/enums/join_type.hpp"
 #include "duckdb/common/enums/merge_action_type.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
@@ -18,7 +20,12 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/function_body.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/role_spec.hpp"
 #include "duckdb/parser/tableref/match_recognize_ref.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/qualified_name_set.hpp"
@@ -35,6 +42,7 @@
 #include "duckdb/planner/joinside.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
@@ -52,6 +60,8 @@ namespace duckdb {
 class BoundResultModifier;
 class BoundSelectNode;
 class ClientContext;
+struct CreateIndexInfo;
+class RoleEntry;
 class ExpressionBinder;
 struct ExternalResourceOptions;
 class LimitModifier;
@@ -110,6 +120,23 @@ enum class BindingMode : uint8_t {
 	EXTRACT_QUALIFIED_NAMES
 };
 enum class BinderType : uint8_t { REGULAR_BINDER, VIEW_BINDER };
+enum class TableRefUse : uint8_t { READ, DML_TARGET, UTILITY_TARGET };
+
+struct RoutineReference {
+	const QualifiedName &name;
+	vector<LogicalType> &func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
+	CatalogType type = CatalogType::MACRO_ENTRY;
+	bool every_overload = false;
+};
+
+struct BoundRoutine {
+	optional_ptr<CatalogEntry> entry;
+	optional_ptr<MacroFunction> overload;
+	bool hidden = false;
+};
 
 struct CorrelatedColumnInfo {
 	ColumnBinding binding;
@@ -251,6 +278,12 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
+struct IndexKeyCheck {
+	reference<const TableCatalogEntry> table;
+	reference<const IndexCatalogEntry> index;
+	reference<const RoleAccess> role;
+};
+
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
@@ -261,6 +294,10 @@ struct GlobalBinderState {
 	identifier_map_t<BoundMacroArgument> bound_macro_arguments;
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
+	idx_t relation_references = 0;
+	PrivilegeCheck relation_check;
+	idx_t denied_reference = 0;
+	vector<IndexKeyCheck> index_key_checks;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode
@@ -276,13 +313,7 @@ struct GlobalBinderState {
 	optional_ptr<BoundParameterMap> parameters;
 	//! Tables whose triggers have already been expanded in this query (recursion detection)
 	reference_set_t<TableCatalogEntry> trigger_expanded_tables;
-	//! Generated base-UPDATE nodes that must capture the pre-update (OLD) row image (the capture request),
-	//! keyed by node identity. Internal trigger-expansion state; never set by SQL parsing and never serialized.
-	reference_set_t<QueryNode> trigger_old_capture;
-	//! Optional presentation detail for the statement-trigger CTE consumer: the reserved column names, in physical
-	//! table order, under which the captured OLD image is exposed via SQL aliases. Only populated for capture
-	//! requests presented through a CTE; a consumer that reads the OLD image directly leaves it absent.
-	reference_map_t<QueryNode, vector<Identifier>> trigger_old_capture_cte_names;
+	reference_map_t<QueryNode, vector<Identifier>> trigger_bases;
 	//! Set during CREATE TRIGGER body validation to detect self-recursive writes
 	optional_ptr<TableCatalogEntry> trigger_creation_table;
 	//! Name of the trigger being created (for error messages)
@@ -382,10 +413,11 @@ public:
 
 	void SetCatalogLookupCallback(catalog_entry_callback_t callback);
 	void BindCreateViewInfo(CreateViewInfo &base);
-	static void BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
-	                     const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
-	                     const vector<Identifier> &aliases, vector<LogicalType> &result_types,
-	                     vector<Identifier> &result_names);
+	static void BindView(ClientContext &context, const RoleAccess &lookups, const SelectStatement &stmt,
+	                     const Identifier &catalog_name, const Identifier &schema_name,
+	                     optional_ptr<LogicalDependencyList> dependencies,
+	                     optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
+	                     vector<LogicalType> &result_types, vector<Identifier> &result_names);
 
 	void SearchSchema(CreateInfo &info);
 	//! Resolve the leading component of a (possibly qualified) name into a catalog: if it names an attached database it
@@ -393,7 +425,6 @@ public:
 	//! default) the default catalog is filled in when the name does not specify one; when false the catalog element is
 	//! left empty (the caller applies its own default), which lets it distinguish "no catalog given" from an explicit
 	//! catalog.
-	QualifiedName ResolveCatalog(ClientContext &context, const QualifiedName &name, bool default_catalog = true);
 	static QualifiedName ResolveCatalog(CatalogEntryRetriever &retriever, const QualifiedName &name,
 	                                    bool default_catalog = true);
 	//! Resolve the (possibly nested) name of a table into a name that can be looked up in the catalog. Unqualified
@@ -402,11 +433,10 @@ public:
 	static QualifiedName BindTableName(CatalogEntryRetriever &retriever, const QualifiedName &name);
 	//! Register a read of the catalog owning the entry - required when bind data holds a reference to the entry,
 	//! so that cached prepared statement plans are invalidated when the catalog changes
-	static void RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry);
 	QualifiedName BindTableName(const QualifiedName &name);
 	//! Resolve the (possibly nested) name of a CREATE SCHEMA statement into a canonical [catalog, parents..., schema]
 	void BindCreateSchema(CreateSchemaInfo &info);
-	SchemaCatalogEntry &BindSchema(CreateInfo &info);
+	SchemaCatalogEntry &BindSchema(CreateInfo &info, AclMode use);
 	SchemaCatalogEntry &BindCreateFunctionInfo(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateTriggerInfo(CreateTriggerInfo &info);
 	SchemaCatalogEntry &BindCreateJobInfo(CreateJobInfo &info);
@@ -430,6 +460,52 @@ public:
 
 	//! Add the view to the set of currently bound views - used for detecting recursive view definitions
 	void AddBoundView(ViewCatalogEntry &view);
+
+	ActingRoles acting;
+	const RoleAccess &CheckAs() const;
+	const RoleAccess &Role() const;
+	optional_idx BoundRole() const;
+	shared_ptr<const vector<CatalogSearchEntry>> BoundSearchPath() const;
+	const RoleAccess &FunctionBodyRole(optional_idx owner);
+	void BindAsFunctionBody(const RoleAccess &role);
+	void BindUnchecked();
+	void BindStoredDefinition();
+	void Execute(const CatalogEntry &function);
+	void Execute(const MacroCatalogEntry &function, const MacroFunction &overload);
+	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
+	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
+	void BindAsFunctionBody(const FunctionBody &body);
+	void UseFunctionSearchPath(const vector<string> &config);
+	BoundStatement BindTarget(TableRef &ref, TableRefUse use, AclMode target = AclMode::NoRights);
+	RelationChecks ChecksOf(const StandardEntry &relation);
+	RelationChecks ReadChecks(const StandardEntry &relation, RelationChecks checks);
+	RelationChecks ReadChecks(const StandardEntry &relation, TableRefUse use, AclMode target);
+	void Deny(const PrivilegeCheck &check, const RelationChecks &checks);
+	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+	                    std::span<const LogicalIndex> columns);
+	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+	                    std::span<const Identifier> columns);
+	void CheckColumnRead(Binding &binding, const Identifier &column);
+	void AdoptPrivilegeChecks(Binder &other);
+	void CheckPrivileges();
+	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
+	                         bool named_by_statement = false);
+	optional_ptr<RoleEntry> BindRole(const RoleSpec &role,
+	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION,
+	                                 AclMode use = AclMode::NoRights);
+	string RoleName(idx_t role);
+	static void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
+	static void RefuseSystemTablespace(const CatalogEntry &entry);
+	idx_t CreationOwner(const CreateInfo &info);
+	void RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
+	void RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info);
+	static void OwnDefinedOverloads(CreateInfo &info, idx_t defined);
+	void RequireStoredTypes(const CreateInfo &info, Catalog &catalog, idx_t defined = 0);
+	void RequireTypeUsage(const LogicalType &type, Catalog &catalog);
+	void BindCreateRole(CreateRoleInfo &info);
+	void BindAlterRole(AlterRoleInfo &info);
+	void BindDropRole(const Identifier &name);
+	void BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
@@ -514,6 +590,7 @@ public:
 	                                           TableIndex table_index = TableIndex());
 
 	void SetSearchPath(Catalog &catalog, const Identifier &schema);
+	void SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings);
 
 	void BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<Expression>> &bound_defaults,
 	                      const SchemaCatalogEntry &schema);
@@ -559,7 +636,10 @@ private:
 	void BindGeneratedColumns(BoundCreateTableInfo &info);
 	//! Bind the default values of the columns of a table
 	void BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
-	                       const SchemaCatalogEntry &schema);
+	                       const SchemaCatalogEntry &schema,
+	                       const std::function<bool(const ColumnDefinition &)> &evaluated = nullptr);
+	void BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults,
+	                       const std::function<bool(const ColumnDefinition &)> &evaluated = nullptr);
 	//! Bind a limit value (LIMIT or OFFSET)
 	BoundLimitNode BindLimitValue(OrderBinder &order_binder, unique_ptr<ParsedExpression> limit_val,
 	                              LimitValueType value_type, bool is_offset);
@@ -578,6 +658,7 @@ private:
 	BoundStatement Bind(CreateStatement &stmt);
 	BoundStatement Bind(DropStatement &stmt);
 	BoundStatement Bind(AlterStatement &stmt);
+	unique_ptr<LogicalOperator> BindAlter(unique_ptr<AlterInfo> &info);
 	BoundStatement Bind(PrepareStatement &stmt);
 	BoundStatement Bind(ExecuteStatement &stmt);
 	BoundStatement Bind(TransactionStatement &stmt);
@@ -610,7 +691,11 @@ private:
 
 	//! Resolves the base table for DROP TRIGGER, stamps catalog/schema onto stmt.info,
 	//! and registers the catalog modification. IF EXISTS only guards the trigger, not the table.
-	void BindDropTrigger(DropStatement &stmt, StatementProperties &properties);
+	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
+	bool BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties);
+	bool BindDropCatalogLevel(const DropInfo &info, const ObjectReference &object);
+	bool BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
+	void ResolveOwned(AlterOwnedInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the
 	//! UPDATE child projection (before rowid). Records the input-chunk offset of the OLD block on the update.
@@ -631,9 +716,9 @@ private:
 	void BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, vector<idx_t> &return_columns,
 	                            vector<unique_ptr<Expression>> &projection_expressions,
 	                            LogicalOperator &target_binding);
-	BoundStatement BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
-	                             const Identifier &alias, TableIndex update_table_index,
-	                             unique_ptr<LogicalOperator> child_operator,
+	BoundStatement BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
+	                             TableCatalogEntry &table, const RelationChecks &target, const Identifier &alias,
+	                             TableIndex update_table_index, unique_ptr<LogicalOperator> child_operator,
 	                             virtual_column_map_t virtual_columns = virtual_column_map_t(),
 	                             optional_ptr<vector<column_t>> bound_virtual_columns = nullptr);
 
@@ -662,6 +747,7 @@ private:
 	                                 const TableCatalogEntry &table,
 	                                 const vector<const_reference<TriggerCatalogEntry>> &triggers,
 	                                 TriggerEventType event_type);
+	BoundStatement BindTriggerChain(QueryNode &chain, QueryNode &base, vector<Identifier> old_capture_names);
 	//! Registers a row scope binding (named "new" for INSERT, "old" for DELETE) so child binders resolve
 	//! NEW.col / OLD.col at depth=1. The returned binder is pushed as an enclosing scope.
 	//! The caller must keep it alive until the matching pop_back().
@@ -670,7 +756,7 @@ private:
 	BoundStatement BindNode(UpdateQueryNode &node);
 	BoundStatement BindNode(DeleteQueryNode &node);
 	vector<idx_t> BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table);
-	BoundStatement BindNode(MergeQueryNode &node);
+	BoundStatement BindNode(MergeQueryNode &node, bool inserts_checked = false);
 	BoundStatement BindNode(CopyQueryNode &node);
 
 	unique_ptr<LogicalOperator> VisitQueryNode(BoundQueryNode &node, unique_ptr<LogicalOperator> root);
@@ -682,7 +768,7 @@ private:
 	void BuildUnionByNameInfo(BoundSetOperationNode &result);
 
 	BoundStatement BindJoin(Binder &parent, TableRef &ref);
-	BoundStatement Bind(BaseTableRef &ref);
+	BoundStatement Bind(BaseTableRef &ref, TableRefUse use = TableRefUse::READ, AclMode target = AclMode::NoRights);
 	BoundStatement Bind(BoundRefWrapper &ref);
 	BoundStatement Bind(JoinRef &ref);
 	BoundStatement Bind(MatchRecognizeRef &ref);
@@ -773,7 +859,7 @@ private:
 	void BindSchemaOrCatalog(QualifiedName &qualified_name);
 	Identifier BindCatalog(const Identifier &catalog_name);
 	SchemaCatalogEntry &BindCreateSchema(CreateInfo &info);
-	void MergeMacroOverloads(CreateInfo &info);
+	idx_t MergeMacroOverloads(CreateInfo &info);
 
 	vector<CatalogSearchEntry> GetSearchPath(Catalog &catalog, const Identifier &schema_name,
 	                                         bool default_schema_precedence = false);
@@ -791,7 +877,7 @@ private:
 	BoundStatement BindShow(ShowRef &ref);
 	//! Binds "SHOW name" to the value of the setting "name", returns false if no such setting exists
 	bool TryBindShowSetting(ShowRef &ref, BoundStatement &result);
-	BoundStatement BindShowSetting(ShowRef &ref);
+	BoundStatement BindShowSetting(const Identifier &setting_name);
 	BoundStatement BindSummarize(ShowRef &ref);
 
 	void BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &columns, bool default_values,
@@ -822,7 +908,8 @@ private:
 	unique_ptr<BoundMergeIntoAction>
 	BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, LogicalGet &get, TableIndex proj_index,
 	                vector<unique_ptr<Expression>> &expressions, MergeIntoAction &action,
-	                const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names);
+	                const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names,
+	                const RelationChecks &target, bool inserts_checked);
 
 	unique_ptr<MergeIntoStatement> GenerateMergeInto(InsertQueryNode &node, TableCatalogEntry &table);
 
@@ -842,6 +929,21 @@ private:
 
 private:
 	Binder(ClientContext &context, shared_ptr<Binder> parent, BinderType binder_type);
+};
+
+class BinderScope {
+public:
+	explicit BinderScope(Binder &binder);
+	~BinderScope();
+	BinderScope(const BinderScope &) = delete;
+	BinderScope &operator=(const BinderScope &) = delete;
+
+	void UseFunctionSearchPath(const vector<string> &config);
+
+private:
+	Binder &binder;
+	ActingRoles acting;
+	unique_ptr<CatalogEntryRetriever> caller_path;
 };
 
 } // namespace duckdb

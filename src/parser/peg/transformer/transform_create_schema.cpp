@@ -4,12 +4,12 @@
 namespace duckdb {
 unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSchemaStmt(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const optional<QualifiedName> &name,
-    const optional<Identifier> &authorization,
+    const optional<RoleSpec> &authorization,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_option_list) {
 	if (!name && !authorization) {
 		throw ParserException("CREATE SCHEMA requires a schema name or AUTHORIZATION");
 	}
-	auto qualified_name = name ? *name : QualifiedName(*authorization);
+	auto qualified_name = name ? *name : QualifiedName(authorization->name);
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateSchemaInfo>();
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
@@ -26,6 +26,10 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSchemaStmt(
 
 	result->info = std::move(info);
 	return result;
+}
+
+RoleSpec PEGTransformerFactory::TransformSchemaAuthorization(PEGTransformer &transformer, ParseResult &parse_result) {
+	return TransformOwnerRoleSpec(transformer, parse_result.Cast<ListParseResult>().GetChild(1));
 }
 
 case_insensitive_map_t<unique_ptr<ParsedExpression>>

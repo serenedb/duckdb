@@ -1,4 +1,7 @@
 #include "duckdb/parser/parsed_data/parse_info.hpp"
+
+#include <absl/algorithm/container.h>
+
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -44,10 +47,35 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "SERVER";
 	case CatalogType::TABLESPACE_ENTRY:
 		return "TABLESPACE";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "SUBSCRIPTION";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "FOREIGN DATA WRAPPER";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));
 	}
+}
+
+string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures) {
+	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
+}
+
+string RoleSpec::ToString() const {
+	if (type != RoleSpecType::NAME) {
+		return EnumUtil::ToString(type);
+	}
+	if (IsPublic()) {
+		return "PUBLIC";
+	}
+	auto &text = name.GetIdentifierName();
+	const bool keyword = StringUtil::CIEquals(text, "public") || StringUtil::CIEquals(text, "current_user") ||
+	                     StringUtil::CIEquals(text, "session_user") || StringUtil::CIEquals(text, "current_role");
+	return keyword ? SQLQuotedIdentifier::ToString(name) : SQLIdentifier::ToString(name);
+}
+
+string RoleSpec::ToString(const vector<RoleSpec> &roles) {
+	return StringUtil::Join(roles, ", ", [](const RoleSpec &role) { return role.ToString(); });
 }
 
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,
@@ -64,6 +92,15 @@ string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression
 		    StringUtil::Format("%s %s", SQLIdentifier::ToString(opt.first), opt.second.ToSQLString()));
 	}
 	return " (" + StringUtil::Join(stringified, ", ") + ")";
+}
+
+string RenderSubscriptionOptions(const case_insensitive_map_t<Value> &options) {
+	vector<string> items;
+	for (auto &option : options) {
+		items.push_back(option.first + " = " + option.second.ToSQLString());
+	}
+	absl::c_sort(items);
+	return "(" + StringUtil::Join(items, ", ") + ")";
 }
 
 } // namespace duckdb

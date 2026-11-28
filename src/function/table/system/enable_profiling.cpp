@@ -2,8 +2,10 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "duckdb/main/profiler/gathered_metrics.hpp"
 #include "duckdb/function/function_set.hpp"
+#include "duckdb/catalog/permissions.hpp"
 
 namespace duckdb {
 
@@ -19,8 +21,20 @@ public:
 	Value metrics;
 };
 
+struct EnableProfilingState : public GlobalTableFunctionState {
+	explicit EnableProfilingState(optional_idx bound_role_p) : bound_role(bound_role_p) {
+	}
+
+	optional_idx bound_role;
+};
+
+static unique_ptr<GlobalTableFunctionState> EnableProfilingInit(ClientContext &context, TableFunctionInitInput &input) {
+	return make_uniq<EnableProfilingState>(input.bound_role);
+}
+
 static void EnableProfiling(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto bind_data = data.bind_data->Cast<EnableProfilingBindData>();
+	const auto &role = Role(context, data.global_state->Cast<EnableProfilingState>().bound_role);
 
 	auto &client_config = ClientConfig::GetConfig(context);
 	client_config.enable_profiler = true;
@@ -38,19 +52,23 @@ static void EnableProfiling(ClientContext &context, TableFunctionInput &data, Da
 	}
 
 	if (!bind_data.format.IsNull()) {
-		EnableProfilingSetting::SetLocal(context, bind_data.format);
+		PhysicalSet::SetVariable(context, Identifier(EnableProfilingSetting::Name), SetScope::SESSION, bind_data.format,
+		                         true, &role);
 	}
 
 	if (!bind_data.coverage.IsNull()) {
-		ProfilingCoverageSetting::SetLocal(context, bind_data.coverage);
+		PhysicalSet::SetVariable(context, Identifier(ProfilingCoverageSetting::Name), SetScope::SESSION,
+		                         bind_data.coverage, true, &role);
 	}
 
 	if (!bind_data.save_location.IsNull()) {
-		ProfilingOutputSetting::SetLocal(context, bind_data.save_location);
+		PhysicalSet::SetVariable(context, Identifier(ProfilingOutputSetting::Name), SetScope::SESSION,
+		                         bind_data.save_location, true, &role);
 	}
 
 	if (!bind_data.mode.IsNull()) {
-		ProfilingModeSetting::SetLocal(context, bind_data.mode);
+		PhysicalSet::SetVariable(context, Identifier(ProfilingModeSetting::Name), SetScope::SESSION, bind_data.mode,
+		                         true, &role);
 	}
 
 	if (!bind_data.metrics.IsNull()) {
@@ -58,7 +76,8 @@ static void EnableProfiling(ClientContext &context, TableFunctionInput &data, Da
 		if (metrics_value.type().id() == LogicalTypeId::VARCHAR) {
 			metrics_value = Value::LIST(LogicalType::VARCHAR, {metrics_value});
 		}
-		TrackedMetricsSetting::SetLocal(context, metrics_value);
+		PhysicalSet::SetVariable(context, Identifier(TrackedMetricsSetting::Name), SetScope::SESSION, metrics_value,
+		                         true, &role);
 	}
 }
 
@@ -119,7 +138,7 @@ void EnableProfilingFun::RegisterFunction(BuiltinFunctions &set) {
 	                                                                        .Add("coverage", LogicalType::VARCHAR)
 	                                                                        .Add("save_location", LogicalType::VARCHAR)
 	                                                                        .Add("mode", LogicalType::VARCHAR)),
-	                                     EnableProfiling, BindEnableProfiling));
+	                                     EnableProfiling, BindEnableProfiling, EnableProfilingInit));
 
 	enable_set.AddFunction(TableFunction(FunctionSignature()
 	                                         .AddParameter("metrics", LogicalType::LIST(LogicalType::VARCHAR))
@@ -128,7 +147,7 @@ void EnableProfilingFun::RegisterFunction(BuiltinFunctions &set) {
 	                                                                        .Add("coverage", LogicalType::VARCHAR)
 	                                                                        .Add("save_location", LogicalType::VARCHAR)
 	                                                                        .Add("mode", LogicalType::VARCHAR)),
-	                                     EnableProfiling, BindEnableProfiling));
+	                                     EnableProfiling, BindEnableProfiling, EnableProfilingInit));
 
 	set.AddFunction(std::move(enable_set));
 

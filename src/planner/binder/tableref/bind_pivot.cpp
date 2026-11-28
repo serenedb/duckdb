@@ -99,14 +99,14 @@ struct ReplacePivotAggregateOperator {
 };
 
 template <class OP>
-void TemplatedHandlePivotAggregate(ClientContext &context, unique_ptr<ParsedExpression> &expr,
+void TemplatedHandlePivotAggregate(CatalogEntryRetriever &retriever, unique_ptr<ParsedExpression> &expr,
                                    typename OP::TYPE &aggregates) {
 	if (expr->GetExpressionType() == ExpressionType::FUNCTION) {
 		auto &aggr_function = expr->Cast<FunctionExpression>();
 
 		// check if this is an aggregate to ensure it is an aggregate and not a scalar function
 		EntryLookupInfo lookup_info(CatalogType::AGGREGATE_FUNCTION_ENTRY, aggr_function.GetQualifiedName(), *expr);
-		auto &entry = Catalog::GetEntry(context, lookup_info);
+		auto &entry = *retriever.GetEntry(lookup_info);
 		if (entry.type == CatalogType::AGGREGATE_FUNCTION_ENTRY) {
 			// aggregate
 			OP::HandleAggregate(expr, aggr_function, aggregates);
@@ -117,18 +117,18 @@ void TemplatedHandlePivotAggregate(ClientContext &context, unique_ptr<ParsedExpr
 		throw BinderException(*expr, "Columns can only be referenced within the aggregate of a PIVOT expression");
 	}
 	ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
-		TemplatedHandlePivotAggregate<OP>(context, child, aggregates);
+		TemplatedHandlePivotAggregate<OP>(retriever, child, aggregates);
 	});
 }
 
-void ExtractPivotAggregateExpression(ClientContext &context, unique_ptr<ParsedExpression> &expr,
+void ExtractPivotAggregateExpression(CatalogEntryRetriever &retriever, unique_ptr<ParsedExpression> &expr,
                                      vector<reference<FunctionExpression>> &aggregates) {
-	TemplatedHandlePivotAggregate<ExtractPivotAggregateOperator>(context, expr, aggregates);
+	TemplatedHandlePivotAggregate<ExtractPivotAggregateOperator>(retriever, expr, aggregates);
 }
 
-void ReplacePivotAggregateExpression(ClientContext &context, unique_ptr<ParsedExpression> &expr,
+void ReplacePivotAggregateExpression(CatalogEntryRetriever &retriever, unique_ptr<ParsedExpression> &expr,
                                      unique_ptr<ParsedExpression> &replacement_expr) {
-	TemplatedHandlePivotAggregate<ReplacePivotAggregateOperator>(context, expr, replacement_expr);
+	TemplatedHandlePivotAggregate<ReplacePivotAggregateOperator>(retriever, expr, replacement_expr);
 }
 
 static unique_ptr<SelectNode> ConstructInitialGrouping(PivotRef &ref, vector<unique_ptr<ParsedExpression>> all_columns,
@@ -161,7 +161,7 @@ static unique_ptr<SelectNode> ConstructInitialGrouping(PivotRef &ref, vector<uni
 	return subquery;
 }
 
-static unique_ptr<SelectNode> PivotFilteredAggregate(ClientContext &context, PivotRef &ref,
+static unique_ptr<SelectNode> PivotFilteredAggregate(CatalogEntryRetriever &retriever, PivotRef &ref,
                                                      vector<unique_ptr<ParsedExpression>> all_columns,
                                                      const identifier_set_t &handled_columns,
                                                      vector<PivotValueElement> pivot_values) {
@@ -190,7 +190,7 @@ static unique_ptr<SelectNode> PivotFilteredAggregate(ClientContext &context, Piv
 			auto copied_aggr = aggregate->Copy();
 
 			vector<reference<FunctionExpression>> aggregates;
-			ExtractPivotAggregateExpression(context, copied_aggr, aggregates);
+			ExtractPivotAggregateExpression(retriever, copied_aggr, aggregates);
 			D_ASSERT(aggregates.size() == 1);
 
 			auto &aggr = aggregates[0].get().Cast<FunctionExpression>();
@@ -216,8 +216,8 @@ struct PivotBindState {
 	vector<Identifier> internal_aggregate_names;
 };
 
-static unique_ptr<SelectNode> PivotInitialAggregate(ClientContext &context, PivotBindState &bind_state, PivotRef &ref,
-                                                    vector<unique_ptr<ParsedExpression>> all_columns,
+static unique_ptr<SelectNode> PivotInitialAggregate(CatalogEntryRetriever &retriever, PivotBindState &bind_state,
+                                                    PivotRef &ref, vector<unique_ptr<ParsedExpression>> all_columns,
                                                     const identifier_set_t &handled_columns) {
 	auto subquery_stage1 = ConstructInitialGrouping(ref, std::move(all_columns), handled_columns);
 
@@ -257,7 +257,7 @@ static unique_ptr<SelectNode> PivotInitialAggregate(ClientContext &context, Pivo
 
 		unique_ptr<ParsedExpression> aggregate_ref;
 		aggregate_ref = make_uniq<ColumnRefExpression>(Identifier(aggregate_alias));
-		ReplacePivotAggregateExpression(context, aggregate, aggregate_ref);
+		ReplacePivotAggregateExpression(retriever, aggregate, aggregate_ref);
 
 		bind_state.aggregate_names.emplace_back(std::move(aggr_name));
 		bind_state.internal_aggregate_names.push_back(Identifier(aggregate_alias));
@@ -597,7 +597,7 @@ unique_ptr<SelectNode> Binder::BindPivot(PivotRef &ref, vector<unique_ptr<Parsed
 			throw BinderException(*aggr, "Pivot expression cannot contain window functions");
 		}
 		idx_t aggregate_count = pivot_aggregates.size();
-		ExtractPivotAggregateExpression(context, aggr, pivot_aggregates);
+		ExtractPivotAggregateExpression(entry_retriever, aggr, pivot_aggregates);
 		if (pivot_aggregates.size() != aggregate_count + 1) {
 			string error_str = pivot_aggregates.size() == aggregate_count
 			                       ? "but no aggregates were found"
@@ -711,8 +711,8 @@ unique_ptr<SelectNode> Binder::BindPivot(PivotRef &ref, vector<unique_ptr<Parsed
 	auto pivot_filter_threshold = Settings::Get<PivotFilterThresholdSetting>(context);
 	if (pivot_values.size() <= pivot_filter_threshold) {
 		// use a set of filtered aggregates
-		pivot_node =
-		    PivotFilteredAggregate(context, ref, std::move(all_columns), handled_columns, std::move(pivot_values));
+		pivot_node = PivotFilteredAggregate(entry_retriever, ref, std::move(all_columns), handled_columns,
+		                                    std::move(pivot_values));
 	} else {
 		// executing a pivot statement happens in three stages
 		// 1) execute the query "SELECT {groups}, {pivots}, {aggregates} FROM {from_clause} GROUP BY {groups}, {pivots}
@@ -724,7 +724,8 @@ unique_ptr<SelectNode> Binder::BindPivot(PivotRef &ref, vector<unique_ptr<Parsed
 		PivotBindState bind_state;
 		// Pivot Stage 1
 		// SELECT {groups}, {pivots}, {aggregates} FROM {from_clause} GROUP BY {groups}, {pivots}
-		auto subquery_stage1 = PivotInitialAggregate(context, bind_state, ref, std::move(all_columns), handled_columns);
+		auto subquery_stage1 =
+		    PivotInitialAggregate(entry_retriever, bind_state, ref, std::move(all_columns), handled_columns);
 
 		// Pivot stage 2
 		// SELECT {groups}, LIST({pivots}), LIST({aggregates}) FROM [Q1] GROUP BY {groups}

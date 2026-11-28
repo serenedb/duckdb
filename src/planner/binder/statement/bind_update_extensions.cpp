@@ -4,6 +4,7 @@
 namespace duckdb {
 
 BoundStatement Binder::Bind(UpdateExtensionsStatement &) {
+	Check<StatementRule::UpdateExtensions>(CheckAs()).Require();
 	throw NotImplementedException(
 	    "UPDATE EXTENSIONS is not supported by SereneDB: extensions are compiled into the server binary and cannot "
 	    "be updated at runtime.\n"

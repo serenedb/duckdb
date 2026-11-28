@@ -76,7 +76,7 @@ unique_ptr<GlobalTableFunctionState> PragmaDatabaseSizeInit(ClientContext &conte
 		} catch (const std::exception &ex) {
 			auto message = StringUtil::Format("catalog listing skipped database \"%s\": %s", db.GetName(),
 			                                  ErrorData(ex).Message());
-			if (!context.EmitWarning(message.c_str())) {
+			if (!context.EmitWarning(message.c_str(), {})) {
 				DUCKDB_LOG_DEBUG(context, message);
 			}
 		}
@@ -121,8 +121,10 @@ void PragmaDatabaseSizeFunction(ClientContext &context, TableFunctionInput &data
 }
 
 void PragmaDatabaseSize::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("pragma_database_size", {}, PragmaDatabaseSizeFunction, PragmaDatabaseSizeBind,
-	                              PragmaDatabaseSizeInit));
+	TableFunction database_size("pragma_database_size", {}, PragmaDatabaseSizeFunction, PragmaDatabaseSizeBind,
+	                            PragmaDatabaseSizeInit);
+	database_size.required_capability = RoleCapability::Superuser;
+	set.AddFunction(database_size);
 }
 
 } // namespace duckdb

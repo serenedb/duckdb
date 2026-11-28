@@ -454,6 +454,26 @@
         "id": 301,
         "name": "comment_value",
         "type": "Value"
+      },
+      {
+        "id": 16686,
+        "name": "overload_oid",
+        "type": "idx_t",
+        "version": "sdb_v1"
+      },
+      {
+        "id": 16687,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true",
+        "version": "sdb_v1"
+      },
+      {
+        "id": 16688,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true",
+        "version": "sdb_v1"
       }
     ]
   },
@@ -471,6 +491,26 @@
         "id": 301,
         "name": "new_schema",
         "type": "Identifier"
+      },
+      {
+        "id": 16686,
+        "name": "overload_oid",
+        "type": "idx_t",
+        "version": "sdb_v1"
+      },
+      {
+        "id": 16687,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true",
+        "version": "sdb_v1"
+      },
+      {
+        "id": 16688,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true",
+        "version": "sdb_v1"
       }
     ]
   },
@@ -500,7 +540,7 @@
       {
         "id": 303,
         "name": "new_owner",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 304,
@@ -520,7 +560,7 @@
       {
         "id": 307,
         "name": "grantee",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 308,
@@ -530,7 +570,7 @@
       {
         "id": 309,
         "name": "granted_by",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 310,
@@ -565,7 +605,7 @@
       {
         "id": 316,
         "name": "for_role",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 317,
@@ -586,6 +626,174 @@
         "id": 320,
         "name": "all_in_schema",
         "type": "bool"
+      },
+      {
+        "id": 323,
+        "name": "drop_owned_role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 324,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 325,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 330,
+        "name": "overload_oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 331,
+        "name": "default_acl_oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 332,
+        "name": "best_grantor",
+        "type": "bool"
+      },
+      {
+        "id": 341,
+        "name": "objects",
+        "type": "vector<ObjectReference>"
+      },
+      {
+        "id": 342,
+        "name": "grantees",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 343,
+        "name": "grantee_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 344,
+        "name": "for_roles",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 345,
+        "name": "target_roles",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 346,
+        "name": "default_schemas",
+        "type": "vector<string>"
+      },
+      {
+        "id": 347,
+        "name": "default_scopes",
+        "type": "vector<idx_t>"
+      }
+    ]
+  },
+  {
+    "class": "AlterDatabaseSettingsInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_DATABASE_SETTINGS",
+    "members": [
+      {
+        "id": 300,
+        "name": "role",
+        "type": "RoleSpec"
+      },
+      {
+        "id": 301,
+        "name": "role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 302,
+        "name": "reset_all_config",
+        "type": "bool"
+      },
+      {
+        "id": 303,
+        "name": "reset_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 304,
+        "name": "set_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 305,
+        "name": "set_connection_limit",
+        "type": "bool"
+      },
+      {
+        "id": 306,
+        "name": "connection_limit",
+        "type": "int32_t",
+        "default": "-1"
+      },
+      {
+        "id": 307,
+        "name": "set_allow_connections",
+        "type": "bool"
+      },
+      {
+        "id": 308,
+        "name": "allow_connections",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 309,
+        "name": "all_roles",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "class": "AlterOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 301,
+        "name": "new_owner",
+        "type": "RoleSpec"
+      },
+      {
+        "id": 302,
+        "name": "cascade",
+        "type": "bool"
+      },
+      {
+        "id": 303,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 304,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 305,
+        "name": "grantors",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 306,
+        "name": "objects",
+        "type": "vector<ObjectReference>"
       }
     ]
   },
@@ -662,7 +870,7 @@
       {
         "id": 313,
         "name": "grant_role",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 314,
@@ -698,6 +906,21 @@
         "id": 320,
         "name": "grantor_id",
         "type": "idx_t"
+      },
+      {
+        "id": 322,
+        "name": "granted_roles",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 323,
+        "name": "grantor_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 324,
+        "name": "members",
+        "type": "vector<RoleSpec>"
       }
     ]
   },
@@ -792,6 +1015,20 @@
         "id": 300,
         "name": "alter_scalar_function_type",
         "type": "AlterScalarFunctionType"
+      },
+      {
+        "id": 16685,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true",
+        "version": "sdb_v1"
+      },
+      {
+        "id": 16686,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true",
+        "version": "sdb_v1"
       }
     ]
   },
@@ -804,6 +1041,63 @@
         "id": 400,
         "name": "new_name",
         "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterFunctionAttributesInfo",
+    "base": "AlterScalarFunctionInfo",
+    "enum": "SET_FUNCTION_ATTRIBUTES",
+    "members": [
+      {
+        "id": 400,
+        "name": "func_parameters",
+        "type": "vector<LogicalType>"
+      },
+      {
+        "id": 401,
+        "name": "has_func_args",
+        "type": "bool"
+      },
+      {
+        "id": 402,
+        "name": "set_security",
+        "type": "bool"
+      },
+      {
+        "id": 403,
+        "name": "security_definer",
+        "type": "bool"
+      },
+      {
+        "id": 404,
+        "name": "set_stability",
+        "type": "bool"
+      },
+      {
+        "id": 405,
+        "name": "stability",
+        "type": "FunctionStability"
+      },
+      {
+        "id": 406,
+        "name": "set_strict",
+        "type": "bool"
+      },
+      {
+        "id": 407,
+        "name": "strict",
+        "type": "bool"
+      },
+      {
+        "id": 408,
+        "name": "replace_config",
+        "type": "bool"
+      },
+      {
+        "id": 409,
+        "name": "config",
+        "type": "vector<string>"
       }
     ]
   },
@@ -1268,6 +1562,12 @@
         "serialize_condition": "qualified_name.Path().size() > 3",
         "deserialize_default": "QualifiedName()",
         "deserialize_skip_assign": true
+      },
+      {
+        "id": 16593,
+        "name": "objects",
+        "type": "vector<ObjectReference>",
+        "version": "sdb_v1"
       }
     ],
     "methods": {
@@ -1626,6 +1926,42 @@
         "id": 300,
         "name": "new_name",
         "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterSubscriptionInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SUBSCRIPTION",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_subscription_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_subscription_type",
+        "type": "AlterSubscriptionType"
+      },
+      {
+        "id": 301,
+        "name": "connection",
+        "type": "string"
+      },
+      {
+        "id": 302,
+        "name": "publications",
+        "type": "vector<string>"
+      },
+      {
+        "id": 303,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      },
+      {
+        "id": 304,
+        "name": "new_name",
+        "type": "Identifier",
+        "default": "Identifier()"
       }
     ]
   }

@@ -192,11 +192,13 @@ BoundStatement Binder::BindDescribeTable(ShowRef &ref) {
 		optional_idx schema_oid;
 		// If fully qualified, check if the schema exists
 		if (!catalog_name.empty() && !schema_name.empty()) {
-			auto schema_entry = Catalog::GetSchema(context, catalog_name, schema_name, OnEntryNotFound::RETURN_NULL);
+			auto schema_entry =
+			    Catalog::GetSchema(entry_retriever, catalog_name, {schema_name}, OnEntryNotFound::RETURN_NULL);
 			if (!schema_entry) {
 				// "a.b" can also name a nested schema
 				vector<Identifier> nested_path {catalog_name, schema_name};
-				schema_entry = Catalog::GetSchema(context, Identifier(), nested_path, OnEntryNotFound::RETURN_NULL);
+				schema_entry =
+				    Catalog::GetSchema(entry_retriever, Identifier(), nested_path, OnEntryNotFound::RETURN_NULL);
 				if (schema_entry) {
 					schema_oid = schema_entry->oid;
 				}
@@ -210,7 +212,8 @@ BoundStatement Binder::BindDescribeTable(ShowRef &ref) {
 			auto &client_data = ClientData::Get(context);
 			auto &default_entry = client_data.catalog_search_path->GetDefault();
 			catalog_name = default_entry.GetCatalog();
-			auto schema_entry = Catalog::GetSchema(context, catalog_name, schema_name, OnEntryNotFound::RETURN_NULL);
+			auto schema_entry =
+			    Catalog::GetSchema(entry_retriever, catalog_name, {schema_name}, OnEntryNotFound::RETURN_NULL);
 			if (!schema_entry) {
 				throw CatalogException("SHOW TABLES FROM: No catalog + schema named \"%s.%s\" found.",
 				                       catalog_name.GetIdentifierName(), schema_name.GetIdentifierName());
@@ -256,15 +259,15 @@ bool Binder::TryBindShowSetting(ShowRef &ref, BoundStatement &result) {
 		Catalog::AutoloadExtensionByConfigName(context, setting_name);
 		context.TryGetCurrentSetting(setting_name, setting_value);
 	}
-	result = BindShowSetting(ref);
+	result = BindShowSetting(setting_name);
 	return true;
 }
 
-BoundStatement Binder::BindShowSetting(ShowRef &ref) {
+BoundStatement Binder::BindShowSetting(const Identifier &setting_name) {
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(ConstantExpression::String(ref.GetTableName().GetIdentifierName()));
+	children.push_back(ConstantExpression::String(setting_name.GetIdentifierName()));
 	auto setting = make_uniq<FunctionExpression>("current_setting", std::move(children));
-	setting->SetAlias(CanonicalSettingName(context, ref.GetTableName()));
+	setting->SetAlias(CanonicalSettingName(context, setting_name));
 	auto node = make_uniq<SelectNode>();
 	node->select_list.push_back(std::move(setting));
 	node->from_table = make_uniq<EmptyTableRef>();
@@ -306,10 +309,7 @@ BoundStatement Binder::BindShow(ShowRef &ref) {
 	switch (behavior) {
 	case ShowBehaviorType::SETTING:
 		// "SHOW name" only ever resolves a setting.
-		if (can_be_setting) {
-			return BindShowSetting(ref);
-		}
-		throw CatalogException("Setting with name \"%s\" does not exist", name);
+		return BindShowSetting(Settings::PathName(ref.qualified_name.Path()));
 	case ShowBehaviorType::TABLE:
 		// "SHOW name" only ever describes a table (the historical behavior). Describing a table via SHOW is
 		// deprecated, so warn whenever one is shown.

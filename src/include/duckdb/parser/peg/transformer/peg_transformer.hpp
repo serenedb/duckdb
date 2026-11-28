@@ -157,6 +157,7 @@ DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.PartitionSortedOp
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.PivotColumn", PivotColumn);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.QualifiedColumnName", QualifiedColumnName);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.QualifiedName", QualifiedName);
+DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.RoleSpec", RoleSpec);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.SampleMethod", SampleMethod);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.SecretPersistType", SecretPersistType);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.SetOperationType", SetOperationType);
@@ -774,6 +775,10 @@ public:
 	                                  const char *statement_name);
 	static void AddToMultiStatement(const unique_ptr<MultiStatement> &multi_statement,
 	                                unique_ptr<AlterInfo> alter_info);
+	static unique_ptr<DropStatement> MakeDropStatement(unique_ptr<DropInfo> info, vector<QualifiedName> names);
+	static bool TransformFunctionArgumentTypes(PEGTransformer &transformer, OptionalParseResult &signature,
+	                                           vector<LogicalType> &types);
+	static void TransformRoutineKind(ParseResult &kind, bool &include_functions, bool &include_procedures);
 	static void AddUpdateToMultiStatement(const unique_ptr<MultiStatement> &multi_statement, const string &column_name,
 	                                      const AlterEntryData &table_data,
 	                                      const unique_ptr<ParsedExpression> &original_expression);
@@ -783,8 +788,9 @@ public:
 	                                                               unique_ptr<ParsedExpression> expression,
 	                                                               unique_ptr<SQLStatement> before_update);
 	static bool TransformSerialType(LogicalType &type);
-	//! The role an OwnerRoleSpec names: CURRENT_USER, SESSION_USER and CURRENT_ROLE in upper case, else the identifier
-	static Identifier TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec);
+	static RoleSpec TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec);
+	static void CollectConfigClause(PEGTransformer &transformer, ParseResult &config, vector<string> &set_config,
+	                                vector<string> &reset_config, bool &reset_all_config);
 
 	static void InitializePivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,
@@ -840,13 +846,14 @@ public:
 	static void InitializeSetSchemaEntryTypeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetSchemaEntryTypeTrampoline(PEGTransformer &transformer,
 	                                                                            GeneratedTransformProcess &process);
-	static void InitializeSetSchemaProcedureTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static arena_ptr<TransformResultValue> FinalizeSetSchemaProcedureTrampoline(PEGTransformer &transformer,
-	                                                                            GeneratedTransformProcess &process);
 	static void InitializeSetSchemaDictionaryTrampoline(PEGTransformer &transformer,
 	                                                    GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetSchemaDictionaryTrampoline(PEGTransformer &transformer,
 	                                                                             GeneratedTransformProcess &process);
+	static void InitializeAlterRoutineSetSchemaStmtTrampoline(PEGTransformer &transformer,
+	                                                          GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterRoutineSetSchemaStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeAlterJobStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterJobStmtTrampoline(PEGTransformer &transformer,
 	                                                                      GeneratedTransformProcess &process);
@@ -875,6 +882,10 @@ public:
 	static void InitializeAlterFunctionStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterFunctionStmtTrampoline(PEGTransformer &transformer,
 	                                                                           GeneratedTransformProcess &process);
+	static void InitializeAlterFunctionAttributesStmtTrampoline(PEGTransformer &transformer,
+	                                                            GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterFunctionAttributesStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeAlterTableStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterTableStmtTrampoline(PEGTransformer &transformer,
 	                                                                        GeneratedTransformProcess &process);
@@ -1037,6 +1048,14 @@ public:
 	static void InitializeAlterDatabaseStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterDatabaseStmtTrampoline(PEGTransformer &transformer,
 	                                                                           GeneratedTransformProcess &process);
+	static void InitializeAlterDatabaseConfigStmtTrampoline(PEGTransformer &transformer,
+	                                                        GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterDatabaseConfigStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeAlterDatabaseOptionsStmtTrampoline(PEGTransformer &transformer,
+	                                                         GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterDatabaseOptionsStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeAnalyzeStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAnalyzeStatementTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -1071,6 +1090,10 @@ public:
 	static void InitializeCommentStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCommentStatementTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
+	static void InitializeCommentRoutineStatementTrampoline(PEGTransformer &transformer,
+	                                                        GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeCommentRoutineStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeCommentTargetTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCommentTargetTrampoline(PEGTransformer &transformer,
 	                                                                       GeneratedTransformProcess &process);
@@ -1086,9 +1109,6 @@ public:
 	                                                                      GeneratedTransformProcess &process);
 	static void InitializeCommentSequenceTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCommentSequenceTrampoline(PEGTransformer &transformer,
-	                                                                         GeneratedTransformProcess &process);
-	static void InitializeCommentFunctionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static arena_ptr<TransformResultValue> FinalizeCommentFunctionTrampoline(PEGTransformer &transformer,
 	                                                                         GeneratedTransformProcess &process);
 	static void InitializeCommentMacroTableTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCommentMacroTableTrampoline(PEGTransformer &transformer,
@@ -1114,6 +1134,9 @@ public:
 	static void InitializeCommentColumnTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCommentColumnTrampoline(PEGTransformer &transformer,
 	                                                                       GeneratedTransformProcess &process);
+	static void InitializeCommentRoleTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCommentRoleTrampoline(PEGTransformer &transformer,
+	                                                                     GeneratedTransformProcess &process);
 	static void InitializeCommentValueTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCommentValueTrampoline(PEGTransformer &transformer,
 	                                                                      GeneratedTransformProcess &process);
@@ -1133,6 +1156,9 @@ public:
 	static void InitializeIndexNameTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeIndexNameTrampoline(PEGTransformer &transformer,
 	                                                                   GeneratedTransformProcess &process);
+	static void InitializeSettingPathTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSettingPathTrampoline(PEGTransformer &transformer,
+	                                                                     GeneratedTransformProcess &process);
 	static void InitializeConstraintNameTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeConstraintNameTrampoline(PEGTransformer &transformer,
 	                                                                        GeneratedTransformProcess &process);
@@ -1609,6 +1635,32 @@ public:
 	                                                        GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
 	FinalizeCreateDatabaseStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeCreateDatabaseOptionsTrampoline(PEGTransformer &transformer,
+	                                                      GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCreateDatabaseOptionsTrampoline(PEGTransformer &transformer,
+	                                                                               GeneratedTransformProcess &process);
+	static void InitializeCreateDatabaseOptionTrampoline(PEGTransformer &transformer,
+	                                                     GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCreateDatabaseOptionTrampoline(PEGTransformer &transformer,
+	                                                                              GeneratedTransformProcess &process);
+	static void InitializeCreateDatabaseOwnerTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCreateDatabaseOwnerTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
+	static void InitializeDatabaseOwnerNameTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDatabaseOwnerNameTrampoline(PEGTransformer &transformer,
+	                                                                           GeneratedTransformProcess &process);
+	static void InitializeDatabaseOptionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDatabaseOptionTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeDatabaseConnectionLimitTrampoline(PEGTransformer &transformer,
+	                                                        GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeDatabaseConnectionLimitTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeDatabaseAllowConnectionsTrampoline(PEGTransformer &transformer,
+	                                                         GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeDatabaseAllowConnectionsTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeDropDatabaseStatementTrampoline(PEGTransformer &transformer,
 	                                                      GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropDatabaseStatementTrampoline(PEGTransformer &transformer,
@@ -2530,6 +2582,10 @@ public:
 	                                                      GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeFunctionTypeProcedureTrampoline(PEGTransformer &transformer,
 	                                                                               GeneratedTransformProcess &process);
+	static void InitializeFunctionTypeRoutineTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeFunctionTypeRoutineTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
 	static void InitializeDropBehaviorTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropBehaviorTrampoline(PEGTransformer &transformer,
 	                                                                      GeneratedTransformProcess &process);
@@ -4099,10 +4155,21 @@ public:
 	static void InitializeAlterRoleStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterRoleStatementTrampoline(PEGTransformer &transformer,
 	                                                                            GeneratedTransformProcess &process);
+	static void InitializeAlterGroupStatementTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterGroupStatementTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
 	static void InitializeAlterOwnerStatementTrampoline(PEGTransformer &transformer,
 	                                                    GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterOwnerStatementTrampoline(PEGTransformer &transformer,
 	                                                                             GeneratedTransformProcess &process);
+	static void InitializeReassignOwnedStatementTrampoline(PEGTransformer &transformer,
+	                                                       GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeReassignOwnedStatementTrampoline(PEGTransformer &transformer,
+	                                                                                GeneratedTransformProcess &process);
+	static void InitializeDropOwnedStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDropOwnedStatementTrampoline(PEGTransformer &transformer,
+	                                                                            GeneratedTransformProcess &process);
 	static void InitializeAlterDefaultPrivilegesStatementTrampoline(PEGTransformer &transformer,
 	                                                                GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
@@ -4766,6 +4833,9 @@ public:
 	static void InitializeSetRoleTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetRoleTrampoline(PEGTransformer &transformer,
 	                                                                 GeneratedTransformProcess &process);
+	static void InitializeRoleScopeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeRoleScopeTrampoline(PEGTransformer &transformer,
+	                                                                   GeneratedTransformProcess &process);
 	static void InitializeSetSessionAuthorizationTrampoline(PEGTransformer &transformer,
 	                                                        GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
@@ -4991,8 +5061,9 @@ public:
 	                                                         const optional<bool> &if_exists,
 	                                                         unique_ptr<BaseTableRef> base_table_name,
 	                                                         const Identifier &col_id);
-	static CatalogType TransformSetSchemaProcedure(PEGTransformer &transformer);
 	static CatalogType TransformSetSchemaDictionary(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformAlterRoutineSetSchemaStmt(PEGTransformer &transformer,
+	                                                                ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterJobStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                   const QualifiedName &qualified_name,
 	                                                   unique_ptr<AlterInfo> alter_job_action);
@@ -5004,10 +5075,9 @@ public:
 	static unique_ptr<AlterInfo> TransformAlterIndexStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                     unique_ptr<BaseTableRef> base_table_name,
 	                                                     unique_ptr<AlterTableInfo> alter_index_alter);
-	static unique_ptr<AlterInfo> TransformAlterFunctionStmt(PEGTransformer &transformer,
-	                                                        const optional<bool> &if_exists,
-	                                                        const QualifiedName &qualified_name,
-	                                                        unique_ptr<AlterTableInfo> rename_alter);
+	static unique_ptr<AlterInfo> TransformAlterFunctionStmt(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterFunctionAttributesStmt(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterTableStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                     const bool &has_result,
 	                                                     unique_ptr<BaseTableRef> base_table_name,
@@ -5109,6 +5179,11 @@ public:
 	                                                        const optional<bool> &if_exists,
 	                                                        const Identifier &identifier,
 	                                                        const Identifier &identifier_1);
+	static unique_ptr<AlterInfo> TransformAlterDatabaseConfigStmt(PEGTransformer &transformer,
+	                                                              ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterDatabaseOptionsStmt(PEGTransformer &transformer,
+	                                                               const Identifier &col_id, const bool &has_result,
+	                                                               const vector<pair<string, Value>> &database_option);
 	static unique_ptr<SQLStatement> TransformAnalyzeStatement(PEGTransformer &transformer,
 	                                                          const Identifier &analyze_keyword,
 	                                                          const optional<bool> &analyze_verbose,
@@ -5137,11 +5212,12 @@ public:
 	                                                          const CatalogType &comment_on_type,
 	                                                          const vector<string> &comment_target,
 	                                                          const Value &comment_value);
+	static unique_ptr<SQLStatement> TransformCommentRoutineStatement(PEGTransformer &transformer,
+	                                                                 ParseResult &parse_result);
 	static vector<string> TransformCommentStringLiteralIdentifier(PEGTransformer &transformer,
 	                                                              const Identifier &string_literal_identifier);
 	static CatalogType TransformCommentTable(PEGTransformer &transformer);
 	static CatalogType TransformCommentSequence(PEGTransformer &transformer);
-	static CatalogType TransformCommentFunction(PEGTransformer &transformer);
 	static CatalogType TransformCommentMacroTable(PEGTransformer &transformer);
 	static CatalogType TransformCommentMacro(PEGTransformer &transformer);
 	static CatalogType TransformCommentView(PEGTransformer &transformer);
@@ -5150,10 +5226,13 @@ public:
 	static CatalogType TransformCommentSchema(PEGTransformer &transformer);
 	static CatalogType TransformCommentType(PEGTransformer &transformer);
 	static CatalogType TransformCommentColumn(PEGTransformer &transformer);
+	static CatalogType TransformCommentRole(PEGTransformer &transformer);
 	static Value TransformStringLiteralValue(PEGTransformer &transformer, const string &string_literal);
 	static Identifier TransformAnalyzeKeyword(PEGTransformer &transformer);
 	static unique_ptr<SQLStatement> TransformExpressionStatement(PEGTransformer &transformer,
 	                                                             vector<unique_ptr<ParsedExpression>> expression_alias);
+	static Identifier TransformSettingPath(PEGTransformer &transformer, const Identifier &setting_name,
+	                                       const optional<vector<Identifier>> &dot_identifier);
 	static Identifier TransformConstraintName(PEGTransformer &transformer, const Identifier &col_id_or_string);
 	static Identifier TransformCollationName(PEGTransformer &transformer, const Identifier &identifier);
 	static unique_ptr<ParsedExpression> TransformNumberLiteral(PEGTransformer &transformer, ParseResult &parse_result);
@@ -5358,8 +5437,19 @@ public:
 	static unique_ptr<SQLStatement>
 	TransformCreateDatabaseStatement(PEGTransformer &transformer, const optional<bool> &if_not_exists,
 	                                 const Identifier &catalog_name,
+	                                 optional<case_insensitive_map_t<Value>> create_database_options,
 	                                 optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
 	                                 const optional<Identifier> &database_tablespace);
+	static case_insensitive_map_t<Value>
+	TransformCreateDatabaseOptions(PEGTransformer &transformer, const bool &has_result,
+	                               const vector<pair<string, Value>> &create_database_option);
+	static pair<string, Value> TransformCreateDatabaseOwner(PEGTransformer &transformer,
+	                                                        const string &database_owner_name);
+	static string TransformDatabaseOwnerName(PEGTransformer &transformer, const bool &has_result,
+	                                         const Identifier &col_id);
+	static pair<string, Value> TransformDatabaseConnectionLimit(PEGTransformer &transformer, ParseResult &parse_result);
+	static pair<string, Value> TransformDatabaseAllowConnections(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformDropDatabaseStatement(PEGTransformer &transformer,
 	                                                               const optional<bool> &if_exists,
 	                                                               const Identifier &catalog_name,
@@ -5468,8 +5558,9 @@ public:
 	                                                                    ParseResult &parse_result);
 	static unique_ptr<CreateStatement>
 	TransformCreateSchemaStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
-	                          const optional<QualifiedName> &name, const optional<Identifier> &authorization,
+	                          const optional<QualifiedName> &name, const optional<RoleSpec> &authorization,
 	                          optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_option_list);
+	static RoleSpec TransformSchemaAuthorization(PEGTransformer &transformer, ParseResult &parse_result);
 	static case_insensitive_map_t<unique_ptr<ParsedExpression>>
 	TransformWithOptionList(PEGTransformer &transformer,
 	                        case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list);
@@ -5776,7 +5867,7 @@ public:
 	static unique_ptr<DropStatement> TransformDropTableFunction(PEGTransformer &transformer,
 	                                                            const CatalogType &comment_macro_table,
 	                                                            const optional<bool> &if_exists,
-	                                                            const vector<Identifier> &table_function_name);
+	                                                            const vector<QualifiedName> &qualified_name);
 	static unique_ptr<DropStatement> TransformDropFunction(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<DropStatement> TransformDropSchema(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                     const vector<QualifiedName> &qualified_name);
@@ -5805,6 +5896,7 @@ public:
 	static bool TransformFunctionTypeMacroKeyword(PEGTransformer &transformer);
 	static bool TransformFunctionTypeFunction(PEGTransformer &transformer);
 	static bool TransformFunctionTypeProcedure(PEGTransformer &transformer);
+	static bool TransformFunctionTypeRoutine(PEGTransformer &transformer);
 	static bool TransformCascadeDropBehavior(PEGTransformer &transformer);
 	static bool TransformRestrictDropBehavior(PEGTransformer &transformer);
 	static bool TransformIfExists(PEGTransformer &transformer);
@@ -6596,8 +6688,13 @@ public:
 	                                                             ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformDropRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformAlterRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterGroupStatement(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformAlterOwnerStatement(PEGTransformer &transformer,
 	                                                             ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformReassignOwnedStatement(PEGTransformer &transformer,
+	                                                                ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropOwnedStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformAlterDefaultPrivilegesStatement(PEGTransformer &transformer,
 	                                                                         ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformGrantStatement(PEGTransformer &transformer, ParseResult &parse_result);
@@ -6934,7 +7031,7 @@ public:
 	                                                                 const TransactionIsolationLevel &isolation_level);
 	static unique_ptr<SetStatement>
 	TransformSetSessionCharacteristics(PEGTransformer &transformer, const TransactionIsolationLevel &isolation_level);
-	static unique_ptr<SetStatement> TransformSetRole(PEGTransformer &transformer,
+	static unique_ptr<SetStatement> TransformSetRole(PEGTransformer &transformer, const optional<SetScope> &role_scope,
 	                                                 unique_ptr<ParsedExpression> role_spec);
 	static unique_ptr<SetStatement> TransformSetSessionAuthorization(PEGTransformer &transformer,
 	                                                                 unique_ptr<ParsedExpression> role_spec);

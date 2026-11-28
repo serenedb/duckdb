@@ -21,7 +21,7 @@ BindResult ExpressionBinder::BindExpression(ConjunctionExpression &expr, idx_t d
 	auto result = make_uniq<BoundConjunctionExpression>(expr.GetExpressionType());
 	for (auto &child : children) {
 		result->GetChildrenMutable().push_back(
-		    BoundCastExpression::AddCastToType(context, std::move(child), LogicalType::BOOLEAN));
+		    BoundCastExpression::AddCastToType(binder, std::move(child), LogicalType::BOOLEAN));
 	}
 	// now create the bound conjunction expression
 	return BindResult(std::move(result));

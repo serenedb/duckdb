@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
@@ -17,6 +18,7 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/result_modifier.hpp"
+#include "duckdb/parser/role_spec.hpp"
 
 #include "duckdb/common/identifier.hpp"
 namespace duckdb {
@@ -59,6 +61,11 @@ struct SetCommentInfo : public AlterInfo {
 
 	CatalogType entry_catalog_type;
 	Value comment_value;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -79,6 +86,11 @@ struct SetSchemaInfo : public AlterInfo {
 
 	CatalogType entry_catalog_type;
 	Identifier new_schema;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -98,30 +110,47 @@ struct AlterPermissionsInfo : public AlterInfo {
 	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
 
 	CatalogType entry_catalog_type;
-	string new_owner;
+	RoleSpec new_owner;
 	idx_t new_owner_id = 0;
 	AclMode privileges = AclMode::NoRights;
 	vector<ColumnPrivilege> column_privileges;
-	string grantee;
+	RoleSpec grantee;
 	idx_t grantee_id = ACL_ID_PUBLIC;
-	string granted_by;
+	RoleSpec granted_by;
 	vector<idx_t> grantors;
+	bool best_grantor = false;
 	bool revoke = false;
 	bool with_grant_option = false;
 	bool option_only = false;
 	bool cascade = false;
 	CatalogType default_objtype = CatalogType::INVALID;
-	string for_role;
+	RoleSpec for_role;
 	string default_schema;
 	idx_t target_role = 0;
 	idx_t default_scope = 0;
+	idx_t default_acl_oid = 0;
 	bool all_in_schema = false;
+	bool include_functions = true;
+	bool include_procedures = true;
+	idx_t drop_owned_role_id = 0;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	vector<ObjectReference> objects;
+	vector<RoleSpec> grantees;
+	vector<idx_t> grantee_ids;
+	vector<RoleSpec> for_roles;
+	vector<idx_t> target_roles;
+	vector<string> default_schemas;
+	vector<idx_t> default_scopes;
 
 public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
-	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<ColumnList> columns) const;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<vector<ColumnAcl>> columns) const;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const;
+	void ApplyToDatabase(CreatePermissions &permissions) const;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
@@ -160,7 +189,10 @@ struct AlterRoleInfo : public AlterInfo {
 	bool reset_all_config = false;
 	vector<string> reset_config;
 	vector<string> set_config;
-	string grant_role;
+	RoleSpec grant_role;
+	vector<RoleSpec> granted_roles;
+	vector<idx_t> grantor_ids;
+	vector<RoleSpec> members;
 	bool revoke = false;
 	bool option_only = false;
 	int8_t admin_option = -1;
@@ -168,6 +200,36 @@ struct AlterRoleInfo : public AlterInfo {
 	int8_t set_option = -1;
 	idx_t grant_role_id = 0;
 	idx_t grantor_id = 0;
+	RoleSpec granted_by;
+	bool cascade = false;
+	bool alter_group = false;
+	RoleSpecType role_type = RoleSpecType::NAME;
+
+public:
+	RoleSpec Target() const;
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterRoleInfo();
+};
+
+struct AlterDatabaseSettingsInfo : public AlterInfo {
+	explicit AlterDatabaseSettingsInfo(Identifier database);
+
+	RoleSpec role;
+	idx_t role_id = 0;
+	bool all_roles = false;
+	bool reset_all_config = false;
+	vector<string> reset_config;
+	vector<string> set_config;
+	bool set_connection_limit = false;
+	int32_t connection_limit = -1;
+	bool set_allow_connections = false;
+	bool allow_connections = true;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -177,7 +239,27 @@ public:
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
-	explicit AlterRoleInfo();
+	explicit AlterDatabaseSettingsInfo();
+};
+
+struct AlterOwnedInfo : public AlterInfo {
+	AlterOwnedInfo();
+
+	vector<RoleSpec> roles;
+	RoleSpec new_owner;
+	bool cascade = false;
+	vector<idx_t> role_ids;
+	idx_t new_owner_id = 0;
+	vector<idx_t> grantors;
+	vector<ObjectReference> objects;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 };
 
 //===--------------------------------------------------------------------===//

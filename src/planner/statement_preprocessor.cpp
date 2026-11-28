@@ -4,6 +4,7 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -163,8 +164,8 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 	CatalogEntryRetriever retriever(context);
 	for (auto &statement : multi_statement.statements) {
 		auto &node = *statement->Cast<DeleteStatement>().node;
-		add(Catalog::GetEntry<TableCatalogEntry>(
-		    context, Binder::BindTableName(retriever, node.table->Cast<BaseTableRef>().GetQualifiedName())));
+		add(retriever.GetEntry<TableCatalogEntry>(
+		    Binder::BindTableName(retriever, node.table->Cast<BaseTableRef>().GetQualifiedName())));
 	}
 	const auto named = group.size();
 	for (idx_t i = 0; cascade && i < group.size(); i++) {
@@ -222,8 +223,8 @@ void StatementPreprocessor::ResolveAddColumn(MultiStatement &multi_statement) co
 		return;
 	}
 	auto &add_column = alter.Cast<AddColumnInfo>();
-	auto entry = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, add_column.GetQualifiedName()),
-	                               OnEntryNotFound::RETURN_NULL);
+	auto entry = CatalogEntryRetriever(context).GetEntry(
+	    EntryLookupInfo(CatalogType::TABLE_ENTRY, add_column.GetQualifiedName()), OnEntryNotFound::RETURN_NULL);
 	if (!entry) {
 		if (add_column.if_not_found == OnEntryNotFound::RETURN_NULL) {
 			statements.resize(1);
@@ -283,7 +284,8 @@ void StatementPreprocessor::ExpandCopyDatabase(vector<unique_ptr<SQLStatement>> 
 			continue;
 		}
 		auto &copy = expanded.back()->Cast<CopyDatabaseStatement>();
-		if (copy.copy_type != CopyDatabaseType::COPY_SCHEMA) {
+		if (copy.copy_type != CopyDatabaseType::COPY_SCHEMA ||
+		    !Check<StatementRule::CopyDatabase>(duckdb::Role(context))) {
 			continue;
 		}
 		auto &source = Catalog::GetCatalog(context, copy.from_database);

@@ -1,8 +1,10 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -35,6 +37,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
+#include <absl/algorithm/container.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -46,22 +49,36 @@ shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Bin
 Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType binder_type)
     : context(context), bind_context(*this), parent(std::move(parent_p)), binder_type(binder_type),
       global_binder_state(parent ? parent->global_binder_state : make_shared_ptr<GlobalBinderState>()),
-      entry_retriever(context) {
+      entry_retriever(context, acting) {
 	if (parent) {
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
 		macro_binding = parent->macro_binding;
+		acting = parent->acting;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
+		} else {
+			BindStoredDefinition();
 		}
 	} else {
 		entry_retriever.SetCallback([this](CatalogEntry &entry) {
 			auto &properties = GetStatementProperties();
-			properties.resolved_entries.push_back(&entry);
-			if (auto &catalog = entry.ParentCatalog(); !catalog.IsSystemCatalog()) {
-				properties.RegisterDBRead(catalog, this->context);
+			if (entry.type == CatalogType::TABLE_ENTRY) {
+				const auto location = entry.Cast<TableCatalogEntry>().GetStorageLocation();
+				if (!location.empty()) {
+					auto path = DBConfig::GetConfig(this->context).SanitizeAllowedPath(string(location));
+					auto &locations = properties.storage_locations;
+					if (!absl::c_linear_search(locations, path)) {
+						locations.push_back(std::move(path));
+					}
+				}
 			}
+			auto &catalog = entry.ParentCatalog();
+			if (catalog.IsSystemCatalog() || properties.read_databases.count(catalog.GetName())) {
+				return;
+			}
+			properties.RegisterDBRead(catalog, this->context);
 		});
 	}
 }
@@ -598,9 +615,10 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 	}
 }
 
-BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
-                                     const Identifier &alias, TableIndex update_table_index,
-                                     unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns,
+BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
+                                     TableCatalogEntry &table, const RelationChecks &target, const Identifier &alias,
+                                     TableIndex update_table_index, unique_ptr<LogicalOperator> child_operator,
+                                     virtual_column_map_t virtual_columns,
                                      optional_ptr<vector<column_t>> bound_virtual_columns) {
 	vector<LogicalType> types;
 	vector<Identifier> names;
@@ -619,8 +637,10 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	}
 	const auto table_column_count = bound_columns.size();
 
-	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
-	                                  std::move(virtual_columns));
+	binder->acting = acting;
+	binder->bind_context
+	    .AddBaseTable(update_table_index, alias, names, types, bound_columns, table, std::move(virtual_columns))
+	    .checks = global_binder_state->trigger_bases.count(node) ? RelationChecks() : ReadChecks(table, target);
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;
@@ -655,6 +675,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.return_type = StatementReturnType::QUERY_RESULT;
+	AdoptPrivilegeChecks(*binder);
 	return result;
 }
 

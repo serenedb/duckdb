@@ -767,7 +767,10 @@ CatalogPushdownResult RemotePushdownOptimizer::RewriteStatement(DropStatement &s
 		// prepared statements, secrets, ... never live in a remote catalog
 		return CatalogPushdownResult::Unknown();
 	}
-	auto target = ResolveDDLTarget(info.GetQualifiedName(), DDLTarget::EXISTING_ENTRY, info.type);
+	auto target = CatalogPushdownResult::NoCatalogReference();
+	for (auto &object : info.objects) {
+		target = Merge(std::move(target), ResolveDDLTarget(object.name, DDLTarget::EXISTING_ENTRY, info.type));
+	}
 	return VerifyStatementSupport(statement, std::move(target));
 }
 
@@ -1873,10 +1876,9 @@ void RemotePushdownOptimizer::StripCatalogName(SQLStatement &statement, const Id
 		StripCatalogName(*statement.Cast<CreateStatement>().info, catalog_name);
 		break;
 	case StatementType::DROP_STATEMENT: {
-		auto &info = *statement.Cast<DropStatement>().info;
-		auto name = info.GetQualifiedName();
-		StripCatalogFromName(name, catalog_name);
-		info.SetQualifiedName(std::move(name));
+		for (auto &object : statement.Cast<DropStatement>().info->objects) {
+			StripCatalogFromName(object.name, catalog_name);
+		}
 		break;
 	}
 	case StatementType::ALTER_STATEMENT:

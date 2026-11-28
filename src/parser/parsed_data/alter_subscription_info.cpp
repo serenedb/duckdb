@@ -1,0 +1,68 @@
+#include "duckdb/parser/parsed_data/alter_subscription_info.hpp"
+
+#include "duckdb/common/sql_identifier.hpp"
+
+namespace duckdb {
+
+AlterSubscriptionInfo::AlterSubscriptionInfo(AlterSubscriptionType alter_subscription_type_p, Identifier name)
+    : AlterInfo(AlterType::ALTER_SUBSCRIPTION, QualifiedName(std::move(name)), OnEntryNotFound::THROW_EXCEPTION),
+      alter_subscription_type(alter_subscription_type_p) {
+}
+
+AlterSubscriptionInfo::AlterSubscriptionInfo()
+    : AlterInfo(AlterType::ALTER_SUBSCRIPTION), alter_subscription_type(AlterSubscriptionType::ENABLE) {
+}
+
+unique_ptr<AlterInfo> AlterSubscriptionInfo::Copy() const {
+	auto result = make_uniq<AlterSubscriptionInfo>(alter_subscription_type, GetQualifiedName().Name());
+	result->SetQualifiedName(GetQualifiedName());
+	result->connection = connection;
+	result->publications = publications;
+	result->options = options;
+	result->new_name = new_name;
+	return std::move(result);
+}
+
+string AlterSubscriptionInfo::ToString() const {
+	string result = "ALTER SUBSCRIPTION " + SQLIdentifier(GetQualifiedName().Name());
+	string publication_list;
+	for (auto &publication : publications) {
+		publication_list += (publication_list.empty() ? " " : ", ") + SQLIdentifier::ToString(publication);
+	}
+	const auto with = options.empty() ? string() : " WITH " + RenderSubscriptionOptions(options);
+	switch (alter_subscription_type) {
+	case AlterSubscriptionType::ENABLE:
+		result += " ENABLE";
+		break;
+	case AlterSubscriptionType::DISABLE:
+		result += " DISABLE";
+		break;
+	case AlterSubscriptionType::SET_CONNECTION:
+		result += " CONNECTION " + SQLString::ToString(connection);
+		break;
+	case AlterSubscriptionType::SET_PUBLICATION:
+		result += " SET PUBLICATION" + publication_list + with;
+		break;
+	case AlterSubscriptionType::ADD_PUBLICATION:
+		result += " ADD PUBLICATION" + publication_list + with;
+		break;
+	case AlterSubscriptionType::DROP_PUBLICATION:
+		result += " DROP PUBLICATION" + publication_list + with;
+		break;
+	case AlterSubscriptionType::REFRESH_PUBLICATION:
+		result += " REFRESH PUBLICATION" + with;
+		break;
+	case AlterSubscriptionType::SKIP:
+		result += " SKIP " + RenderSubscriptionOptions(options);
+		break;
+	case AlterSubscriptionType::RENAME:
+		result += " RENAME TO " + SQLIdentifier(new_name);
+		break;
+	case AlterSubscriptionType::SET_OPTIONS:
+		result += " SET " + RenderSubscriptionOptions(options);
+		break;
+	}
+	return result + ";";
+}
+
+} // namespace duckdb

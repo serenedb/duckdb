@@ -751,6 +751,26 @@ ResultSetManager &DatabaseInstance::GetResultSetManager() {
 	return *result_set_manager;
 }
 
+void DatabaseInstance::PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot, idx_t catalog_version) {
+	lock_guard<mutex> guard(security_lock);
+	if (security && catalog_version <= security_version) {
+		return;
+	}
+	security_version = catalog_version;
+	current_security.store(snapshot.get(), std::memory_order_release);
+	security = std::move(snapshot);
+}
+
+bool DatabaseInstance::SecurityCurrent(idx_t catalog_version) const {
+	lock_guard<mutex> guard(security_lock);
+	return security && security_version >= catalog_version;
+}
+
+shared_ptr<const SecuritySnapshot> DatabaseInstance::GetSecurity() const {
+	lock_guard<mutex> guard(security_lock);
+	return security;
+}
+
 ConnectionManager &DatabaseInstance::GetConnectionManager() {
 	return *connection_manager;
 }
@@ -840,6 +860,7 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		    config.options.block_allocator_size);
 	}
 	config.replacement_scans = std::move(new_config.replacement_scans);
+	config.hidden_settings = std::move(new_config.hidden_settings);
 	if (new_config.callback_manager) {
 		config.callback_manager = std::move(new_config.callback_manager);
 		new_config.callback_manager = make_uniq<ExtensionCallbackManager>();

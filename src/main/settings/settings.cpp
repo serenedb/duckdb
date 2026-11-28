@@ -1,4 +1,9 @@
 #include "duckdb/main/settings.hpp"
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -44,6 +49,162 @@ Value Settings::FormatDisplayValue(ClientContext &context, const Value &value) {
 		return Value(BooleanValue::Get(value) ? "on" : "off");
 	}
 	return value.CastAs(context, LogicalType::VARCHAR);
+}
+
+void Settings::ResolveCurrentValues(ClientContext &context, vector<string> &config) {
+	for (auto &entry : config) {
+		if (entry.find('=') != string::npos) {
+			continue;
+		}
+		Value value;
+		if (!context.TryGetCurrentSetting(Identifier(entry), value)) {
+			throw Catalog::UnrecognizedConfigurationError(context, Identifier(entry));
+		}
+		entry += "=" + FormatDisplayValue(context, value).ToString();
+	}
+}
+
+string Settings::ConfigNameToSQL(std::string_view name) {
+	return StringUtil::Join(StringUtil::Split(string(name), '.'), ".",
+	                        [](const string &part) { return SQLIdentifier::ToString(part); });
+}
+
+Identifier Settings::PathName(const vector<Identifier> &path) {
+	return Identifier(
+	    StringUtil::Join(path, path.size(), ".", [](const Identifier &part) { return part.GetIdentifierName(); }));
+}
+
+string Settings::ConfigToSQL(std::string_view entry) {
+	const auto key = ConfigKey(entry);
+	auto result = ConfigNameToSQL(key);
+	if (key.size() == entry.size()) {
+		return result + " FROM CURRENT";
+	}
+	const string value(ConfigValue(entry));
+	if (!StringUtil::CIEquals(key, "search_path")) {
+		return result + " TO " + SQLString::ToString(value);
+	}
+	auto paths = CatalogSearchEntry::ParseList(value);
+	if (paths.empty()) {
+		return result + " TO ''";
+	}
+	return result + " TO " + StringUtil::Join(paths, paths.size(), ", ", [](const CatalogSearchEntry &path) {
+		       return path.GetCatalog().empty() ? SQLString::ToString(path.GetSchema().GetIdentifierName())
+		                                        : path.ToString();
+	       });
+}
+
+bool Settings::IsValidCustomName(std::string_view name) {
+	bool separated = false;
+	bool part_start = true;
+	for (const auto c : name) {
+		if (c == '.') {
+			if (part_start) {
+				return false;
+			}
+			separated = true;
+			part_start = true;
+		} else if (StringUtil::CharacterIsAlpha(c) || c == '_' || static_cast<unsigned char>(c) >= 0x80) {
+			part_start = false;
+		} else if (part_start || (!StringUtil::CharacterIsDigit(c) && c != '$')) {
+			return false;
+		}
+	}
+	return separated && !part_start;
+}
+
+void Settings::CheckCustomName(const Identifier &name) {
+	const auto &text = name.GetIdentifierName();
+	if (text.find('.') != string::npos && !IsValidCustomName(text)) {
+		throw Exception(
+		    {{"error_subtype", "INVALID_NAME"},
+		     {"detail", "Custom parameter names must be two or more simple identifiers separated by dots."}},
+		    ExceptionType::INVALID_INPUT, StringUtil::Format("invalid configuration parameter name \"%s\"", text));
+	}
+}
+
+bool Settings::IsCustomName(const Identifier &name) {
+	CheckCustomName(name);
+	return name.GetIdentifierName().find('.') != string::npos;
+}
+
+optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identifier &name) {
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		return option->access;
+	}
+	ExtensionOption extension_option;
+	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
+		return extension_option.access;
+	}
+	if (IsValidCustomName(name.GetIdentifierName())) {
+		return SettingAccess();
+	}
+	return optional<SettingAccess>();
+}
+
+void Settings::CheckValue(ClientContext &context, const Identifier &name, const Value &value) {
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
+		return;
+	}
+	auto &config = DBConfig::GetConfig(context);
+	ExtensionOption extension_option;
+	if (!config.TryGetExtensionOption(name, extension_option)) {
+		if (IsCustomName(name)) {
+			return;
+		}
+		Catalog::AutoloadExtensionByConfigName(context, name);
+		if (!config.TryGetExtensionOption(name, extension_option)) {
+			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
+		}
+	}
+	value.CastAs(context, extension_option.type);
+}
+
+bool Settings::MayChange(const RoleAccess &role, const SettingAccess &access, SetScope scope) {
+	if (access.context == SettingContext::INTERNAL) {
+		return false;
+	}
+	return role.is_superuser || (scope != SetScope::GLOBAL && access.context != SettingContext::SUPERUSER);
+}
+
+void Settings::CheckChange(const RoleAccess &role, const Identifier &name, const SettingAccess &access,
+                           SetScope scope) {
+	if (MayChange(role, access, scope)) {
+		return;
+	}
+	if (access.context == SettingContext::INTERNAL) {
+		throw Exception(unordered_map<string, string> {{"error_subtype", "CANT_CHANGE_RUNTIME_PARAM"}},
+		                ExceptionType::SETTINGS,
+		                StringUtil::Format("parameter \"%s\" cannot be changed", name.GetIdentifierName()));
+	}
+	throw PermissionException::WithDetail(
+	    scope == SetScope::GLOBAL
+	        ? "Only roles with the SUPERUSER attribute may change the server-wide value of a parameter."
+	        : "Only roles with the SUPERUSER attribute may change this parameter.",
+	    "permission denied to set parameter \"%s\"", name.GetIdentifierName());
+}
+
+bool Settings::CanRead(const RoleAccess &role, const SettingAccess &access) {
+	return !access.superuser_read ||
+	       Check<AclMode::Usage>(role, PrivilegeTarget::Role(RoleCapability::ReadAllSettings));
+}
+
+void Settings::CheckRead(ClientContext &context, const Identifier &name, const RoleAccess &role) {
+	auto access = GetAccess(context, name);
+	if (access && !CanRead(role, *access)) {
+		throw PermissionException::WithDetail(
+		    "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter.",
+		    "permission denied to examine \"%s\"", name.GetIdentifierName());
+	}
+}
+
+bool Settings::IsVisible(ClientContext &context, const RoleAccess &role, const Identifier &name) {
+	if (DBConfig::GetConfig(context).hidden_settings.count(name)) {
+		return false;
+	}
+	auto access = GetAccess(context, name);
+	return !access || (!access->no_show_all && CanRead(role, *access));
 }
 
 } // namespace duckdb

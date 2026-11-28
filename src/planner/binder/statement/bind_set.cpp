@@ -1,4 +1,8 @@
 #include "duckdb/parser/statement/set_statement.hpp"
+#include "duckdb/execution/operator/helper/physical_set.hpp"
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/setting_info.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_set.hpp"
 #include "duckdb/planner/operator/logical_reset.hpp"
@@ -9,6 +13,24 @@
 
 namespace duckdb {
 
+static void CheckSetAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
+                           const char *statement) {
+	const auto check = [&](const SettingAccess &access, SetScope variable_scope) {
+		if (!Settings::MayChange(role, access, variable_scope)) {
+			PhysicalSet::WarnOutsideTransaction(context, scope, statement);
+			Settings::CheckChange(role, name, access, variable_scope);
+		}
+	};
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		check(option->access, PhysicalSet::GetSettingScope(*option, scope));
+		return;
+	}
+	ExtensionOption extension_option;
+	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
+		check(extension_option.access, PhysicalSet::GetSettingScope(extension_option, scope));
+	}
+}
+
 BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 	BoundStatement result;
 	result.types = {LogicalType::BOOLEAN};
@@ -18,6 +40,7 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 	Value value;
 	unique_ptr<LogicalOperator> op;
 	if (stmt.scope != SetScope::VARIABLE) {
+		CheckSetAccess(context, Role(), stmt.name, stmt.scope, "SET LOCAL");
 		ConstantBinder default_binder(*this, context, "SET value");
 		auto bound_value = default_binder.Bind(stmt.value);
 		if (bound_value->HasParameter()) {
@@ -34,7 +57,8 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 		}
 		op = std::move(bound_select.plan);
 	}
-	result.plan = make_uniq<LogicalSet>(stmt.name, std::move(value), stmt.scope);
+	auto set = make_uniq<LogicalSet>(stmt.name, std::move(value), stmt.scope);
+	result.plan = std::move(set);
 	if (op) {
 		result.plan->children.push_back(std::move(op));
 	}
@@ -48,7 +72,11 @@ BoundStatement Binder::Bind(ResetVariableStatement &stmt) {
 	result.types = {LogicalType::BOOLEAN};
 	result.names = {"Success"};
 
-	result.plan = make_uniq<LogicalReset>(stmt.name, stmt.scope);
+	if (stmt.scope != SetScope::VARIABLE && !stmt.name.empty()) {
+		CheckSetAccess(context, Role(), stmt.name, stmt.scope, "RESET LOCAL");
+	}
+	auto reset = make_uniq<LogicalReset>(stmt.name, stmt.scope);
+	result.plan = std::move(reset);
 
 	auto &properties = GetStatementProperties();
 	properties.return_type = StatementReturnType::NOTHING;

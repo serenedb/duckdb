@@ -1,11 +1,15 @@
 #include "core_functions/scalar/generic_functions.hpp"
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/common/vector/vector_writer.hpp"
 
@@ -29,6 +33,32 @@ public:
 	}
 };
 
+struct FunctionSettingsBindData : public FunctionData {
+	explicit FunctionSettingsBindData(shared_ptr<CatalogSearchPath> search_path_p)
+	    : search_path(std::move(search_path_p)) {
+	}
+
+	shared_ptr<CatalogSearchPath> search_path;
+
+public:
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<FunctionSettingsBindData>(search_path);
+	}
+
+	bool Equals(const FunctionData &other_p) const override {
+		auto &other = other_p.Cast<FunctionSettingsBindData>();
+		return search_path == other.search_path;
+	}
+};
+
+bool FunctionSetting(const shared_ptr<CatalogSearchPath> &search_path, const Identifier &key, Value &value) {
+	if (!search_path || !StringUtil::CIEquals(key.GetIdentifierName(), "search_path")) {
+		return false;
+	}
+	value = Value(search_path->SettingValue());
+	return true;
+}
+
 void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<CurrentSettingBindData>();
@@ -37,6 +67,10 @@ void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &res
 
 void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
+	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	auto &info = func_expr.BindInfo()->Cast<FunctionSettingsBindData>();
+	auto &role = Role(state);
+	auto &function_path = info.search_path;
 	auto names = args.data[0].Values<string_t>();
 	auto writer = FlatVector::Writer<string_t>(result, args.size());
 	for (auto entry : names) {
@@ -45,8 +79,9 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 			continue;
 		}
 		Identifier key(entry.GetValue().GetString());
+		Settings::CheckRead(context, key, role);
 		Value val;
-		if (!context.TryGetCurrentSetting(key, val)) {
+		if (!FunctionSetting(function_path, key, val) && !context.TryGetCurrentSetting(key, val)) {
 			Catalog::AutoloadExtensionByConfigName(context, key);
 			if (!context.TryGetCurrentSetting(key, val)) {
 				throw InvalidInputException("unrecognized configuration parameter %s", key);
@@ -66,10 +101,11 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
 	auto &bound_function = input.GetBoundFunction();
 	auto &key_child = input.GetArguments()[0];
+	auto function_path = input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath() : nullptr;
 	if (!key_child->HasParameter() && !key_child->IsFoldable()) {
 		bound_function.SetFunctionCallback(CurrentSettingDynamic);
 		bound_function.SetReturnType(LogicalType::VARCHAR);
-		return nullptr;
+		return make_uniq<FunctionSettingsBindData>(std::move(function_path));
 	}
 
 	auto key_val = input.GetNonNullConstant(0);
@@ -77,9 +113,10 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key.empty()) {
 		throw ParserException("Key name for current_setting must not be empty");
 	}
+	Settings::CheckRead(context, key, input.Role());
 
 	Value val;
-	if (!context.TryGetCurrentSetting(key, val)) {
+	if (!FunctionSetting(function_path, key, val) && !context.TryGetCurrentSetting(key, val)) {
 		auto extension_name = Catalog::AutoloadExtensionByConfigName(context, key);
 		// If autoloader didn't throw, the config is now available
 		context.TryGetCurrentSetting(key, val);

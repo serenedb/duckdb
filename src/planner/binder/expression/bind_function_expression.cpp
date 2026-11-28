@@ -274,13 +274,6 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 		                                      error_context);
 		auto table_func = GetCatalogEntry(table_function_lookup, OnEntryNotFound::RETURN_NULL);
 		if (table_func) {
-			if (table_func->type == CatalogType::TABLE_MACRO_ENTRY) {
-				auto &macro = table_func->Cast<MacroCatalogEntry>();
-				if (macro.is_procedure) {
-					throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
-					                      function.FunctionName().GetIdentifierName());
-				}
-			}
 			func = table_func;
 		}
 	}
@@ -362,18 +355,9 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		}
 		return BindFunction(function, func.get().Cast<ScalarFunctionCatalogEntry>(), depth);
 	}
-	case CatalogType::MACRO_ENTRY: {
-		// PG-compat: SELECT proc() / SELECT proc(...) when `proc` is a procedure
-		// must yield the canonical PG error pointing the user at CALL, matching
-		// the table-function path in bind_table_function.cpp.
-		auto &macro_entry = func.get().Cast<ScalarMacroCatalogEntry>();
-		if (macro_entry.is_procedure) {
-			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
-			                      function.FunctionName().GetIdentifierName());
-		}
+	case CatalogType::MACRO_ENTRY:
 		// macro function
-		return BindMacro(function, macro_entry, depth, expr_ptr);
-	}
+		return BindMacro(function, func.get().Cast<ScalarMacroCatalogEntry>(), depth, expr_ptr);
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY: {
 		// an aggregate belongs to the innermost query level in which one of its arguments resolves a
 		// column of that level, so that the level collecting it is the one the arguments refer to
@@ -393,13 +377,6 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		return BindWindow(function, func.get().Cast<WindowFunctionCatalogEntry>(), depth);
 	case CatalogType::TABLE_FUNCTION_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
-		// PG-compat: procedures with a table body are catalogued as TABLE_MACRO.
-		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical PG error.
-		if (func.get().type == CatalogType::TABLE_MACRO_ENTRY &&
-		    func.get().Cast<TableMacroCatalogEntry>().is_procedure) {
-			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
-			                      function.FunctionName().GetIdentifierName());
-		}
 		// PG compat: table functions in SELECT -> unnest their results as rows.
 		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
 		const bool record = func.get().type == CatalogType::TABLE_MACRO_ENTRY || whole_row;

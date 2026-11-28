@@ -153,6 +153,7 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Ide
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	owner = options.owner;
+	foreign_server = options.foreign_server;
 	ephemeral = options.ephemeral;
 	vacuum_rebuild_threshold = options.vacuum_rebuild_indexes_threshold;
 	original_path = options.original_path;
@@ -179,6 +180,7 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Ide
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	owner = options.owner;
+	foreign_server = options.foreign_server;
 	auto internal_catalog = options.create_catalog(*this);
 	catalog = std::move(internal_catalog.catalog);
 	transaction_manager = std::move(internal_catalog.transaction_manager);
@@ -195,6 +197,7 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Sto
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	owner = options.owner;
+	foreign_server = options.foreign_server;
 	ephemeral = options.ephemeral;
 	vacuum_rebuild_threshold = options.vacuum_rebuild_indexes_threshold;
 	original_path = options.original_path;

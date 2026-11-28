@@ -89,7 +89,7 @@ static unique_ptr<Expression> PlanExtremumRewrite(Binder &binder, BoundSubqueryE
 	    (cmp_type == ExpressionType::COMPARE_GREATERTHAN || cmp_type == ExpressionType::COMPARE_GREATERTHANOREQUALTO);
 
 	auto &compare_type = expr.GetChildTargets()[0];
-	auto collated_child = BoundCastExpression::AddCastToType(binder.context, bound_colref->Copy(), compare_type);
+	auto collated_child = BoundCastExpression::AddCastToType(binder, bound_colref->Copy(), compare_type);
 	const auto collated = ExpressionBinder::PushCollation(binder.context, collated_child, compare_type);
 	vector<unique_ptr<Expression>> min_max_children;
 	min_max_children.push_back(collated ? std::move(collated_child) : bound_colref->Copy());
@@ -144,12 +144,12 @@ static unique_ptr<Expression> PlanExtremumRewrite(Binder &binder, BoundSubqueryE
 	    make_uniq<BoundCaseExpression>(std::move(count_star_gt_count_child), null_val->Copy(), std::move(current_else));
 
 	// 3. WHEN X > MIN(Y) THEN TRUE
-	auto x_key = BoundCastExpression::AddCastToType(binder.context, x_expr.Copy(), compare_type);
+	auto x_key = BoundCastExpression::AddCastToType(binder, x_expr.Copy(), compare_type);
 	unique_ptr<Expression> extremum_key = std::move(extremum_ref);
 	if (collated) {
 		ExpressionBinder::PushCollation(binder.context, x_key, compare_type);
 	} else {
-		extremum_key = BoundCastExpression::AddCastToType(binder.context, std::move(extremum_key), compare_type);
+		extremum_key = BoundCastExpression::AddCastToType(binder, std::move(extremum_key), compare_type);
 	}
 	unique_ptr<Expression> x_op_min =
 	    BoundComparisonExpression::Create(cmp_type, std::move(x_key), std::move(extremum_key));

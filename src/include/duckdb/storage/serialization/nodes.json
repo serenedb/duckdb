@@ -646,7 +646,7 @@
   {
     "class": "AclItem",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -675,7 +675,7 @@
   {
     "class": "Membership",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/role_graph.hpp"
     ],
     "members": [
       {
@@ -707,9 +707,44 @@
     "pointer_type": "none"
   },
   {
+    "class": "ObjectReference",
+    "includes": [
+      "duckdb/parser/parsed_data/parse_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "name",
+        "type": "QualifiedName"
+      },
+      {
+        "id": 101,
+        "name": "func_parameters",
+        "type": "vector<LogicalType>"
+      },
+      {
+        "id": 102,
+        "name": "has_func_args",
+        "type": "bool"
+      },
+      {
+        "id": 103,
+        "name": "type",
+        "type": "CatalogType",
+        "default": "CatalogType::INVALID"
+      },
+      {
+        "id": 104,
+        "name": "overload_oid",
+        "type": "idx_t"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
     "class": "ColumnPrivilege",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -728,7 +763,7 @@
   {
     "class": "DefaultAcl",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -750,6 +785,11 @@
         "id": 103,
         "name": "scope",
         "type": "idx_t"
+      },
+      {
+        "id": 104,
+        "name": "oid",
+        "type": "idx_t"
       }
     ],
     "pointer_type": "none"
@@ -757,7 +797,38 @@
   {
     "class": "Permissions",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "owner",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 102,
+        "name": "defaults",
+        "type": "vector<DefaultAcl>",
+        "status": "deleted"
+      },
+      {
+        "id": 103,
+        "name": "acl_emptied",
+        "type": "bool",
+        "default": "false"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "CreatePermissions",
+    "includes": [
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -774,6 +845,50 @@
         "id": 102,
         "name": "defaults",
         "type": "vector<DefaultAcl>"
+      },
+      {
+        "id": 103,
+        "name": "acl_emptied",
+        "type": "bool",
+        "default": "false"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "ColumnAcl",
+    "includes": [
+      "duckdb/catalog/acl.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "column",
+        "type": "Identifier"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "DatabaseSetting",
+    "includes": [
+      "duckdb/parser/parsed_data/create_database_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "config",
+        "type": "vector<string>"
       }
     ],
     "pointer_type": "none"

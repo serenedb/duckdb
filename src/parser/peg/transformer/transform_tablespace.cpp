@@ -25,12 +25,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTablespaceStateme
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropTablespaceStatement(PEGTransformer &transformer,
                                                                                  ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::TABLESPACE_ENTRY;
-	result->info->SetQualifiedName(Identifier(), Identifier(), transformer.Transform<Identifier>(list_pr.GetChild(3)));
-	result->info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
-	                                                                               : OnEntryNotFound::THROW_EXCEPTION;
-	return std::move(result);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::TABLESPACE_ENTRY;
+	info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                       : OnEntryNotFound::THROW_EXCEPTION;
+	return MakeDropStatement(std::move(info), {QualifiedName(transformer.Transform<Identifier>(list_pr.GetChild(3)))});
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterTablespaceStatement(PEGTransformer &transformer,

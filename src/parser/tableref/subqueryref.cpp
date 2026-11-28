@@ -22,12 +22,13 @@ bool SubqueryRef::Equals(const TableRef &other_p) const {
 		return false;
 	}
 	auto &other = other_p.Cast<SubqueryRef>();
-	return subquery->Equals(*other.subquery);
+	return function_body == other.function_body && subquery->Equals(*other.subquery);
 }
 
 unique_ptr<TableRef> SubqueryRef::Copy() {
 	auto copy = make_uniq<SubqueryRef>(unique_ptr_cast<SQLStatement, SelectStatement>(subquery->Copy()), alias);
 	copy->column_name_alias = column_name_alias;
+	copy->function_body = function_body;
 	CopyProperties(*copy);
 	return std::move(copy);
 }

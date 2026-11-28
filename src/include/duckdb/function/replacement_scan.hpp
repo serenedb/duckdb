@@ -12,6 +12,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/common/enums/file_compression_type.hpp"
+#include "duckdb/catalog/catalog_entry_retriever.hpp"
 
 namespace duckdb {
 
@@ -38,9 +39,10 @@ public:
 
 struct ReplacementScanInput {
 public:
-	explicit ReplacementScanInput(QualifiedName name_p)
+	ReplacementScanInput(QualifiedName name_p, CatalogEntryRetriever &retriever_p)
 	    : name(std::move(name_p)), catalog_name(name.Catalog().GetIdentifierName()),
-	      schema_name(name.Schema().GetIdentifierName()), table_name(name.Name().GetIdentifierName()) {
+	      schema_name(name.Schema().GetIdentifierName()), table_name(name.Name().GetIdentifierName()),
+	      retriever(retriever_p) {
 	}
 
 public:
@@ -50,6 +52,7 @@ public:
 	const string &catalog_name;
 	const string &schema_name;
 	const string &table_name;
+	CatalogEntryRetriever &retriever;
 };
 
 typedef unique_ptr<TableRef> (*replacement_scan_t)(ClientContext &context, ReplacementScanInput &input,

@@ -4,6 +4,7 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_config.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/transaction/transaction.hpp"
@@ -150,7 +151,8 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 }
 
 bool PreparedStatementData::IsCurrent(ClientContext &context) const {
-	if (properties.binding_generation != context.BindingGeneration()) {
+	if (properties.binding_generation != context.BindingGeneration() ||
+	    context.security.current_role_id != principal_role || context.security.Version() != security_version) {
 		return false;
 	}
 	for (auto &it : properties.read_databases) {

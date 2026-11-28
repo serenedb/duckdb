@@ -63,9 +63,10 @@ static unique_ptr<FunctionData> DuckDBCoordinateSystemsBind(ClientContext &conte
 static unique_ptr<GlobalTableFunctionState> DuckDBCoordinateSystemsInit(ClientContext &context,
                                                                         TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBCoordinateSystemsData>();
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever);
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
 		                           [&](CatalogEntry &entry) {
 			                           result->entries.push_back(DuckDBCoordinateSystemsData::ListedCoordinateSystem {
 			                               schema, entry.Cast<CoordinateSystemCatalogEntry>()});
@@ -133,8 +134,10 @@ static void DuckDBCoordinateSystemsFunction(ClientContext &context, TableFunctio
 }
 
 void DuckDBCoordinateSystemsFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction(set.SystemObjectName("coordinate_systems"), {}, DuckDBCoordinateSystemsFunction,
-	                              DuckDBCoordinateSystemsBind, DuckDBCoordinateSystemsInit));
+	TableFunction fn(set.SystemObjectName("coordinate_systems"), {}, DuckDBCoordinateSystemsFunction,
+	                 DuckDBCoordinateSystemsBind, DuckDBCoordinateSystemsInit);
+	fn.required_capability = RoleCapability::Superuser;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

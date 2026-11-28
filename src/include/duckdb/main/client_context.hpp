@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/deque.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -127,11 +128,8 @@ public:
 public:
 	virtual void ValidateIsolationLevel(TransactionIsolationLevel level) {
 	}
-	virtual bool EmitWarning(const char *message) {
+	virtual bool EmitWarning(const char *message, std::string_view subtype) {
 		return false;
-	}
-	virtual bool IsSettingVisible(const string &name) {
-		return true;
 	}
 	virtual void OnSettingChange(const string &name, SetScope scope, const Value &previous) {
 	}
@@ -161,6 +159,43 @@ public:
 		binding_generation.fetch_add(1, std::memory_order_relaxed);
 	}
 
+	struct AccessScope {
+		optional_ptr<const RoleAccess> role;
+		bool catalog = false;
+		optional_ptr<StatementProperties> properties;
+	};
+	optional_ptr<const AccessScope> access_scope;
+	optional_ptr<const StatementProperties> planned_properties;
+
+	SessionSecurity security;
+
+	class AccessScopeGuard {
+	public:
+		AccessScopeGuard(optional_ptr<ClientContext> context_p, const AccessScope &scope)
+		    : context(context_p && !context_p->ActiveStatementProperties() ? context_p : nullptr),
+		      previous(context ? context->access_scope : nullptr) {
+			if (context) {
+				context->access_scope = &scope;
+			}
+		}
+		~AccessScopeGuard() {
+			if (context) {
+				context->access_scope = previous;
+			}
+		}
+		AccessScopeGuard(const AccessScopeGuard &) = delete;
+		AccessScopeGuard &operator=(const AccessScopeGuard &) = delete;
+
+	private:
+		optional_ptr<ClientContext> context;
+		optional_ptr<const AccessScope> previous;
+	};
+
+	bool SecretsVisible() const {
+		return !access_scope || !access_scope->role || access_scope->role->is_superuser;
+	}
+	DUCKDB_API bool FileSecretsVisible() const;
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
@@ -183,7 +218,10 @@ public:
 		return transaction.ActiveTransaction();
 	}
 
-	DUCKDB_API void WarnUser(const string &message);
+	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
+	DUCKDB_API void WarnUser(const string &message, std::string_view subtype = {});
+
+	DUCKDB_API void CheckFileAccess(const string &path, RoleCapability sufficient);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void InterruptFromSignal();

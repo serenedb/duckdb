@@ -2,6 +2,7 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enum_util.hpp"
 
 namespace duckdb {
@@ -84,8 +85,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 	}
 
 	auto &config = DBConfig::GetConfig(context);
+	const auto &role = Role(context, input.bound_role);
 	auto visible = [&](const string &name) {
-		return context.IsSettingVisible(name);
+		return Settings::IsVisible(context, role, Identifier(name));
 	};
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {

@@ -5,6 +5,7 @@ add_library_unity(
   OBJECT
   aggregate_function_catalog_entry.cpp
   copy_function_catalog_entry.cpp
+  database_entry.cpp
   duck_index_entry.cpp
   duck_schema_entry.cpp
   duck_table_entry.cpp
@@ -12,6 +13,7 @@ add_library_unity(
   index_catalog_entry.cpp
   macro_catalog_entry.cpp
   pragma_function_catalog_entry.cpp
+  role_entry.cpp
   schema_catalog_entry.cpp
   sequence_catalog_entry.cpp
   table_catalog_entry.cpp

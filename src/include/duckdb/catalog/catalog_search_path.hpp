@@ -63,7 +63,8 @@ enum class CatalogSetPathType { SET_SCHEMA, SET_SCHEMAS, SET_DIRECTLY };
 class CatalogSearchPath {
 public:
 	DUCKDB_API explicit CatalogSearchPath(ClientContext &client_p);
-	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries);
+	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries,
+	                             bool session_objects = true);
 	CatalogSearchPath(const CatalogSearchPath &other) = delete;
 
 	//! The path the expressions of a table in this schema of a PostgreSQL-compatible catalog are bound with
@@ -82,6 +83,7 @@ public:
 	const vector<CatalogSearchEntry> &GetSetPaths() const {
 		return set_paths;
 	}
+	DUCKDB_API string SettingValue() const;
 	//! Like GetSetPaths() but with the "$user" placeholder resolved via the
 	//! session_user. Entries that fail to resolve are dropped.
 	DUCKDB_API vector<CatalogSearchEntry> GetResolvedSetPaths() const;
@@ -117,6 +119,9 @@ private:
 private:
 	ClientContext &context;
 	vector<CatalogSearchEntry> paths;
+	bool session_objects = true;
+	bool builtins_first_order = false;
+	bool postgres_mode = false;
 	//! Only the paths that were explicitly set (minus the always included paths)
 	vector<CatalogSearchEntry> set_paths;
 	//! Connection-level defaults restored by Reset() (RESET search_path / RESET ALL).

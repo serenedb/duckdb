@@ -8,13 +8,11 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/role_graph.hpp"
+#include "duckdb/parser/role_spec.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
 namespace duckdb {
-
-void AppendRoleOptions(vector<string> &result, RoleOption set, RoleOption clear);
-string RoleValidUntilToString(int64_t valid_until);
 
 struct CreateRoleInfo : public CreateInfo {
 	CreateRoleInfo();
@@ -25,9 +23,9 @@ struct CreateRoleInfo : public CreateInfo {
 	string password;
 	vector<Membership> member_of;
 	vector<string> config;
-	vector<Identifier> in_roles;
-	vector<Identifier> role_members;
-	vector<Identifier> admin_members;
+	vector<RoleSpec> in_roles;
+	vector<RoleSpec> role_members;
+	vector<RoleSpec> admin_members;
 
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

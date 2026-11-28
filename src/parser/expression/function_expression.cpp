@@ -7,6 +7,8 @@
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 FunctionExpression::FunctionExpression() : ParsedExpression(ExpressionType::FUNCTION, ExpressionClass::FUNCTION) {
@@ -148,6 +150,13 @@ optional_ptr<ParsedExpression> FunctionExpression::IsLambdaFunction() {
 		}
 	}
 	return nullptr;
+}
+
+idx_t FunctionExpression::PositionalArgumentCount() const {
+	const bool named_or_star = absl::c_any_of(arguments, [](const FunctionArgument &argument) {
+		return argument.HasName() || argument.GetExpression().GetExpressionClass() == ExpressionClass::STAR;
+	});
+	return named_or_star ? DConstants::INVALID_INDEX : arguments.size();
 }
 
 void FunctionExpression::Serialize(Serializer &serializer) const {

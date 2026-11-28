@@ -21,7 +21,7 @@ Catalog Error: Index with name test_index does not exist!
 statement error
 DROP MACRO plus1;
 ----
-Catalog Error: Macro Function with name plus1 does not exist!
+Catalog Error: could not find a function named "plus1"
 
 statement error
 DROP SEQUENCE temp.t1;
@@ -31,7 +31,7 @@ Catalog Error: Sequence with name t1 does not exist!
 statement error
 DROP MACRO test.test_macro2;
 ----
-Catalog Error: Macro Function with name test_macro2 does not exist!
+Catalog Error: could not find a function named "test_macro2"
 
 statement ok
 attach ':memory:' as my_ducklake;

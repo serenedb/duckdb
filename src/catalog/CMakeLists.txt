@@ -4,10 +4,12 @@ add_subdirectory(default)
 add_library_unity(
   duckdb_catalog
   OBJECT
+  acl.cpp
   catalog_entry.cpp
   catalog_entry_retriever.cpp
   catalog_versions.cpp
   permissions.cpp
+  role_graph.cpp
   job_schedule.cpp
   catalog.cpp
   catalog_search_path.cpp

@@ -146,6 +146,7 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 }
 
 BoundStatement Binder::Bind(CopyDatabaseStatement &stmt) {
+	Check<StatementRule::CopyDatabase>(CheckAs()).Require();
 	BoundStatement result;
 
 	unique_ptr<LogicalOperator> plan;

@@ -723,6 +723,8 @@ public:
 		}
 		return *binder;
 	}
+	DUCKDB_API const RoleAccess &Role() const;
+	DUCKDB_API optional_idx BoundRole() const;
 
 private:
 	BoundScalarFunction &bound_function;

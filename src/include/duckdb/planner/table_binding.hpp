@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/parser/column_definition.hpp"
@@ -31,6 +32,11 @@ class StandardEntry;
 struct ColumnBinding;
 
 enum class BindingType { BASE, TABLE, DUMMY, CATALOG_ENTRY, CTE };
+
+struct RelationChecks {
+	optional_ptr<const RoleAccess> role;
+	idx_t reference = 0;
+};
 
 //! A Binding represents a binding to a table, table-producing function or subquery with a specified table index.
 struct Binding {
@@ -103,6 +109,9 @@ protected:
 	identifier_map_t<column_t> name_map;
 	//! Whether rows of this binding can be NULL-extended by an outer join
 	bool null_extended = false;
+
+public:
+	RelationChecks checks;
 };
 
 struct EntryBinding : public Binding {

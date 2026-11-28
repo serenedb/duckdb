@@ -113,9 +113,10 @@ static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntr
 	auto add = [&](CatalogEntry &entry) {
 		result.entries.push_back(ListedFunction {schema, entry});
 	};
-	Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY, add);
-	Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY, add);
-	Catalog::ScanListedEntries(context, schema, CatalogType::PRAGMA_FUNCTION_ENTRY, add);
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	Catalog::ScanListedEntries(retriever, schema, CatalogType::SCALAR_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(retriever, schema, CatalogType::TABLE_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(retriever, schema, CatalogType::PRAGMA_FUNCTION_ENTRY, add);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -123,7 +124,8 @@ unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context,
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto schemas = Catalog::GetAllSchemas(CatalogEntryRetriever::Internal(context), bind_data.include_hidden,
+	                                      bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		ExtractFunctionsFromSchema(context, schema.get(), *result);
 	};
@@ -732,7 +734,11 @@ bool ExtractFunctionData(ClientContext &context, SchemaCatalogEntry &schema, Cat
 	                                                                   : Value(function_description.description));
 
 	// comment, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.comment));
+	if constexpr (std::is_base_of_v<MacroCatalogEntry, T>) {
+		output.data[col++].Append(function.OverloadComment(*function.macros[function_idx]));
+	} else {
+		output.data[col++].Append(Value(function.comment));
+	}
 
 	// tags, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)
 	output.data[col++].Append(Value::MAP(function.tags));
@@ -859,6 +865,7 @@ void DuckDBFunctionsFun::RegisterFunction(BuiltinFunctions &set) {
 	functions.table_scan_progress = DuckDBFunctionsProgress;
 	functions.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	functions.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	functions.required_capability = RoleCapability::Superuser;
 	set.AddFunction(functions);
 }
 

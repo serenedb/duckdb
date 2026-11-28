@@ -1,5 +1,7 @@
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 
@@ -11,13 +13,22 @@ DropInfo::DropInfo() : ParseInfo(TYPE), cascade(false) {
 DropInfo::DropInfo(const DropInfo &info)
     : ParseInfo(info.info_type), type(info.type), if_not_found(info.if_not_found), cascade(info.cascade),
       allow_drop_internal(info.allow_drop_internal), func_parameters(info.func_parameters),
-      has_func_args(info.has_func_args), is_procedure(info.is_procedure),
+      has_func_args(info.has_func_args), is_procedure(info.is_procedure), is_routine(info.is_routine),
+      is_macro(info.is_macro), objects(info.objects),
       extra_drop_info(info.extra_drop_info ? info.extra_drop_info->Copy() : nullptr),
       qualified_name(info.qualified_name) {
 }
 
 unique_ptr<DropInfo> DropInfo::Copy() const {
 	return make_uniq<DropInfo>(*this);
+}
+
+static string ObjectToSQL(const QualifiedName &name, const vector<LogicalType> &func_parameters, bool has_func_args) {
+	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
+	return result;
 }
 
 string DropInfo::ToString() const {
@@ -34,22 +45,23 @@ string DropInfo::ToString() const {
 		}
 	} else {
 		result += "DROP";
-		result += " " + ParseInfo::TypeToString(type);
+		if (is_routine) {
+			result += " ROUTINE";
+		} else if (is_procedure) {
+			result += " PROCEDURE";
+		} else if (type == CatalogType::MACRO_ENTRY && !is_macro) {
+			result += " FUNCTION";
+		} else {
+			result += " " + ParseInfo::TypeToString(type);
+		}
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			result += " IF EXISTS";
 		}
-		result += " ";
-		result += qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-		if (has_func_args) {
-			result += "(";
-			for (idx_t i = 0; i < func_parameters.size(); i++) {
-				if (i > 0) {
-					result += ", ";
-				}
-				result += func_parameters[i].ToString();
-			}
-			result += ")";
+		vector<string> targets;
+		for (auto &object : objects) {
+			targets.push_back(ObjectToSQL(object.name, object.func_parameters, object.has_func_args));
 		}
+		result += " " + StringUtil::Join(targets, ", ");
 		if (type == CatalogType::TRIGGER_ENTRY && extra_drop_info) {
 			auto &trigger_info = extra_drop_info->Cast<ExtraDropTriggerInfo>();
 			if (trigger_info.base_table) {

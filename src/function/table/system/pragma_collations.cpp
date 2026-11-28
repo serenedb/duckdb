@@ -26,10 +26,11 @@ static unique_ptr<FunctionData> PragmaCollateBind(ClientContext &context, TableF
 unique_ptr<GlobalTableFunctionState> PragmaCollateInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<PragmaCollateData>();
 
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever);
 	unordered_set<string> listed;
 	for (auto schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::COLLATION_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::COLLATION_ENTRY, [&](CatalogEntry &entry) {
 			auto &name = entry.name.GetIdentifierName();
 			if (listed.insert(name).second) {
 				result->entries.push_back(name);
@@ -57,8 +58,9 @@ static void PragmaCollateFunction(ClientContext &context, TableFunctionInput &da
 }
 
 void PragmaCollations::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(
-	    TableFunction("pragma_collations", {}, PragmaCollateFunction, PragmaCollateBind, PragmaCollateInit));
+	TableFunction fn("pragma_collations", {}, PragmaCollateFunction, PragmaCollateBind, PragmaCollateInit);
+	fn.required_capability = RoleCapability::Superuser;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

@@ -8,143 +8,238 @@
 
 #pragma once
 
-#include "duckdb/common/constants.hpp"
-#include "duckdb/common/enums/catalog_type.hpp"
+#include "duckdb/catalog/acl.hpp"
+#include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/role_graph.hpp"
+#include "duckdb/common/types.hpp"
+#include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/common/identifier.hpp"
-#include "duckdb/common/serializer/deserializer.hpp"
-#include "duckdb/common/serializer/serializer.hpp"
-#include "duckdb/common/string.hpp"
-#include "duckdb/common/vector.hpp"
+#include "duckdb/parser/column_list.hpp"
+
+#include <absl/functional/function_ref.h>
 
 namespace duckdb {
+class AttachedDatabase;
+class Catalog;
+class ClientContext;
 
-constexpr idx_t ACL_ID_PUBLIC = 0;
-
-enum class AclMode : uint64_t {
-	NoRights = 0x0,
-	Insert = 0x1,
-	Select = 0x2,
-	Update = 0x4,
-	Delete = 0x8,
-	Truncate = 0x10,
-	References = 0x20,
-	Trigger = 0x40,
-	Execute = 0x80,
-	Usage = 0x100,
-	Create = 0x200,
-	CreateTemp = 0x400,
-	Connect = 0x800,
-	Set = 0x1000,
-	AlterSystem = 0x2000,
-	Maintain = 0x4000,
+struct StatementNaming {
+	std::string_view noun;
+	std::span<const Identifier> name;
 };
 
-constexpr AclMode operator|(AclMode a, AclMode b) {
-	return static_cast<AclMode>(static_cast<uint64_t>(a) | static_cast<uint64_t>(b));
-}
-constexpr AclMode operator&(AclMode a, AclMode b) {
-	return static_cast<AclMode>(static_cast<uint64_t>(a) & static_cast<uint64_t>(b));
-}
-constexpr AclMode operator~(AclMode a) {
-	return static_cast<AclMode>(~static_cast<uint64_t>(a));
-}
-constexpr AclMode &operator|=(AclMode &a, AclMode b) {
-	a = a | b;
-	return a;
-}
-constexpr AclMode &operator&=(AclMode &a, AclMode b) {
-	a = a & b;
-	return a;
-}
-
-constexpr AclMode ACL_COLUMN_PRIVILEGES = AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::References;
-
-enum class RoleOption : uint32_t {
-	None = 0x0,
-	Superuser = 0x1,
-	Inherit = 0x2,
-	CreateRole = 0x4,
-	CreateDb = 0x8,
-	Login = 0x10,
-	Replication = 0x20,
-	BypassRls = 0x40,
+struct SchemaView {
+	bool shown = false;
+	bool owned = false;
+	bool unowned = false;
 };
 
-constexpr RoleOption operator|(RoleOption a, RoleOption b) {
-	return static_cast<RoleOption>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-}
-constexpr RoleOption operator&(RoleOption a, RoleOption b) {
-	return static_cast<RoleOption>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
-}
-constexpr RoleOption operator~(RoleOption a) {
-	return static_cast<RoleOption>(~static_cast<uint32_t>(a));
-}
-constexpr bool HasOption(RoleOption options, RoleOption option) {
-	return (options & option) == option;
-}
+struct PrivilegeTarget {
+	PrivilegeTarget(const CatalogEntry &entry) : PrivilegeTarget(entry, entry.permissions) { // NOLINT
+	}
+	PrivilegeTarget(const CatalogEntry &entry, const Permissions &permissions)
+	    : entry(&entry), type(entry.type), oid(entry.oid), permissions(permissions) {
+	}
+	PrivilegeTarget(CatalogType type, const Permissions &permissions) : type(type), permissions(permissions) {
+	}
+	static PrivilegeTarget Columns(const CatalogEntry &relation, std::span<const LogicalIndex> columns) {
+		PrivilegeTarget target(relation);
+		target.columns = columns;
+		target.of_columns = true;
+		return target;
+	}
+	static PrivilegeTarget Columns(CatalogType type, const Permissions &permissions, const ColumnList &list,
+	                               std::span<const LogicalIndex> columns) {
+		PrivilegeTarget target(type, permissions);
+		target.column_list = &list;
+		target.columns = columns;
+		target.of_columns = true;
+		return target;
+	}
+	static PrivilegeTarget In(const CatalogEntry &entry, const SchemaView &schema) {
+		PrivilegeTarget target(entry);
+		target.schema = &schema;
+		return target;
+	}
+	static PrivilegeTarget Role(idx_t role) {
+		static const Permissions ROLE_PERMISSIONS {};
+		PrivilegeTarget target(CatalogType::ROLE_ENTRY, ROLE_PERMISSIONS);
+		target.oid = role;
+		return target;
+	}
+	static PrivilegeTarget Role(RoleCapability role) {
+		return Role(PredefinedRoleOid(role));
+	}
 
-struct AclItem {
-	idx_t grantee = 0;
-	idx_t grantor = 0;
-	AclMode privs = AclMode::NoRights;
-	AclMode grant_option = AclMode::NoRights;
-
-	bool operator==(const AclItem &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static AclItem Deserialize(Deserializer &deserializer);
+	optional_ptr<const CatalogEntry> entry;
+	CatalogType type;
+	idx_t oid = 0;
+	const Permissions &permissions;
+	std::span<const LogicalIndex> columns;
+	optional_ptr<const ColumnList> column_list;
+	bool of_columns = false;
+	optional_ptr<const SchemaView> schema;
 };
 
-struct Membership {
+enum class StatementRule : uint8_t {
+	Export,
+	Load,
+	UpdateExtensions,
+	CopyDatabase,
+	Connect,
+	ExternalResource,
+	Detach,
+	Attach,
+	CreateSecret,
+	DropSecret,
+	CreateTablespace,
+	CreateDatabase,
+	AlterDatabaseOwner,
+	CreateSubscription,
+	CreateRole,
+	CreateSuperuserRole,
+	CreateCreateDbRole,
+	CreateReplicationRole,
+	CreateBypassRlsRole,
+	DropRole,
+	SetSessionAuthorization
+};
+
+constexpr bool UseFits(AclMode use, CatalogType type) {
+	if (type == CatalogType::ROLE_ENTRY) {
+		return (use & ACL_GRANTABLE & ~AclMode::Usage) == AclMode::NoRights;
+	}
+	if ((use & (AclMode::SetRole | AclMode::Admin | AclMode::Member)) != AclMode::NoRights) {
+		return false;
+	}
+	auto &kind = ObjectKindOf(type);
+	const auto privileges = kind.routine ? kind.privileges | AclMode::Execute : kind.privileges;
+	return (use & ACL_GRANTABLE & ~privileges) == AclMode::NoRights;
+}
+
+enum class RoleUse : uint8_t { Owner, Acl, Setting, Grantor };
+
+struct RoleReference {
 	idx_t role = 0;
-	idx_t grantor = 0;
-	bool admin_option = false;
-	bool inherit_option = true;
-	bool set_option = true;
-
-	bool operator==(const Membership &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static Membership Deserialize(Deserializer &deserializer);
+	RoleUse use = RoleUse::Owner;
+	idx_t overload_oid = 0;
+	optional_ptr<const Identifier> column;
+	optional_ptr<const DefaultAcl> default_acl;
 };
 
-struct DefaultAcl {
-	idx_t role = 0;
-	idx_t scope = 0;
-	CatalogType objtype = CatalogType::INVALID;
-	vector<AclItem> acl;
+DUCKDB_API const Permissions &PermissionsOf(const PrivilegeTarget &target);
+DUCKDB_API const RoleAccess &Role(ClientContext &context, optional_idx bound = optional_idx());
+DUCKDB_API const RoleAccess &Role(ExpressionState &state);
+DUCKDB_API bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit);
+DUCKDB_API bool AnyRoleReference(const CatalogEntry &entry, absl::FunctionRef<bool(const RoleReference &)> visit);
+DUCKDB_API SchemaView ViewOf(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema);
 
-	bool operator==(const DefaultAcl &rhs) const = default;
+class PrivilegeCheck;
+inline PrivilegeCheck Check(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target, AclMode use);
+inline PrivilegeCheck Check(const RoleAccess &role, const PrivilegeTarget &target, AclMode use);
+inline PrivilegeCheck Check(const RoleAccess &role, StatementRule rule);
 
-	void Serialize(Serializer &serializer) const;
-	static DefaultAcl Deserialize(Deserializer &deserializer);
+class [[nodiscard]] PrivilegeCheck {
+public:
+	static constexpr auto RULES =
+	    AclMode::See | AclMode::Own | AclMode::Drop | AclMode::Rename | AclMode::Create | AclMode::SetRole;
+
+	PrivilegeCheck() = default;
+	explicit operator bool() const {
+		return denial == Denial::None;
+	}
+	void Require(optional_ptr<const StatementNaming> naming = nullptr) const {
+		if (denial != Denial::None) {
+			Throw(naming);
+		}
+	}
+
+private:
+	enum class Denial : uint8_t {
+		None,
+		Privilege,
+		NotOwner,
+		ParentPrivilege,
+		NoSetRole,
+		SuperuserRole,
+		NoCreateRole,
+		NoAdminOption,
+		NoTemporaryTables,
+		Hidden,
+		Statement
+	};
+
+	PrivilegeCheck(Denial denial_p, optional_ptr<const CatalogEntry> object_p) : object(object_p), denial(denial_p) {
+	}
+
+	friend PrivilegeCheck Check(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target,
+	                            AclMode use);
+	friend PrivilegeCheck Check(const RoleAccess &role, const PrivilegeTarget &target, AclMode use);
+	friend PrivilegeCheck Check(const RoleAccess &role, StatementRule rule);
+	DUCKDB_API static bool Holds(const RoleAccess &role, const PrivilegeTarget &target, AclMode use);
+	DUCKDB_API static PrivilegeCheck Runs(const RoleAccess &role, StatementRule rule);
+	DUCKDB_API static PrivilegeCheck Rules(ClientContext &context, const RoleAccess &role,
+	                                       const PrivilegeTarget &target, AclMode use);
+	static PrivilegeCheck Ownership(const RoleAccess &role, const PrivilegeTarget &target);
+	static PrivilegeCheck CreateIn(ClientContext &context, const RoleAccess &role, const CatalogEntry &container,
+	                               Denial denied);
+	static bool Sees(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target);
+	[[noreturn]] DUCKDB_API void Throw(optional_ptr<const StatementNaming> naming) const;
+
+	optional_ptr<const CatalogEntry> object;
+	Denial denial = Denial::None;
+	StatementRule rule = StatementRule::Export;
 };
 
-struct ColumnPrivilege {
-	Identifier column;
-	AclMode privileges = AclMode::NoRights;
+inline PrivilegeCheck Check(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target,
+                            AclMode use) {
+	if (role.is_superuser) {
+		return {};
+	}
+	if ((use & PrivilegeCheck::RULES) != AclMode::NoRights) {
+		return PrivilegeCheck::Rules(context, role, target, use);
+	}
+	if (PrivilegeCheck::Holds(role, target, use)) {
+		return {};
+	}
+	return {PrivilegeCheck::Denial::Privilege, target.entry};
+}
 
-	bool operator==(const ColumnPrivilege &rhs) const = default;
+inline PrivilegeCheck Check(const RoleAccess &role, const PrivilegeTarget &target, AclMode use) {
+	D_ASSERT((use & PrivilegeCheck::RULES) == AclMode::NoRights);
+	if (role.is_superuser || PrivilegeCheck::Holds(role, target, use)) {
+		return {};
+	}
+	return {PrivilegeCheck::Denial::Privilege, target.entry};
+}
 
-	void Serialize(Serializer &serializer) const;
-	static ColumnPrivilege Deserialize(Deserializer &deserializer);
-};
+template <AclMode USE>
+PrivilegeCheck Check(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target) {
+	static_assert(USE != AclMode::NoRights);
+	return Check(context, role, target, USE);
+}
 
-struct Permissions {
-	idx_t owner = 0;
-	vector<AclItem> acl;
-	vector<DefaultAcl> defaults;
+template <AclMode USE, class ENTRY>
+PrivilegeCheck Check(ClientContext &context, const RoleAccess &role, const ENTRY &entry) {
+	if constexpr (requires { ENTRY::Type; }) {
+		static_assert(UseFits(USE, ENTRY::Type));
+	}
+	return Check<USE>(context, role, PrivilegeTarget(entry));
+}
 
-	bool operator==(const Permissions &rhs) const = default;
+template <AclMode USE>
+PrivilegeCheck Check(const RoleAccess &role, const PrivilegeTarget &target) {
+	static_assert(USE != AclMode::NoRights && (USE & PrivilegeCheck::RULES) == AclMode::NoRights);
+	return Check(role, target, USE);
+}
 
-	static CatalogType AclClass(CatalogType entry_type);
-	static AclMode AllPrivileges(CatalogType acl_class);
-	static AclMode PublicPrivileges(CatalogType acl_class);
-	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
-	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
+inline PrivilegeCheck Check(const RoleAccess &role, StatementRule rule) {
+	return role.is_superuser ? PrivilegeCheck() : PrivilegeCheck::Runs(role, rule);
+}
 
-	void Serialize(Serializer &serializer) const;
-	static Permissions Deserialize(Deserializer &deserializer);
-};
+template <StatementRule RULE>
+PrivilegeCheck Check(const RoleAccess &role) {
+	return Check(role, RULE);
+}
 
 } // namespace duckdb

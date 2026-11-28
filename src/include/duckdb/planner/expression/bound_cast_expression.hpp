@@ -12,6 +12,7 @@
 #include "duckdb/function/cast/default_casts.hpp"
 
 namespace duckdb {
+class Binder;
 
 //! The BoundCastExpression has been moved to a function expression (the __cast scalar function).
 //! This class exists only as a set of helper methods.
@@ -50,6 +51,8 @@ struct BoundCastExpression {
 	                                                   bool try_cast = false);
 	//! Cast an expression to the specified SQL type if required
 	DUCKDB_API static unique_ptr<Expression> AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
+	                                                       const LogicalType &target_type, bool try_cast = false);
+	DUCKDB_API static unique_ptr<Expression> AddCastToType(Binder &binder, unique_ptr<Expression> expr,
 	                                                       const LogicalType &target_type, bool try_cast = false);
 
 	//! If the expression returns an array, cast it to return a list with the same child type. Otherwise do nothing.

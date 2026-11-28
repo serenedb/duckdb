@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/privileges.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/parser/query_error_context.hpp"
 #include "duckdb/parser/qualified_name.hpp"
@@ -23,7 +24,8 @@ public:
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name,
 	                QueryErrorContext error_context = QueryErrorContext());
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, optional_ptr<BoundAtClause> at_clause,
-	                QueryErrorContext error_context);
+	                QueryErrorContext error_context, AclMode use = AclMode::NoRights);
+	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, AclMode use);
 	//! Deprecated: pass a QualifiedName instead (use QualifiedName(name) for an unqualified lookup)
 	[[deprecated("Pass a QualifiedName instead, e.g. QualifiedName(name)")]] EntryLookupInfo(
 	    CatalogType catalog_type, Identifier name, QueryErrorContext error_context = QueryErrorContext());
@@ -32,6 +34,7 @@ public:
 	    QueryErrorContext error_context);
 	//! Re-use a parent lookup's type/at-clause/error-context with a different (re-qualified) name
 	EntryLookupInfo(const EntryLookupInfo &parent, QualifiedName name);
+	EntryLookupInfo(const EntryLookupInfo &parent, QualifiedName name, idx_t argument_count);
 	EntryLookupInfo(const EntryLookupInfo &parent, optional_ptr<BoundAtClause> at_clause);
 
 public:
@@ -48,6 +51,8 @@ public:
 	const Identifier &GetSchema() const;
 	const QueryErrorContext &GetErrorContext() const;
 	const optional_ptr<BoundAtClause> GetAtClause() const;
+	idx_t GetArgumentCount() const;
+	AclMode GetUse() const;
 
 	//! Build a schema lookup from a (possibly nested) schema path ([outermost..innermost]); the innermost component is
 	//! the schema name and the preceding components are its parent schemas
@@ -58,6 +63,8 @@ private:
 	QualifiedName name;
 	optional_ptr<BoundAtClause> at_clause;
 	QueryErrorContext error_context;
+	idx_t argument_count = DConstants::INVALID_INDEX;
+	AclMode use = AclMode::NoRights;
 };
 
 //! Return value of Catalog::LookupEntry
@@ -65,6 +72,7 @@ struct CatalogEntryLookup {
 	optional_ptr<SchemaCatalogEntry> schema;
 	optional_ptr<CatalogEntry> entry;
 	ErrorData error;
+	bool hidden = false;
 
 	DUCKDB_API bool Found() const {
 		return entry;

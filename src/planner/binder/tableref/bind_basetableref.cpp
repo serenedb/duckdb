@@ -49,7 +49,7 @@ BoundStatement Binder::BindWithReplacementScan(ClientContext &context, BaseTable
 	if (!context.config.use_replacement_scans) {
 		return BoundStatement();
 	}
-	ReplacementScanInput input(ref.GetQualifiedName());
+	ReplacementScanInput input(ref.GetQualifiedName(), entry_retriever);
 	unique_ptr<TableRef> replacement_function;
 
 	// Connection-scoped replacement scans are consulted first
@@ -139,7 +139,15 @@ void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema) {
 	entry_retriever.SetSearchPath(std::move(search_path));
 }
 
-BoundStatement Binder::Bind(BaseTableRef &ref) {
+void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings) {
+	auto search_path = GetSearchPath(catalog, schema, true);
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		search_path.emplace(search_path.begin(), catalog.GetName(), "pg_catalog");
+	}
+	entry_retriever.SetSearchPath(std::move(search_path), catalog.GetName(), bindings);
+}
+
+BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) {
 	QueryErrorContext error_context(ref.query_location);
 	// CTEs and views are also referred to using BaseTableRefs, hence need to distinguish here
 	// check if the table name refers to a CTE
@@ -174,7 +182,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	// extract a table or view from the catalog
 	auto at_clause = BindAtClause(ref.at_clause);
 	auto entry_at_clause = at_clause ? at_clause.get() : entry_retriever.GetAtClause();
-	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(ref.Table()), entry_at_clause, error_context);
+	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(ref.Table()), entry_at_clause, error_context,
+	                             use == TableRefUse::UTILITY_TARGET ? target : AclMode::NoRights);
 	// resolve the catalog/schema qualification for the lookup only - the reference itself keeps the name as written,
 	// which is what name extraction and replacement scans report
 	auto bound_name = BindTableName(entry_retriever, ref.GetQualifiedName());
@@ -223,7 +232,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		}
 		auto &config = DBConfig::GetConfig(context);
 		if (context.config.use_replacement_scans && Settings::Get<EnableExternalAccessSetting>(config) &&
-		    ExtensionHelper::IsFullPath(full_path)) {
+		    ExtensionHelper::IsFullPath(full_path) &&
+		    Check<AclMode::Usage>(CheckAs(), PrivilegeTarget::Role(RoleCapability::ReadServerFiles))) {
 			auto &fs = FileSystem::GetFileSystem(context);
 			if (!fs.IsDisabledForPath(full_path) && fs.FileExists(full_path)) {
 				throw BinderException(
@@ -256,6 +266,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		GetStatementProperties().RegisterDataRead(table, context, table_index);
 
 		unique_ptr<FunctionData> bind_data;
+		ClientContext::AccessScope access_scope;
+		access_scope.catalog = true;
+		ClientContext::AccessScopeGuard access_guard(context, access_scope);
 		auto scan_function = table.GetScanFunction(context, bind_data, table_lookup);
 		if (bind_data && !bind_data->SupportStatementCache()) {
 			SetAlwaysRequireRebind();
@@ -288,13 +301,15 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		if (entry_at_clause) {
 			logical_get->at_clause = make_uniq<BoundAtClause>(entry_at_clause->Unit(), entry_at_clause->GetValue());
 		}
+		logical_get->bound_role = BoundRole();
 		auto &col_ids = logical_get->GetMutableColumnIds();
 		// The binding carries this entry, and column binding reads the table's
 		// column model from it (star-expansion, generated-column expansion,
 		// column validation). A facade catalog delegates the scan to a storage
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
-		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
+		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table).checks =
+		    ReadChecks(table, use, target);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;
@@ -304,13 +319,23 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
-		const auto scope_begin = global_binder_state->bound_tables;
-		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
+		auto &role = CheckAs();
+		const auto owner = PermissionsOf(view_catalog_entry).owner;
+		auto checks = use == TableRefUse::UTILITY_TARGET ? RelationChecks()
+		                                                 : ReadChecks(view_catalog_entry, ChecksOf(view_catalog_entry));
+		if (checks.role) {
+			Check<AclMode::Select>(context, role, PrivilegeTarget::Columns(view_catalog_entry, {})).Require();
+		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
 		// for the view and for the current query
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
 		view_binder->SetCanContainNulls(true);
+		if (!role.IsSystem() && view_catalog_entry.security_invoker) {
+			view_binder->acting.privileges = &Role();
+		} else if (!role.IsSystem() && owner != 0) {
+			view_binder->acting.privileges = &duckdb::Role(context, owner);
+		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them
 		auto query = view_catalog_entry.GetQuery().Copy();
@@ -329,10 +354,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			}
 		}
 
-		// when binding a view, we always look into the catalog/schema where the view is stored first
-		auto view_search_path =
-		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema(context).name, true);
-		view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
+		auto &view_catalog = view_catalog_entry.ParentCatalog();
+		auto &view_schema = view_catalog_entry.ParentSchema(context).name;
+		if (owner != 0 && !view_catalog.IsTemporaryCatalog()) {
+			view_binder->SetSearchPath(view_catalog, view_schema, view_catalog_entry.name_bindings);
+		} else {
+			view_binder->entry_retriever.SetSearchPath(GetSearchPath(view_catalog, view_schema, true));
+		}
 		// propagate the AT clause through the view
 		view_binder->entry_retriever.SetAtClause(entry_at_clause);
 
@@ -352,10 +380,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
-		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry);
-		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
-		                                                global_binder_state->bound_tables, resolved_begin,
-		                                                GetStatementProperties().resolved_entries.size()});
+		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).checks = checks;
 		return bound_child;
 	}
 	default:

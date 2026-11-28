@@ -18,6 +18,8 @@ Statement <-
 	AlterSubscriptionStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
+	ReassignOwnedStatement /
+	DropOwnedStatement /
 	CreatePolicyStatement /
 	AlterPolicyStatement /
 	DropPolicyStatement /
@@ -25,6 +27,7 @@ Statement <-
 	AlterOwnerStatement /
 	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /
+	AlterGroupStatement /
 	GrantStatement /
 	RevokeStatement /
 	CreateStatement /
@@ -52,6 +55,7 @@ Statement <-
 	ResetStatement /
 	ExportStatement /
 	ImportStatement /
+	CommentRoutineStatement /
 	CommentStatement /
 	DeallocateStatement /
 	DiscardStatement /
@@ -86,6 +90,7 @@ ReservedColumnName <- Identifier
 IndexName <- Identifier
 ReservedIndexName <- Identifier
 SettingName <- Identifier
+SettingPath <- SettingName DotIdentifier*
 PragmaName <- Identifier
 FunctionName <- Identifier
 ReservedFunctionName <- Identifier

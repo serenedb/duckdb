@@ -47,6 +47,7 @@ public:
 
 	//! Information for WITH ORDINALITY
 	optional_idx ordinality_idx;
+	optional_idx bound_role;
 
 	OrderPreservationType OperatorOrder() const override {
 		return function.order_preservation_type;

@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/query_location.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -101,12 +103,15 @@ struct CastLocalStateParameters {
 	    : context(&context_p), cast_data(cast_data_p) {
 	}
 	CastLocalStateParameters(CastLocalStateParameters &parent, optional_ptr<BoundCastData> cast_data_p)
-	    : context(parent.context), cast_data(cast_data_p) {
+	    : context(parent.context), cast_data(cast_data_p), bound_role(parent.bound_role),
+	      search_path(parent.search_path) {
 	}
 
 	optional_ptr<ClientContext> context;
 	//! The bound cast data (if any)
 	optional_ptr<BoundCastData> cast_data;
+	optional_idx bound_role;
+	optional_ptr<const vector<CatalogSearchEntry>> search_path;
 };
 
 typedef bool (*cast_function_t)(Vector &source, Vector &result, idx_t count, CastParameters &parameters);

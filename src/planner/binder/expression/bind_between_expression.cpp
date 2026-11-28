@@ -39,9 +39,9 @@ BindResult ExpressionBinder::BindExpression(BetweenExpression &expr, idx_t depth
 		                      input_type.ToString(), upper_sql_type.ToString());
 	}
 	// add casts (if necessary)
-	input = BoundCastExpression::AddCastToType(context, std::move(input), input_type);
-	lower = BoundCastExpression::AddCastToType(context, std::move(lower), input_type);
-	upper = BoundCastExpression::AddCastToType(context, std::move(upper), input_type);
+	input = BoundCastExpression::AddCastToType(binder, std::move(input), input_type);
+	lower = BoundCastExpression::AddCastToType(binder, std::move(lower), input_type);
+	upper = BoundCastExpression::AddCastToType(binder, std::move(upper), input_type);
 	// handle collation
 	PushCollation(context, input, input_type);
 	PushCollation(context, lower, input_type);

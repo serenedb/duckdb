@@ -1,11 +1,17 @@
 #include "duckdb/main/client_context.hpp"
 
+#include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/time_point.hpp"
@@ -13,6 +19,7 @@
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/execution/column_binding_resolver.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/main/appender.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
@@ -299,6 +306,11 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 		D_ASSERT(logical_planner.plan || !logical_planner.properties.bound_all_parameters);
 	}
 
+	const auto previous_properties = planned_properties;
+	planned_properties = &logical_planner.properties;
+	absl::Cleanup restore_properties = [&]() noexcept {
+		planned_properties = previous_properties;
+	};
 	if (logical_planner.properties.bound_all_parameters) {
 		OnBoundPlan(*logical_planner.binder, *logical_planner.plan);
 		logical_planner.Optimize();
@@ -1036,8 +1048,8 @@ unique_ptr<QueryResult> ClientContext::SubmitInternal(ClientContextLock &lock, u
 	return SubmitStatement(lock, std::move(statement), parameters);
 }
 
-void ClientContext::WarnUser(const string &message) {
-	if (!EmitWarning(message.c_str())) {
+void ClientContext::WarnUser(const string &message, std::string_view subtype) {
+	if (!EmitWarning(message.c_str(), subtype)) {
 		DUCKDB_LOG_WARNING(*this, message);
 	}
 }
@@ -1050,6 +1062,77 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	}
 	auto left = static_cast<int64_t>(deadline.GetIndex()) - TimePoint::Now();
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
+}
+
+const RoleAccess &Role(ClientContext &context, optional_idx bound) {
+	if (!bound.IsValid()) {
+		return context.security.CurrentRole();
+	}
+	static const RoleAccess NOBODY;
+	auto access = context.security.snapshot ? context.security.snapshot->Access(bound.GetIndex()) : nullptr;
+	return access ? *access : NOBODY;
+}
+
+bool ClientContext::FileSecretsVisible() const {
+	if (access_scope) {
+		return SecretsVisible();
+	}
+	auto properties = ActiveStatementProperties();
+	return !properties || !properties->hide_secrets;
+}
+
+void ClientContext::CheckFileAccess(const string &requested, RoleCapability sufficient) {
+	if (requested == "/dev/stdin" || requested == "/dev/stdout") {
+		return;
+	}
+	const auto holds = [&](const RoleAccess &role) {
+		return role.is_superuser || role.Uses(sufficient);
+	};
+	if (!access_scope && holds(security.CurrentRole())) {
+		return;
+	}
+	const auto path = DBConfig::GetConfig(*this).SanitizeAllowedPath(requested);
+	const auto covers = [&](const string &granted) {
+		if (granted == path) {
+			return true;
+		}
+		if (!granted.empty() && StringUtil::StartsWith(path, granted) &&
+		    (StringUtil::EndsWith(granted, "/") || path[granted.size()] == '/')) {
+			return true;
+		}
+		return FileSystem::HasGlob(granted) && Glob(path.c_str(), path.size(), granted.c_str(), granted.size());
+	};
+	const auto granted = [&](const FileGrant &grant) {
+		return (grant.capability & sufficient) != RoleCapability::None && covers(grant.path);
+	};
+	const auto stored = [&](const StatementProperties &properties) {
+		return absl::c_any_of(properties.storage_locations, covers);
+	};
+	bool allowed;
+	if (access_scope) {
+		auto properties = access_scope->properties.get_mutable();
+		auto &role = access_scope->role ? *access_scope->role : security.CurrentRole();
+		allowed = access_scope->catalog || (properties && stored(*properties));
+		if (!allowed && holds(role)) {
+			allowed = true;
+			if (properties) {
+				properties->hide_secrets |= !role.is_superuser;
+				if (absl::c_none_of(properties->file_grants, granted)) {
+					properties->file_grants.push_back(FileGrant {path, sufficient});
+				}
+			}
+		}
+	} else {
+		auto properties = ActiveStatementProperties();
+		allowed = properties && (stored(*properties) || absl::c_any_of(properties->file_grants, granted));
+	}
+	if (!allowed) {
+		throw PermissionException::WithDetail(
+		    sufficient == RoleCapability::WriteServerFiles
+		        ? "Only roles with privileges of the \"pg_write_server_files\" role may write to server files and URLs."
+		        : "Only roles with privileges of the \"pg_read_server_files\" role may read server files and URLs.",
+		    "permission denied to access \"%s\"", requested);
+	}
 }
 
 void ClientContext::InterruptFromSignal() {
@@ -1153,11 +1236,10 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 	switch (type) {
 	case TransactionType::BEGIN_TRANSACTION: {
 		if (!transaction.IsAutoCommit()) {
-			const char *msg = "cannot start a transaction within a transaction";
-			if (EmitWarning(msg)) {
+			if (EmitWarning("there is already a transaction in progress", "ACTIVE_SQL_TRANSACTION")) {
 				break;
 			}
-			throw TransactionException(msg);
+			throw TransactionException("cannot start a transaction within a transaction");
 		}
 		// Resolve effective isolation level and read-only mode from defaults,
 		// then override with explicit BEGIN options if specified.
@@ -1191,11 +1273,10 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 	}
 	case TransactionType::COMMIT:
 		if (transaction.IsAutoCommit()) {
-			const char *msg = "cannot commit - no transaction is active";
-			if (EmitWarning(msg)) {
+			if (EmitWarning("there is no transaction in progress", "NO_ACTIVE_SQL_TRANSACTION")) {
 				break;
 			}
-			throw TransactionException(msg);
+			throw TransactionException("cannot commit - no transaction is active");
 		}
 		transaction.Commit();
 		// The commit is irreversible, so ignore interrupts until the next query.
@@ -1203,11 +1284,10 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 		break;
 	case TransactionType::ROLLBACK: {
 		if (transaction.IsAutoCommit()) {
-			const char *msg = "cannot rollback - no transaction is active";
-			if (EmitWarning(msg)) {
+			if (EmitWarning("there is no transaction in progress", "NO_ACTIVE_SQL_TRANSACTION")) {
 				break;
 			}
-			throw TransactionException(msg);
+			throw TransactionException("cannot rollback - no transaction is active");
 		}
 		auto &valid_checker = ValidChecker::Get(transaction.ActiveTransaction());
 		if (valid_checker.IsInvalidated()) {
@@ -1458,6 +1538,13 @@ SettingLookupResult ClientContext::TryGetCurrentSetting(const Identifier &key, V
 		// legacy callback
 		result = option->get_setting(*this);
 		return SettingLookupResult(SettingScope::LOCAL);
+	}
+	if (!option) {
+		auto entry = config.custom_settings.find(key.GetIdentifierName());
+		if (entry != config.custom_settings.end()) {
+			result = entry->second;
+			return SettingLookupResult(SettingScope::LOCAL);
+		}
 	}
 	// setting is not set - get the default value
 	return DBConfig::TryGetDefaultValue(option, result);

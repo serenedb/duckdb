@@ -135,6 +135,8 @@ struct TableFunctionBindInput {
 	      input_plan(input_plan) {
 	}
 
+	DUCKDB_API optional_idx BoundRole() const;
+
 	vector<Value> &inputs;
 	named_argument_map_t &named_parameters;
 	vector<LogicalType> &input_table_types;
@@ -186,6 +188,7 @@ struct TableFunctionInitInput {
 	//! (Optional) Set when a multi-file scan initializes this function to read one of its files
 	optional_ptr<const TableFunctionFileInitInput> multi_file_input;
 	optional_ptr<const OperatorPartitionInfo> partition_info;
+	optional_idx bound_role;
 
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {

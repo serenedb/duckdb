@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
@@ -14,6 +15,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
@@ -29,7 +31,11 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -91,7 +97,7 @@ void Binder::BindSchemaOrCatalog(CatalogEntryRetriever &retriever, Identifier &c
 	// try searching for the catalog instead
 	auto &db_manager = DatabaseManager::Get(context);
 	auto database = db_manager.GetDatabase(context, schema);
-	if (!database) {
+	if (!database || !retriever.Shows(*database)) {
 		//! No database by that name was found
 		return;
 	}
@@ -130,7 +136,7 @@ void Binder::BindSchemaOrCatalog(ClientContext &context, Identifier &catalog, Id
 }
 
 void Binder::BindSchemaOrCatalog(Identifier &catalog, Identifier &schema) {
-	BindSchemaOrCatalog(context, catalog, schema);
+	BindSchemaOrCatalog(entry_retriever, catalog, schema);
 }
 
 void Binder::BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name) {
@@ -152,7 +158,7 @@ void Binder::BindSchemaOrCatalog(ClientContext &context, QualifiedName &qualifie
 }
 
 void Binder::BindSchemaOrCatalog(QualifiedName &qualified_name) {
-	BindSchemaOrCatalog(context, qualified_name);
+	BindSchemaOrCatalog(entry_retriever, qualified_name);
 }
 
 Identifier Binder::BindCatalog(const Identifier &catalog) {
@@ -170,7 +176,7 @@ void Binder::SearchSchema(CreateInfo &info) {
 	// determine the catalog and the (possibly nested) schema path. ResolveCatalog (via BindSchemaOrCatalog) decides
 	// which leading components form the catalog; we pass default_catalog=false so the catalog is left empty when none
 	// is given - that lets us tell "no catalog specified" apart from an explicit catalog when applying defaults below.
-	auto resolved = ResolveCatalog(context, info.GetQualifiedName(), false);
+	auto resolved = ResolveCatalog(entry_retriever, info.GetQualifiedName(), false);
 	auto &path = resolved.Path();
 	Identifier name = path.back();
 	Identifier catalog = path.front();
@@ -220,11 +226,6 @@ void Binder::SearchSchema(CreateInfo &info) {
 	    QualifiedName::FromCatalogSchema(std::move(catalog), std::move(schema_path), std::move(name)));
 }
 
-QualifiedName Binder::ResolveCatalog(ClientContext &context, const QualifiedName &name, bool default_catalog) {
-	CatalogEntryRetriever retriever(context);
-	return ResolveCatalog(retriever, name, default_catalog);
-}
-
 QualifiedName Binder::ResolveCatalog(CatalogEntryRetriever &retriever, const QualifiedName &name,
                                      bool default_catalog) {
 	auto &context = retriever.GetContext();
@@ -249,8 +250,8 @@ QualifiedName Binder::ResolveCatalog(CatalogEntryRetriever &retriever, const Qua
 		// multiple qualifiers ("cat.schema.name" or a nested "s1.s2.name"): the leading component is the catalog when
 		// it names an attached database. It is positionally unambiguous, so we do not run the catalog/schema ambiguity
 		// check (which is only relevant for a lone qualifier).
-		auto &db_manager = DatabaseManager::Get(context);
-		if (db_manager.GetDatabase(context, path[0])) {
+		auto database = DatabaseManager::Get(context).GetDatabase(context, path[0]);
+		if (database && retriever.Shows(*database)) {
 			catalog = std::move(path[0]);
 			path.erase(path.begin());
 		}
@@ -291,16 +292,7 @@ QualifiedName Binder::BindTableName(CatalogEntryRetriever &retriever, const Qual
 }
 
 QualifiedName Binder::BindTableName(const QualifiedName &name) {
-	CatalogEntryRetriever retriever(context);
-	return BindTableName(retriever, name);
-}
-
-void Binder::RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry) {
-	if (!binder) {
-		// no binder available (e.g. when re-binding a deserialized plan) - nothing is cached in that case
-		return;
-	}
-	binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context);
+	return BindTableName(entry_retriever, name);
 }
 
 void Binder::BindCreateSchema(CreateSchemaInfo &info) {
@@ -316,7 +308,7 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 		info.SetQualifiedName(
 		    QualifiedName(vector<Identifier> {DatabaseManager::GetDefaultDatabase(context), path[0]}, Identifier()));
 	} else {
-		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+		info.SetQualifiedName(ResolveCatalog(entry_retriever, info.GetQualifiedName()));
 	}
 
 	auto &resolved_catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
@@ -338,24 +330,32 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 	}
 }
 
-SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
+SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info, AclMode use) {
 	// resolve the target into [catalog, schema_path..., name] and fetch the (possibly nested) schema it lives in
 	SearchSchema(info);
 	auto &path = info.GetQualifiedName().Path();
 	vector<Identifier> schema_path(path.begin() + 1, path.end() - 1);
-	auto &schema_obj = *Catalog::GetSchema(context, path.front(), schema_path, OnEntryNotFound::THROW_EXCEPTION);
-	D_ASSERT(schema_obj.type == CatalogType::SCHEMA_ENTRY);
-	if (!info.temporary) {
-		auto &properties = GetStatementProperties();
-		properties.RegisterDBModify(schema_obj.catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
+	if (auto catalog = info.temporary ? nullptr : Catalog::GetCatalogEntry(context, path.front())) {
+		GetStatementProperties().RegisterDBModify(*catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 	}
+	auto &schema_obj = *entry_retriever.GetSchema(path.front(), schema_path, use, OnEntryNotFound::THROW_EXCEPTION);
+	D_ASSERT(schema_obj.type == CatalogType::SCHEMA_ENTRY);
 	return schema_obj;
 }
 
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
-	auto &schema = BindSchema(info);
+	const bool trigger = info.type == CatalogType::TRIGGER_ENTRY;
+	auto &schema = BindSchema(info, trigger ? AclMode::NoRights : AclMode::Create);
 	if (schema.catalog.IsSystemCatalog()) {
 		throw BinderException("Cannot create entry in system catalog");
+	}
+	if (!trigger) {
+		RequireReplacedOwner(schema, info, info.GetQualifiedName().Name());
+	}
+	RequireUserSchema(schema, info.GetQualifiedName().Name());
+	if (!CheckAs().IsSystem()) {
+		schema.ParentCatalog().AssignOwner(context, info.permissions, ObjectKindOf(info.type).acl_class, &schema,
+		                                   CreationOwner(info));
 	}
 	return schema;
 }
@@ -394,11 +394,14 @@ private:
 	LogicalDependencyList &dependencies;
 };
 
-void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
-                      const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
+void Binder::BindView(ClientContext &context, const RoleAccess &lookups, const SelectStatement &stmt,
+                      const Identifier &catalog_name, const Identifier &schema_name,
+                      optional_ptr<LogicalDependencyList> dependencies, optional_ptr<vector<NameBinding>> name_bindings,
                       const vector<Identifier> &aliases, vector<LogicalType> &result_types,
                       vector<Identifier> &result_names) {
 	auto view_binder = Binder::CreateBinder(context);
+	view_binder->BindUnchecked();
+	view_binder->acting.lookups = &lookups;
 	auto &catalog = Catalog::GetCatalog(context, catalog_name);
 
 	if (dependencies) {
@@ -413,6 +416,9 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 
 	auto view_search_path = view_binder->GetSearchPath(catalog, schema_name, true);
 	view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
+	if (name_bindings) {
+		view_binder->entry_retriever.RecordBindings(catalog.GetName(), *name_bindings);
+	}
 
 	auto copy = stmt.Copy();
 	auto query_node = view_binder->Bind(*copy);
@@ -458,21 +464,26 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	if (Settings::Get<EnableViewDependenciesSetting>(context)) {
 		dependencies = base.dependencies;
 	}
-	BindView(context, *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(), dependencies,
-	         base.aliases, base.types, base.names);
+	auto &catalog = Catalog::GetCatalog(context, base.GetQualifiedName().Catalog());
+	optional_ptr<vector<NameBinding>> name_bindings;
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES && !catalog.IsTemporaryCatalog()) {
+		name_bindings = base.name_bindings;
+	}
+	BindView(context, CheckAs(), *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(),
+	         dependencies, name_bindings, base.aliases, base.types, base.names);
 }
 
-void Binder::MergeMacroOverloads(CreateInfo &info) {
+idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 	SearchSchema(info);
 	auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
 	const bool merge_overloads = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	if (!merge_overloads || info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		return;
+		return 0;
 	}
 	EntryLookupInfo lookup(info.type, info.GetQualifiedName());
 	auto existing = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
 	if (!existing || existing->type != info.type) {
-		return;
+		return 0;
 	}
 	auto &macro_info = info.Cast<CreateMacroInfo>();
 	for (auto &function : macro_info.macros) {
@@ -482,8 +493,10 @@ void Binder::MergeMacroOverloads(CreateInfo &info) {
 			}
 		}
 	}
+	const auto defined = macro_info.macros.size();
 	const bool replace = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT;
-	for (auto &overload : existing->Cast<MacroCatalogEntry>().macros) {
+	auto &existing_macro = existing->Cast<MacroCatalogEntry>();
+	for (auto &overload : existing_macro.macros) {
 		const bool redefined = std::any_of(macro_info.macros.begin(), macro_info.macros.end(),
 		                                   [&](const unique_ptr<MacroFunction> &function) {
 			                                   return function->HasParameterTypes(overload->ParameterTypes());
@@ -493,9 +506,13 @@ void Binder::MergeMacroOverloads(CreateInfo &info) {
 		} else if (!replace) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
+		} else {
+			Check<AclMode::Own>(context, CheckAs(), {existing_macro, existing_macro.OverloadPermissions(*overload)})
+			    .Require();
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	return defined;
 }
 
 SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
@@ -543,7 +560,14 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	// try to bind each of the included functions
 	vector_of_logical_type_set_t type_overloads;
 	auto &base = info.Cast<CreateMacroInfo>();
+	auto creator = make_uniq<BinderScope>(*this);
+	BindUnchecked();
 	for (auto &function : base.macros) {
+		Settings::ResolveCurrentValues(context, function->config);
+		BinderScope body(*this);
+		if (!function->config.empty()) {
+			body.UseFunctionSearchPath(function->config);
+		}
 		if (!store_types) {
 			for (const auto &type : function->types) {
 				if (type.id() != LogicalTypeId::UNKNOWN) {
@@ -902,6 +926,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			global_binder_state->ignore_expression_errors = false;
 		}
 	}
+	creator.reset();
 
 	return BindCreateSchema(info);
 }
@@ -961,7 +986,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	// Resolve the base table first — triggers inherit catalog/schema from their table (like Postgres).
 	TableDescription table_description(create_trigger_info.base_table->GetQualifiedName());
 	auto table_ref = make_uniq<BaseTableRef>(table_description);
-	auto bound_table = Bind(*table_ref);
+	auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET, AclMode::Trigger);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("CREATE TRIGGER requires a base table, not a view or subquery");
 	}
@@ -1058,6 +1083,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	// Set up trigger_expanded_tables to match runtime behavior.
 	// Set up trigger_creation_table to detect recursive triggers during the validation.
 	auto validation_binder = Binder::CreateBinder(context);
+	validation_binder->BindUnchecked();
 	validation_binder->global_binder_state->trigger_expanded_tables.insert(table);
 	validation_binder->global_binder_state->trigger_creation_table = &table;
 	validation_binder->global_binder_state->trigger_creation_name = create_trigger_info.GetTriggerName();
@@ -1148,7 +1174,31 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	switch (catalog_type) {
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
+		optional_ptr<RoleEntry> authorization;
+		if (!info.authorization.empty()) {
+			authorization = BindRole(info.authorization);
+			if (info.authorization.type != RoleSpecType::NAME) {
+				auto path = info.GetQualifiedName().Path();
+				if (path.size() == 2 && path[0].empty()) {
+					path[0] = authorization->name;
+					info.SetQualifiedName(QualifiedName::FromPath(std::move(path)));
+				}
+				info.authorization = RoleSpec(authorization->name);
+			}
+		}
 		BindCreateSchema(info);
+		auto &role = CheckAs();
+		const auto owner = authorization && !role.IsSystem() ? authorization->oid : role.role;
+		entry_retriever.GetEntry(
+		    EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(info.SchemaCatalog()), AclMode::Create),
+		    OnEntryNotFound::RETURN_NULL);
+		if (!role.IsSystem()) {
+			if (authorization) {
+				Check<AclMode::SetRole>(context, role, *authorization).Require();
+			}
+			Catalog::GetCatalog(context, info.SchemaCatalog())
+			    .AssignOwner(context, info.permissions, CatalogType::SCHEMA_ENTRY, nullptr, owner);
+		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, info.SchemaCatalog()), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SCHEMA, std::move(stmt.info));
@@ -1183,6 +1233,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			}
 		}
 		BindCreateViewInfo(base);
+		RequireStoredTypes(base, schema.ParentCatalog());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_VIEW, std::move(stmt.info), &schema);
 		break;
 	}
@@ -1193,15 +1244,19 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::TABLE_MACRO_ENTRY: {
-		MergeMacroOverloads(*stmt.info);
+		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
+		RequireStoredTypes(*stmt.info, schema.ParentCatalog(), defined);
+		OwnDefinedOverloads(*stmt.info, defined);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
 		break;
 	}
 	case CatalogType::MACRO_ENTRY: {
-		MergeMacroOverloads(*stmt.info);
+		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
+		RequireStoredTypes(*stmt.info, schema.ParentCatalog(), defined);
+		OwnDefinedOverloads(*stmt.info, defined);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
 		result.plan = std::move(logical_create);
@@ -1217,7 +1272,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		// Plan the table scan - the table lives in the same (possibly nested) schema as the index.
 		TableDescription table_description(create_index_info.GetQualifiedName().WithName(create_index_info.table));
 		auto table_ref = make_uniq<BaseTableRef>(table_description);
-		auto bound_table = Bind(*table_ref);
+		auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET, AclMode::Own);
 		auto plan = std::move(bound_table.plan);
 		// Tables go through the LOGICAL_GET; otherwise resolve a view and let its catalog decide.
 		optional_ptr<TableCatalogEntry> table_ptr;
@@ -1243,6 +1298,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (table_ptr) {
 			auto &table = *table_ptr;
+			RequireIndexCreate(table, create_index_info);
 			if (table.temporary) {
 				stmt.info->temporary = true;
 			}
@@ -1253,6 +1309,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    CatalogType::VIEW_ENTRY,
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
+			RequireIndexCreate(view, create_index_info);
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
@@ -1281,6 +1338,19 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			QualifyUserFunctions(table_schema, create_info);
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info), table_schema);
+		RequireStoredTypes(bound_info->Base(), bound_info->schema.ParentCatalog());
+		auto &base = bound_info->Base();
+		if (base.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT ||
+		    !table_schema.GetEntry(table_catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
+		                           base.GetQualifiedName().Name())) {
+			RequirePlacement(table_catalog, base, nullptr);
+		}
+		if (!CheckAs().IsSystem()) {
+			for (auto &serial : bound_info->serial_sequences) {
+				bound_info->schema.ParentCatalog().AssignOwner(context, serial.permissions, CatalogType::SEQUENCE_ENTRY,
+				                                               &bound_info->schema, CheckAs().role);
+			}
+		}
 		auto root = std::move(bound_info->query);
 
 		// create the logical operator
@@ -1322,7 +1392,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 				// push a projection casting to varchar
 				vector<unique_ptr<Expression>> select_list;
 				auto ref = make_uniq<BoundColumnRefExpression>(sql_types[0], query->GetColumnBindings()[0]);
-				auto cast_expr = BoundCastExpression::AddCastToType(context, std::move(ref), LogicalType::VARCHAR);
+				auto cast_expr = BoundCastExpression::AddCastToType(*this, std::move(ref), LogicalType::VARCHAR);
 				select_list.push_back(std::move(cast_expr));
 				auto proj = make_uniq<LogicalProjection>(GenerateTableIndex(), std::move(select_list));
 				proj->AddChild(std::move(query));
@@ -1334,10 +1404,12 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			SetCatalogLookupCallback(dependency_callback);
 			// Bind the underlying type
 			BindLogicalType(create_type_info.type);
+			RequireStoredTypes(create_type_info, catalog);
 		}
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
+		Check<StatementRule::CreateSecret>(CheckAs()).Require();
 		CatalogTransaction transaction = CatalogTransaction(Catalog::GetSystemCatalog(context), context);
 		return_type = StatementReturnType::QUERY_RESULT;
 
@@ -1428,20 +1500,71 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::ROLE_ENTRY:
+		BindCreateRole(stmt.info->Cast<CreateRoleInfo>());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;
-	case CatalogType::TABLESPACE_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY: {
+		auto &info = stmt.info->Cast<CreateTablespaceInfo>();
+		const StatementNaming naming {{}, {&info.GetQualifiedName().Name(), 1}};
+		Check<StatementRule::CreateTablespace>(CheckAs()).Require(&naming);
+		info.permissions.owner = info.owner.empty() ? CheckAs().role : BindRole(info.owner)->oid;
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
-	case CatalogType::DATABASE_ENTRY:
+	}
+	case CatalogType::DATABASE_ENTRY: {
+		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
+		auto &role = CheckAs();
+		optional_ptr<RoleEntry> owner;
+		if (!info.owner.empty()) {
+			owner = BindRole(RoleSpec(info.owner));
+		}
+		Check<StatementRule::CreateDatabase>(role).Require();
+		if (owner) {
+			Check<AclMode::SetRole>(context, role, *owner).Require();
+			info.permissions.owner = owner->oid;
+		} else if (!role.IsSystem()) {
+			info.permissions.owner = role.role;
+		}
+		if (!info.tablespace.empty()) {
+			entry_retriever.GetEntry(
+			    EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, QualifiedName(info.tablespace), AclMode::Create),
+			    OnEntryNotFound::RETURN_NULL);
+		}
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_DATABASE, std::move(stmt.info));
 		break;
+	}
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
-		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
-		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
-		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
+		auto &catalog = Catalog::GetCatalog(context, BindCatalog(stmt.info->GetQualifiedName().Catalog()));
+		auto database =
+		    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName())),
+		                      OnEntryNotFound::RETURN_NULL);
+		if (auto &role = CheckAs(); !role.IsSystem() && database) {
+			entry_retriever.GetEntry(
+			    EntryLookupInfo(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+			                    QualifiedName(catalog.GetName(), Identifier(),
+			                                  Identifier(stmt.info->Cast<CreateForeignServerInfo>().fdw_name)),
+			                    AclMode::Usage));
+			stmt.info->permissions.owner = role.role;
+		}
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER, std::move(stmt.info));
+		break;
+	}
+	case CatalogType::SUBSCRIPTION_ENTRY: {
+		Check<StatementRule::CreateSubscription>(CheckAs()).Require();
+		auto &catalog = Catalog::GetCatalog(context, BindCatalog(stmt.info->GetQualifiedName().Catalog()));
+		stmt.info->SetQualifiedName(
+		    QualifiedName(catalog.GetName(), Identifier(), stmt.info->GetQualifiedName().Name()));
+		if (auto &role = CheckAs(); !role.IsSystem()) {
+			entry_retriever.GetEntry(
+			    EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName()), AclMode::Create),
+			    OnEntryNotFound::RETURN_NULL);
+			stmt.info->permissions.owner = role.role;
+			catalog.RequireSubscription(context, role, stmt.info->Cast<CreateSubscriptionInfo>());
+		}
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
+		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION, std::move(stmt.info));
 		break;
 	}
 	case CatalogType::TOKENIZER_ENTRY: {

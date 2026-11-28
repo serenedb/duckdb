@@ -1,8 +1,6 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/statement/merge_into_statement.hpp"
 #include "duckdb/parser/query_node/merge_query_node.hpp"
-#include "duckdb/parser/tableref.hpp"
-#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/tableref/bound_joinref.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression_binder/where_binder.hpp"
@@ -19,6 +17,8 @@
 #include "duckdb/planner/expression_binder/projection_binder.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/storage/data_table.hpp"
+
+#include <absl/algorithm/container.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -39,7 +39,8 @@ vector<unique_ptr<ParsedExpression>> GenerateColumnReferences(Binder &binder, co
 unique_ptr<BoundMergeIntoAction>
 Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, LogicalGet &get, TableIndex proj_index,
                         vector<unique_ptr<Expression>> &expressions, MergeIntoAction &action,
-                        const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names) {
+                        const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names,
+                        const RelationChecks &target, bool inserts_checked) {
 	auto result = make_uniq<BoundMergeIntoAction>();
 	result->action_type = action.action_type;
 	result->on_conflict_update = action.on_conflict_update;
@@ -79,6 +80,8 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		unique_ptr<LogicalOperator> fake_root;
 		BindUpdateSet(proj_index, fake_root, *action.update_info, table, result->columns, merge_into.bound_defaults,
 		              result->expressions, expressions);
+		RequireColumns(table, target, AclMode::Update, action.update_info->columns);
+		RequireIndexCalls(table, result->columns);
 
 		// bind any additional columns that need to be bound for update constraints
 		// FIXME: this is pretty hacky
@@ -117,6 +120,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		break;
 	}
 	case MergeActionType::MERGE_INSERT: {
+		RequireIndexCalls(table, nullptr);
 		if (action.column_order == InsertColumnOrder::INSERT_BY_NAME) {
 			// INSERT BY NAME - get the name list from the source binder and push it into the table
 			if (!action.insert_columns.empty()) {
@@ -139,6 +143,11 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		}
 		CheckInsertColumnCountMismatch(expected_types.size(), action.expressions.size(), !action.insert_columns.empty(),
 		                               table.name);
+		if (!inserts_checked) {
+			RequireColumns(table, target, AclMode::Insert,
+			               std::span<const LogicalIndex>(named_column_map)
+			                   .first(MinValue<idx_t>(action.expressions.size(), named_column_map.size())));
+		}
 		// explicit expressions - plan them
 		for (idx_t i = 0; i < action.expressions.size(); i++) {
 			auto &column = table.GetColumns().GetColumn(named_column_map[i]);
@@ -232,11 +241,17 @@ BoundStatement Binder::Bind(MergeIntoStatement &stmt) {
 	return Bind(*stmt.node);
 }
 
-BoundStatement Binder::BindNode(MergeQueryNode &node) {
+BoundStatement Binder::BindNode(MergeQueryNode &node, bool inserts_checked) {
 	// bind the target table
 	auto target_binder = Binder::CreateBinder(context, this);
 	auto table_alias = node.target->alias;
-	auto bound_table = target_binder->Bind(*node.target);
+	const bool deletes = absl::c_any_of(node.actions, [](const auto &condition) {
+		return absl::c_any_of(condition.second, [](const unique_ptr<MergeIntoAction> &action) {
+			return action->action_type == MergeActionType::MERGE_DELETE;
+		});
+	});
+	auto bound_table =
+	    target_binder->BindTarget(*node.target, TableRefUse::DML_TARGET, deletes ? AclMode::Delete : AclMode::NoRights);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only merge into base tables!");
 	}
@@ -248,17 +263,14 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	if (target_get.function.verify_dml_target) {
 		target_get.function.verify_dml_target(context, target_get.bind_data.get());
 	}
-	if (node.target->type == TableReferenceType::BASE_TABLE) {
-		// A catalog may delegate the scan of its table to a storage table in
-		// another catalog; the merge targets the entry the name resolves to.
-		auto &target_ref = node.target->Cast<BaseTableRef>();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.GetQualifiedName());
-		auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
-		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
-			table_ptr = &resolved->Cast<TableCatalogEntry>();
-		}
+	// A catalog may delegate the scan of its table to a storage table in
+	// another catalog; the merge targets the entry the name resolves to.
+	auto resolved = target_binder->bind_context.GetBinding(target_get.table_index)->GetStandardEntry();
+	if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+		table_ptr = &resolved->Cast<TableCatalogEntry>();
 	}
 	auto &table = *table_ptr;
+	const auto target = ChecksOf(table);
 
 	bool has_triggers = false;
 	auto transaction = table.ParentCatalog().GetCatalogTransaction(context);
@@ -317,7 +329,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	vector<unique_ptr<Expression>> projection_expressions;
 
 	// bind table constraints/default values in case these are referenced
-	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, table.ParentSchema(context));
+	BindDefaultValues(table, merge_into->bound_defaults);
 
 	merge_into->bound_constraints = BindConstraints(table);
 
@@ -336,8 +348,9 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		vector<unique_ptr<BoundMergeIntoAction>> bound_actions;
 		for (auto &action : entry.second) {
 			CheckMergeAction(entry.first, action->action_type);
-			bound_actions.push_back(action_binder.BindMergeAction(
-			    *merge_into, table, get, proj_index, projection_expressions, *action, source_aliases, source_names));
+			bound_actions.push_back(action_binder.BindMergeAction(*merge_into, table, get, proj_index,
+			                                                      projection_expressions, *action, source_aliases,
+			                                                      source_names, target, inserts_checked));
 		}
 		merge_into->actions.emplace(entry.first, std::move(bound_actions));
 	}
@@ -391,7 +404,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		for (auto &action : entry.second) {
 			CheckMergeAction(entry.first, action->action_type);
 			bound_actions.push_back(BindMergeAction(*merge_into, table, get, proj_index, projection_expressions,
-			                                        *action, source_aliases, source_names));
+			                                        *action, source_aliases, source_names, target, inserts_checked));
 		}
 		merge_into->actions.emplace(entry.first, std::move(bound_actions));
 	}
@@ -483,7 +496,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		// add the merge_action virtual column
 		virtual_column_map_t virtual_columns;
 		virtual_columns.insert(make_pair(VIRTUAL_COLUMN_START, TableColumn("merge_action", LogicalType::VARCHAR)));
-		return BindReturning(std::move(node.returning_list), table, table_alias, merge_table_index,
+		return BindReturning(node, std::move(node.returning_list), table, target, table_alias, merge_table_index,
 		                     std::move(index_as_logicaloperator), std::move(virtual_columns));
 	}
 

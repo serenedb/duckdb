@@ -90,8 +90,8 @@
       {
         "id": 16484,
         "name": "permissions",
-        "type": "Permissions",
-        "default": "Permissions()"
+        "type": "CreatePermissions",
+        "default": "CreatePermissions()"
       },
       {
         "id": 16485,
@@ -361,6 +361,18 @@
         "type": "idx_t",
         "default": 0,
         "version": "sdb_v1"
+      },
+      {
+        "id": 16587,
+        "name": "column_acls",
+        "type": "vector<ColumnAcl>",
+        "default": "vector<ColumnAcl>()"
+      },
+      {
+        "id": 16588,
+        "name": "name_bindings",
+        "type": "vector<NameBinding>",
+        "default": "vector<NameBinding>()"
       }
     ],
     "constructor": [
@@ -669,6 +681,23 @@
         "id": 201,
         "name": "options",
         "type": "case_insensitive_map_t<Value>"
+      },
+      {
+        "id": 202,
+        "name": "settings",
+        "type": "vector<DatabaseSetting>"
+      },
+      {
+        "id": 203,
+        "name": "connection_limit",
+        "type": "int32_t",
+        "default": "-1"
+      },
+      {
+        "id": 204,
+        "name": "allow_connections",
+        "type": "bool",
+        "default": "true"
       }
     ],
     "methods": {
@@ -736,6 +765,27 @@
         "id": 201,
         "name": "location",
         "type": "string"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateForeignDataWrapperInfo",
+    "base": "CreateInfo",
+    "enum": "FOREIGN_DATA_WRAPPER_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_foreign_data_wrapper_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
       }
     ],
     "methods": {
@@ -849,6 +899,11 @@
         "id": 217,
         "name": "relations",
         "type": "vector<SubscriptionRelation>"
+      },
+      {
+        "id": 218,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
       }
     ],
     "methods": {

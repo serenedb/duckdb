@@ -96,9 +96,10 @@ unique_ptr<GlobalTableFunctionState> DuckDBTablesInit(ClientContext &context, Ta
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 
 	// scan all the schemas for tables and collect themand collect them
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type == CatalogType::TABLE_ENTRY) {
 				result->entries.emplace_back(context, entry.Cast<TableCatalogEntry>());
 			}
@@ -194,6 +195,7 @@ void DuckDBTablesFun::RegisterFunction(BuiltinFunctions &set) {
 	    TableFunction(set.SystemObjectName("tables"), {}, DuckDBTablesFunction, DuckDBTablesBind, DuckDBTablesInit);
 	function.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	function.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	function.required_capability = RoleCapability::Superuser;
 	set.AddFunction(std::move(function));
 }
 

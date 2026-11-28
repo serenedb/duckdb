@@ -107,9 +107,10 @@ unique_ptr<GlobalTableFunctionState> DuckDBIndexesInit(ClientContext &context, T
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 
 	// scan all the schemas for tables and collect them
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
 			result->entries.emplace_back(context, entry.Cast<IndexCatalogEntry>());
 		});
 	};
@@ -182,6 +183,7 @@ void DuckDBIndexesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn(set.SystemObjectName("indexes"), {}, DuckDBIndexesFunction, DuckDBIndexesBind, DuckDBIndexesInit);
 	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

@@ -1,0 +1,392 @@
+#include "duckdb/catalog/role_graph.hpp"
+
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/role_entry.hpp"
+#include "duckdb/common/atomic.hpp"
+#include "duckdb/common/types/hash.hpp"
+#include "duckdb/common/unordered_set.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
+
+#include <absl/algorithm/container.h>
+#include <algorithm>
+#include <bit>
+
+namespace duckdb {
+
+string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
+	string result;
+	for (auto &named : ROLE_OPTIONS) {
+		if (HasOption(set_options, named.option)) {
+			result += " ";
+			result += named.keyword;
+		} else if (HasOption(clear_options, named.option)) {
+			result += " NO";
+			result += named.keyword;
+		}
+	}
+	return result;
+}
+
+static bool FilterMayContain(std::span<const uint64_t> filter, idx_t member) {
+	const auto hash = Hash(uint64_t(member));
+	const auto mask = filter.size() * 64 - 1;
+	const auto first = hash & mask;
+	const auto second = (hash >> 32) & mask;
+	return ((filter[first >> 6] >> (first & 63)) & (filter[second >> 6] >> (second & 63)) & 1) != 0;
+}
+
+static idx_t FilterWords(idx_t members) {
+	return std::bit_ceil(std::max<idx_t>(1, (members + 3) / 4));
+}
+
+const RoleAccess &RoleAccess::System() {
+	static const RoleAccess system = [] {
+		RoleAccess access;
+		access.options = ~RoleOption::None;
+		access.is_superuser = true;
+		return access;
+	}();
+	return system;
+}
+
+bool RoleAccess::Uses(idx_t other) const {
+	return other == role || (!closure_filter.empty() && FilterMayContain(closure_filter, other) &&
+	                         absl::c_binary_search(closure, other));
+}
+
+bool RoleAccess::CanSet(idx_t other) const {
+	return is_superuser || other == role || absl::c_binary_search(settable, other);
+}
+
+static bool Reaches(const RoleAccess &access, const AclItem &item) {
+	return item.grantee == ACL_ID_PUBLIC || access.Uses(item.grantee);
+}
+
+static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclMode AclItem::*field) {
+	AclMode held = AclMode::NoRights;
+	for (auto &item : acl) {
+		if (Reaches(access, item)) {
+			held |= item.*field;
+		}
+	}
+	return held;
+}
+
+AclMode RoleAccess::PredefinedRoleModes(CatalogType type) const {
+	AclMode modes = AclMode::NoRights;
+	if (!Uses(RoleCapability::ReadAllData | RoleCapability::WriteAllData | RoleCapability::Maintain)) {
+		return modes;
+	}
+	auto &kind = ObjectKindOf(type);
+	if (Uses(RoleCapability::ReadAllData)) {
+		modes |= kind.read_all_data;
+	}
+	if (Uses(RoleCapability::WriteAllData)) {
+		modes |= kind.write_all_data;
+	}
+	if (Uses(RoleCapability::Maintain)) {
+		modes |= kind.maintain;
+	}
+	return modes;
+}
+
+static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bool uses_default, AclMode defaults,
+                   CatalogType type, AclMode need, bool any) {
+	if (need == AclMode::NoRights) {
+		return false;
+	}
+	const auto done = [&](AclMode have) {
+		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
+	};
+	AclMode have = access.PredefinedRoleModes(type);
+	if (uses_default) {
+		return done(have | defaults);
+	}
+	if (done(have)) {
+		return true;
+	}
+	for (auto &item : stored) {
+		if (Reaches(access, item)) {
+			have |= item.privs;
+			if (done(have)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool RoleAccess::Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const {
+	return Allows(*this, acl, acl.empty(), ObjectKindOf(type).public_privileges, type, need, false);
+}
+
+static AclMode DefaultModes(const RoleAccess &access, CatalogType type, const Permissions &permissions) {
+	auto &kind = ObjectKindOf(type);
+	return permissions.UsesDefaultAcl() && access.MemberOf(permissions.owner) ? kind.privileges | kind.public_privileges
+	                                                                          : kind.public_privileges;
+}
+
+bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {
+	return Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), DefaultModes(*this, type, permissions), type,
+	              need, false);
+}
+
+bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
+	return Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), DefaultModes(*this, type, permissions), type,
+	              need, true);
+}
+
+AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
+	return Held(*this, acl, &AclItem::privs);
+}
+
+AclMode RoleAccess::GrantableModes(std::span<const AclItem> acl) const {
+	return Held(*this, acl, &AclItem::grant_option);
+}
+
+static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node> &nodes, idx_t role,
+                               bool Membership::*option) {
+	unordered_set<idx_t> seen {role};
+	vector<idx_t> work {role};
+	while (!work.empty()) {
+		auto it = nodes.find(work.back());
+		work.pop_back();
+		if (it == nodes.end()) {
+			continue;
+		}
+		for (auto &edge : it->second.member_of) {
+			if ((!option || edge.*option) && nodes.count(edge.role) && seen.insert(edge.role).second) {
+				work.push_back(edge.role);
+			}
+		}
+	}
+	vector<idx_t> result(seen.begin(), seen.end());
+	absl::c_sort(result);
+	return result;
+}
+
+static idx_t NextSnapshotVersion() {
+	static atomic<idx_t> versions {0};
+	return ++versions;
+}
+
+SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p)
+    : version(NextSnapshotVersion()), nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)) {
+	vector<Role> roles_p;
+	roles_p.reserve(nodes.size());
+	for (auto &[oid, node] : nodes) {
+		by_name.emplace(node.name, oid);
+		auto closure = Reachable(nodes, oid, &Membership::inherit_option);
+		vector<idx_t> administered;
+		auto memberships = Reachable(nodes, oid, nullptr);
+		for (auto member : memberships) {
+			for (auto &edge : nodes.find(member)->second.member_of) {
+				if (edge.admin_option) {
+					administered.push_back(edge.role);
+				}
+			}
+		}
+		roles_p.push_back(Role {oid, node.options, std::move(closure), Reachable(nodes, oid, &Membership::set_option),
+		                        std::move(administered), std::move(memberships)});
+	}
+	absl::c_sort(roles_p, [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
+	idx_t total = 0;
+	for (auto &role : roles_p) {
+		std::erase(role.closure, role.role);
+		std::erase(role.memberships, role.role);
+		absl::c_sort(role.administered);
+		const auto repeated = std::ranges::unique(role.administered);
+		role.administered.erase(repeated.begin(), repeated.end());
+		total += role.closure.size() + role.settable.size() + role.administered.size() + role.memberships.size();
+		if (!role.closure.empty()) {
+			total += FilterWords(role.closure.size());
+		}
+	}
+	arena.reserve(total);
+	roles.reserve(roles_p.size());
+	for (auto &role : roles_p) {
+		RoleAccess access;
+		access.role = role.role;
+		access.options = role.options;
+		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
+		access.owns_builtins =
+		    role.role == BOOTSTRAP_ROLE_OID || absl::c_binary_search(role.closure, BOOTSTRAP_ROLE_OID);
+		if (!role.closure.empty()) {
+			const auto words = FilterWords(role.closure.size());
+			const auto filter_begin = arena.size();
+			arena.resize(filter_begin + words, 0);
+			const auto mask = words * 64 - 1;
+			for (auto member : role.closure) {
+				const auto hash = Hash(uint64_t(member));
+				const auto first = hash & mask;
+				const auto second = (hash >> 32) & mask;
+				arena[filter_begin + (first >> 6)] |= uint64_t(1) << (first & 63);
+				arena[filter_begin + (second >> 6)] |= uint64_t(1) << (second & 63);
+			}
+			access.closure_filter = std::span<const uint64_t>(arena.data() + filter_begin, words);
+		}
+		const auto begin = arena.size();
+		arena.insert(arena.end(), role.closure.begin(), role.closure.end());
+		access.closure = std::span<const idx_t>(arena.data() + begin, role.closure.size());
+		const auto settable_begin = arena.size();
+		arena.insert(arena.end(), role.settable.begin(), role.settable.end());
+		access.settable = std::span<const idx_t>(arena.data() + settable_begin, role.settable.size());
+		const auto administered_begin = arena.size();
+		arena.insert(arena.end(), role.administered.begin(), role.administered.end());
+		access.administered = std::span<const idx_t>(arena.data() + administered_begin, role.administered.size());
+		const auto memberships_begin = arena.size();
+		arena.insert(arena.end(), role.memberships.begin(), role.memberships.end());
+		access.memberships = std::span<const idx_t>(arena.data() + memberships_begin, role.memberships.size());
+		for (const auto predefined : PREDEFINED_ROLES) {
+			if (access.Uses(PredefinedRoleOid(predefined))) {
+				access.predefined |= predefined;
+			}
+		}
+		roles.push_back(access);
+	}
+	const auto database_owner = PredefinedRoleOid(RoleCapability::DatabaseOwner);
+	if (!nodes.count(database_owner)) {
+		return;
+	}
+	for (auto &database : database_owners) {
+		const auto owner = database.second;
+		if (derived.count(owner) || !nodes.count(owner)) {
+			continue;
+		}
+		auto implied = nodes;
+		implied[owner].member_of.push_back(Membership {database_owner, database_owner, false, true, true});
+		derived.emplace(owner,
+		                make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>()));
+	}
+}
+
+SecuritySnapshot::~SecuritySnapshot() {
+}
+
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &catalog, CatalogTransaction transaction) {
+	unordered_map<idx_t, Node> nodes;
+	catalog.Scan(transaction, CatalogType::ROLE_ENTRY, [&](CatalogEntry &entry) {
+		auto &role = entry.Cast<RoleEntry>();
+		auto member_of = role.MemberOf();
+		absl::c_sort(member_of, [](const Membership &left, const Membership &right) {
+			return left.role != right.role ? left.role < right.role : left.grantor < right.grantor;
+		});
+		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), std::move(member_of)};
+	});
+	unordered_map<string, idx_t> database_owners;
+	catalog.Scan(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
+		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
+	});
+	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners));
+}
+
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
+	auto owner = database_owners.find(database.GetIdentifierName());
+	if (owner == database_owners.end()) {
+		return nullptr;
+	}
+	auto result = derived.find(owner->second);
+	return result == derived.end() ? nullptr : result->second;
+}
+
+optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
+	auto it =
+	    absl::c_lower_bound(roles, role, [](const RoleAccess &access, idx_t value) { return access.role < value; });
+	if (it == roles.end() || it->role != role) {
+		return nullptr;
+	}
+	return &*it;
+}
+
+optional_ptr<const SecuritySnapshot::Node> SecuritySnapshot::Find(idx_t role) const {
+	auto it = nodes.find(role);
+	return it == nodes.end() ? nullptr : &it->second;
+}
+
+optional_idx SecuritySnapshot::FindByName(std::string_view name) const {
+	auto it = by_name.find(name);
+	return it == by_name.end() ? optional_idx() : optional_idx(it->second);
+}
+
+std::string_view SecuritySnapshot::NameOf(idx_t role) const {
+	auto node = Find(role);
+	return node ? std::string_view(node->name) : std::string_view();
+}
+
+vector<idx_t> SecuritySnapshot::InheritedRoles(idx_t role) const {
+	vector<idx_t> result {role};
+	for (idx_t i = 0; i < result.size(); i++) {
+		auto node = Find(result[i]);
+		if (!node) {
+			continue;
+		}
+		for (auto &edge : node->member_of) {
+			if (edge.inherit_option && !absl::c_linear_search(result, edge.role)) {
+				result.push_back(edge.role);
+			}
+		}
+	}
+	return result;
+}
+
+optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
+	if (member == role) {
+		return optional_idx();
+	}
+	for (auto current : InheritedRoles(member)) {
+		auto node = Find(current);
+		if (node && absl::c_any_of(node->member_of,
+		                           [&](const Membership &edge) { return edge.role == role && edge.admin_option; })) {
+			return current;
+		}
+	}
+	return optional_idx();
+}
+
+void SessionSecurity::SetCurrentRole(ClientContext &context, idx_t role) {
+	current_role_id = role;
+	Install(context, context.db->GetSecurity());
+}
+
+void SessionSecurity::Install(ClientContext &context, shared_ptr<const SecuritySnapshot> installed) {
+	database = ClientData::Get(context).default_database;
+	auto for_database = installed ? installed->ForDatabase(database) : nullptr;
+	base = std::move(installed);
+	snapshot = for_database ? std::move(for_database) : base;
+	if (current_role_id == DConstants::INVALID_INDEX) {
+		current_role = &RoleAccess::System();
+		return;
+	}
+	current_role = snapshot ? snapshot->Access(current_role_id) : nullptr;
+	if (!current_role) {
+		unknown_role = RoleAccess {.role = current_role_id};
+		current_role = &unknown_role;
+	}
+}
+
+void SessionSecurity::Refresh(ClientContext &context) {
+	auto &default_database = ClientData::Get(context).default_database;
+	if (context.transaction.HasActiveTransaction()) {
+		auto &cluster = Catalog::GetSystemCatalog(context);
+		auto cluster_transaction = MetaTransaction::Get(context).TryGetTransaction(cluster.GetAttached());
+		if (cluster_transaction && !cluster_transaction->IsReadOnly()) {
+			const auto version = cluster.GetCatalogVersion(context).GetIndex();
+			if (!local || local_version != version) {
+				local_version = version;
+				local = SecuritySnapshot::Build(cluster, cluster.GetCatalogTransaction(context));
+			}
+			if (base != local || database != default_database) {
+				Install(context, local);
+			}
+			return;
+		}
+	}
+	if (context.db->CurrentSecurity() != base.get() || database != default_database) {
+		Install(context, context.db->GetSecurity());
+	}
+}
+
+} // namespace duckdb

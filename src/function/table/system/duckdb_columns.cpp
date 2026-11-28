@@ -103,9 +103,10 @@ static unique_ptr<GlobalTableFunctionState> DuckDBColumnsInit(ClientContext &con
 
 	// scan all the schemas for tables and views and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	auto schemas = Catalog::GetAllSchemas(retriever, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(retriever, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			result->entries.push_back(DuckDBColumnsData::ListedRelation {schema, entry});
 		});
 	}
@@ -453,6 +454,7 @@ void DuckDBColumnsFun::RegisterFunction(BuiltinFunctions &set) {
 	columns.table_scan_progress = DuckDBColumnsProgress;
 	columns.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	columns.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	columns.required_capability = RoleCapability::Superuser;
 	set.AddFunction(columns);
 }
 

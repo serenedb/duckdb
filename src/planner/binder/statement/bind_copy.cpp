@@ -668,7 +668,7 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 
 	// lookup the table to copy into
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
-	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
+	auto &table = entry_retriever.GetEntry<TableCatalogEntry>(stmt.info->GetQualifiedName());
 	const bool postgres_csv =
 	    stmt.info->format == "csv" && table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
 	if (postgres_csv) {
@@ -726,7 +726,7 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	D_ASSERT(!source_bindings.empty());
 
 	auto copy_from_function = function.copy_from_function;
-	CopyFromFunctionBindInput input(*stmt.info, copy_from_function);
+	CopyFromFunctionBindInput input(*stmt.info, copy_from_function, table);
 	auto function_data = function.copy_from_bind(context, input, expected_names, expected_types);
 	auto get = make_uniq<LogicalGet>(source_bindings[0].table_index, BoundTableFunction(copy_from_function),
 	                                 std::move(function_data), expected_types, expected_names);
@@ -897,6 +897,12 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	// bind the copy options
 	BindCopyOptions(*stmt.info);
+	ClientContext::AccessScope access_scope;
+	access_scope.role = &CheckAs();
+	access_scope.properties = &GetStatementProperties();
+	ClientContext::AccessScopeGuard access_guard(context, access_scope);
+	context.CheckFileAccess(stmt.info->file_path,
+	                        stmt.info->is_from ? RoleCapability::ReadServerFiles : RoleCapability::WriteServerFiles);
 	if (stmt.info->is_from && stmt.info->parsed_options.find("partition_path") != stmt.info->parsed_options.end()) {
 		throw InvalidInputException("Option partition_path is not supported for reading - only for writing");
 	}

@@ -15,6 +15,7 @@
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/function/macro_function.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression_binder/table_function_binder.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -257,6 +258,10 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	// the function binder has placed them already, but not for a table in-out call or a direct bind
 	table_function.GetSignature().FillNamedDefaults(context, named_parameters);
 	table_function.SetCallArguments(parameters, named_parameters);
+	ClientContext::AccessScope access_scope;
+	access_scope.role = &CheckAs();
+	access_scope.properties = &GetStatementProperties();
+	ClientContext::AccessScopeGuard access_guard(context, access_scope);
 	if (table_function.bind || table_function.bind_replace || table_function.bind_operator) {
 		TableFunctionBindInput bind_input(parameters, named_parameters, input_table_types, input_table_names,
 		                                  table_function.function_info.get(), this, table_function, ref, input_plan);
@@ -362,6 +367,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	auto get = make_uniq<LogicalGet>(bind_index, table_function, std::move(bind_data), return_types, return_names,
 	                                 virtual_columns);
 	get->bind_info = ref.bind_info;
+	get->bound_role = BoundRole();
 	get->parameters = parameters;
 	get->named_parameters = named_parameters;
 	get->source_ordinality = ref.with_ordinality;
@@ -376,12 +382,17 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 		}
 	}
 
-	if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY && correlated_columns.empty()) {
-		bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
-		                              get->GetMutableColumnIds(), get->GetTable().get(), std::move(virtual_columns),
-		                              std::move(row_id_columns));
-		AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
+	// now add the table function to the bind context so its columns can be bound
+	auto table = get->GetTable();
+	bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
+	                              get->GetMutableColumnIds(), table.get(), std::move(virtual_columns),
+	                              std::move(row_id_columns));
+	if (table) {
+		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
+	}
+	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 
+	if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY && correlated_columns.empty()) {
 		auto window_index = GenerateTableIndex();
 		auto window = make_uniq<duckdb::LogicalWindow>(window_index);
 		auto row_number = GetBuiltinWindowFunction(context, RowNumberFun::Name, {})->Bind(context);
@@ -408,12 +419,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 		result.plan = std::move(window);
 		return result;
 	}
-	// now add the table function to the bind context so its columns can be bound
 	BoundStatement result;
-	bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
-	                              get->GetMutableColumnIds(), get->GetTable().get(), std::move(virtual_columns),
-	                              std::move(row_id_columns));
-	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 	result.names = std::move(return_names);
 	result.types = std::move(return_types);
 	result.plan = std::move(get);
@@ -468,9 +474,11 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, QualifiedName(fexpr.FunctionName()),
 	                                      error_context);
 	auto bound_name = BindTableName(fexpr.GetQualifiedName());
-	auto func_catalog_ptr = fexpr.IsBuiltin() ? GetBuiltinEntry(table_function_lookup, OnEntryNotFound::THROW_EXCEPTION)
-	                                          : GetCatalogEntry(EntryLookupInfo(table_function_lookup, bound_name),
-	                                                            OnEntryNotFound::RETURN_NULL);
+	auto func_catalog_ptr =
+	    fexpr.IsBuiltin()
+	        ? GetBuiltinEntry(table_function_lookup, OnEntryNotFound::THROW_EXCEPTION)
+	        : GetCatalogEntry(EntryLookupInfo(table_function_lookup, bound_name, fexpr.PositionalArgumentCount()),
+	                          OnEntryNotFound::RETURN_NULL);
 
 	// DuckDB's typed catalog lookup can return a MACRO_ENTRY even when asked
 	// for TABLE_FUNCTION_ENTRY (internal fallback). If we found a MACRO_ENTRY
@@ -525,10 +533,6 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	auto &func_catalog = *func_catalog_ptr;
 	if (func_catalog.type == CatalogType::MACRO_ENTRY || func_catalog.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro_func = func_catalog.Cast<MacroCatalogEntry>();
-		if (macro_func.is_procedure && !allow_procedure_call) {
-			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.",
-			                      fexpr.FunctionName().GetIdentifierName());
-		}
 		optional_ptr<MacroFunction> definition;
 		auto query_node = BindTableMacro(fexpr, macro_func, 0, definition);
 		D_ASSERT(query_node);
@@ -593,6 +597,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 		error.AddQueryLocation(ref);
 		error.Throw();
 	}
+	Execute(function);
 	// copied out of the set: BindTableFunctionInternal fills in the bound return types
 	BoundTableFunction table_function(function.functions.GetFunctionByOffset(best_function_idx.GetIndex()));
 

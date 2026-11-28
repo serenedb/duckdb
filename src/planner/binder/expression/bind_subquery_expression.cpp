@@ -111,6 +111,9 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 	auto subquery_binder = Binder::CreateBinder(context, binder);
 	subquery_binder->SetCanContainNulls(true);
 	subquery_binder->SetInsideSubquery();
+	if (auto &body = expr.GetFunctionBody()) {
+		subquery_binder->BindAsFunctionBody(*body);
+	}
 
 	subquery_binder->BeginSubqueryBind(binder, *this);
 	auto bound_node = subquery_binder->BindNode(*expr.Subquery()->node);
@@ -190,7 +193,7 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 				    expr, "Cannot compare values of type %s and %s in IN/ANY/ALL clause - an explicit cast is required",
 				    child_type.ToString(), subquery_type);
 			}
-			child = BoundCastExpression::AddCastToType(context, std::move(child), compare_type);
+			child = BoundCastExpression::AddCastToType(binder, std::move(child), compare_type);
 			result->GetChildrenMutable().push_back(std::move(child));
 			for (idx_t child_idx = 0; child_idx < bound_node.types.size(); child_idx++) {
 				auto &subquery_child_type = bound_node.types[child_idx];
@@ -210,7 +213,7 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 					    "Cannot compare values of type %s and %s in IN/ANY/ALL clause - an explicit cast is required",
 					    child_type.ToString(), subquery_type);
 				}
-				child = BoundCastExpression::AddCastToType(context, std::move(child), compare_type);
+				child = BoundCastExpression::AddCastToType(binder, std::move(child), compare_type);
 				result->ChildTypesMutable().push_back(subquery_type);
 				result->ChildTargetsMutable().push_back(compare_type);
 				result->GetChildrenMutable().push_back(std::move(child));

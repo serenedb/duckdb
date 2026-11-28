@@ -1,5 +1,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/function/aggregate_function.hpp"
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/planner/binder.hpp"
 
 #include "duckdb/execution/operator/aggregate/aggregate_object.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
@@ -184,8 +186,25 @@ void BoundAggregateFunction::ReplaceImplementation(const AggregateFunction &func
 BindAggregateFunctionInput::BindAggregateFunctionInput(ClientContext &context_p,
                                                        BoundAggregateFunction &bound_function_p,
                                                        vector<unique_ptr<Expression>> &arguments_p,
-                                                       const vector<Identifier> &argument_names_p)
-    : BindFunctionInput(context_p, bound_function_p, arguments_p, &argument_names_p), bound_function(bound_function_p) {
+                                                       const vector<Identifier> &argument_names_p,
+                                                       optional_ptr<Binder> binder_p)
+    : BindFunctionInput(context_p, bound_function_p, arguments_p, &argument_names_p), bound_function(bound_function_p),
+      binder(binder_p) {
+}
+
+Binder &BindAggregateFunctionInput::GetBinder() {
+	if (!binder) {
+		throw InternalException("Function %s cannot be bound without a Binder!", bound_function.GetName());
+	}
+	return *binder;
+}
+
+const RoleAccess &BindAggregateFunctionInput::Role() const {
+	return binder ? binder->Role() : duckdb::Role(GetClientContext());
+}
+
+optional_idx BindAggregateFunctionInput::BoundRole() const {
+	return binder ? binder->BoundRole() : optional_idx();
 }
 
 BindAggregateFunctionInput::BindAggregateFunctionInput(ClientContext &context_p,

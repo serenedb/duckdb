@@ -148,6 +148,7 @@ public:
 	//! Returns the objects that should be dropped alongside the object
 	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
 	                                                               bool cascade);
+	catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,

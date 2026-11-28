@@ -28,7 +28,7 @@ BindResult ExpressionBinder::BindExpression(ParameterExpression &expr, idx_t dep
 			if (is_literal) {
 				return BindResult(std::move(constant));
 			}
-			auto cast = BoundCastExpression::AddCastToType(context, std::move(constant), return_type);
+			auto cast = BoundCastExpression::AddCastToType(binder, std::move(constant), return_type);
 			return BindResult(std::move(cast));
 		}
 	}

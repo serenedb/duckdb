@@ -1,11 +1,13 @@
 #include "duckdb/execution/operator/helper/physical_reset.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enums/set_scope.hpp"
 #include "duckdb/execution/operator/helper/physical_set.hpp"
 
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -28,7 +30,7 @@ static bool ResetToStartValue(ClientContext &context, const Identifier &name, Se
 	if (entry == start_values.end()) {
 		return false;
 	}
-	PhysicalSet::SetVariable(context, name, effective_scope, entry->second);
+	PhysicalSet::SetVariable(context, name, effective_scope, entry->second, false);
 	return true;
 }
 
@@ -161,10 +163,7 @@ void PhysicalReset::ResetOption(ClientContext &context, DBConfig &config, const 
 
 SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                 OperatorSourceInput &input) const {
-	// RESET LOCAL is only meaningful inside a transaction; reject outside.
-	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
-		throw InvalidInputException("RESET LOCAL can only be used in transaction blocks");
-	}
+	PhysicalSet::WarnOutsideTransaction(context.client, scope, "RESET LOCAL");
 	if (scope == SetScope::VARIABLE) {
 		// SQL user variables live in a separate namespace from configuration
 		// options. PhysicalSetVariable does not notify OnSettingChange
@@ -175,36 +174,47 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 		return SourceResultType::FINISHED;
 	}
 	if (name.empty()) {
-		ResetAll(context.client, scope);
+		ResetAll(context.client, scope, false);
 		return SourceResultType::FINISHED;
 	}
 	ResetVariable(context.client, Identifier(name.ToStdString()), scope);
 	return SourceResultType::FINISHED;
 }
 
-void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name, SetScope scope) {
+void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name, SetScope scope, bool check_access,
+                                  optional_ptr<const RoleAccess> role) {
 	auto &config = DBConfig::GetConfig(context);
 
 	// Single-target RESET: the handler call moved inside ResetOption /
 	// ResetExtensionVariable so no-op RESETs don't reach sdb's tracker.
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
-		ResetOption(context, config, *option, name.GetIdentifierName().c_str(),
-		            PhysicalSet::GetSettingScope(*option, scope));
+		const auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
+		if (check_access) {
+			Settings::CheckChange(role ? *role : Role(context), name, option->access, variable_scope);
+		}
+		ResetOption(context, config, *option, name.GetIdentifierName().c_str(), variable_scope);
 		return;
 	}
 	ExtensionOption extension_option;
 	if (!config.TryGetExtensionOption(name, extension_option)) {
+		if (Settings::IsCustomName(name)) {
+			PhysicalSet::SetCustomVariable(context, name, scope, Value(string()));
+			return;
+		}
 		Catalog::AutoloadExtensionByConfigName(context, name);
 		if (!config.TryGetExtensionOption(name, extension_option)) {
 			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 		}
 	}
-	ResetExtensionVariable(context, config, name, extension_option,
-	                       PhysicalSet::GetSettingScope(extension_option, scope));
+	const auto variable_scope = PhysicalSet::GetSettingScope(extension_option, scope);
+	if (check_access) {
+		Settings::CheckChange(role ? *role : Role(context), name, extension_option.access, variable_scope);
+	}
+	ResetExtensionVariable(context, config, name, extension_option, variable_scope);
 }
 
-void PhysicalReset::ResetAll(ClientContext &context, SetScope scope) {
+void PhysicalReset::ResetAll(ClientContext &context, SetScope scope, bool discard) {
 	// RESET ALL / RESET LOCAL ALL: reset every session-level option. Skip
 	// GLOBAL-scoped settings — those live DB-wide and PG's RESET ALL does not
 	// touch them.
@@ -223,10 +233,17 @@ void PhysicalReset::ResetAll(ClientContext &context, SetScope scope) {
 	}
 	for (auto &ext : config.GetExtensionSettings()) {
 		auto variable_scope = PhysicalSet::GetSettingScope(ext.second, scope);
-		if (ext.second.no_reset_all || variable_scope == SetScope::GLOBAL || !CanResetAt(ext.second, variable_scope)) {
+		if ((ext.second.no_reset_all && !(discard && ext.second.access.session_identity)) ||
+		    variable_scope == SetScope::GLOBAL || !CanResetAt(ext.second, variable_scope)) {
 			continue;
 		}
 		ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope);
+	}
+	if (scope == SetScope::GLOBAL) {
+		return;
+	}
+	for (auto &entry : ClientConfig::GetConfig(context).custom_settings) {
+		PhysicalSet::SetCustomVariable(context, Identifier(entry.first), scope, Value(string()));
 	}
 }
 

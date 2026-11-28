@@ -58,7 +58,8 @@ unique_ptr<GlobalTableFunctionState> DuckDBSchemasInit(ClientContext &context, T
 
 	// scan all the schemas and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	result->entries = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	result->entries = Catalog::GetAllSchemas(CatalogEntryRetriever::Internal(context), bind_data.include_hidden,
+	                                         bind_data.DatabaseFilter(context));
 
 	return std::move(result);
 }
@@ -123,6 +124,7 @@ void DuckDBSchemasFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn(set.SystemObjectName("schemas"), {}, DuckDBSchemasFunction, DuckDBSchemasBind, DuckDBSchemasInit);
 	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

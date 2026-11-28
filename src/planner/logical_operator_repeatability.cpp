@@ -114,6 +114,7 @@ static LogicalOperatorRepeatability ClassifyOperatorType(LogicalOperator &op) {
 	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
 	case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE:
 	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
+	case LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION:
 	case LogicalOperatorType::LOGICAL_EXPLAIN:
 	case LogicalOperatorType::LOGICAL_PREPARE:
 	case LogicalOperatorType::LOGICAL_EXECUTE:

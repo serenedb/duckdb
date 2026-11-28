@@ -8,8 +8,11 @@
 
 #pragma once
 
+#include "duckdb/parser/function_body.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/tableref.hpp"
+
+#include <optional>
 
 namespace duckdb {
 //! Represents a subquery
@@ -25,6 +28,7 @@ public:
 
 	//! The subquery
 	unique_ptr<SelectStatement> subquery;
+	std::optional<FunctionBody> function_body;
 
 public:
 	string ToString() const override;

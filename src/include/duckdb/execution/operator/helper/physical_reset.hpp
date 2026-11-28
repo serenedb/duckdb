@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/enums/set_scope.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
@@ -39,8 +40,9 @@ public:
 		return true;
 	}
 
-	static void ResetAll(ClientContext &context, SetScope scope);
-	static void ResetVariable(ClientContext &context, const Identifier &name, SetScope scope);
+	static void ResetAll(ClientContext &context, SetScope scope, bool discard);
+	static void ResetVariable(ClientContext &context, const Identifier &name, SetScope scope, bool check_access = false,
+	                          optional_ptr<const RoleAccess> role = nullptr);
 
 public:
 	const String name;

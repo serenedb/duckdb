@@ -1395,7 +1395,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 	table_info.permissions = permissions;
-	info.ApplyTo(table_info.permissions, type, &table_info.columns);
+	info.ApplyTo(table_info.permissions, type, table_info.columns);
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);

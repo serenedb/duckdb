@@ -1617,20 +1617,7 @@ void SearchPathSetting::ResetLocal(ClientContext &context) {
 }
 
 Value SearchPathSetting::GetSetting(const ClientContext &context) {
-	auto &client_data = ClientData::Get(context);
-	auto &set_paths = client_data.catalog_search_path->GetSetPaths();
-	// PG-compliant: only show schemas from the current database, without catalog prefix.
-	auto current_catalog = DatabaseManager::TryGetDefaultDatabase(const_cast<ClientContext &>(context));
-	vector<CatalogSearchEntry> filtered;
-	filtered.reserve(set_paths.size());
-	for (auto &entry : set_paths) {
-		// an entry set without a catalog qualifier belongs to whichever database is current
-		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
-			continue;
-		}
-		filtered.emplace_back(Identifier(), entry.GetSchema());
-	}
-	return Value(CatalogSearchEntry::ListToString(filtered));
+	return Value(ClientData::Get(context).catalog_search_path->SettingValue());
 }
 
 //===----------------------------------------------------------------------===//
@@ -2013,7 +2000,7 @@ void TransactionIsolationSetting::SetLocal(ClientContext &context, const Value &
 	if (context.transaction.IsAutoCommit()) {
 		// SET transaction_isolation outside a transaction has no effect;
 		// emit a PG-style warning if a handler is installed.
-		context.EmitWarning("SET TRANSACTION can only be used in transaction blocks");
+		context.EmitWarning("SET TRANSACTION can only be used in transaction blocks", "NO_ACTIVE_SQL_TRANSACTION");
 		return;
 	}
 	auto level = EnumUtil::FromString<TransactionIsolationLevel>(StringValue::Get(input));

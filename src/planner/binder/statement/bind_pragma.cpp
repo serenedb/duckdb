@@ -40,6 +40,7 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		entry =
 		    Catalog::GetBuiltinEntry<PragmaFunctionCatalogEntry>(context, info.name, OnEntryNotFound::THROW_EXCEPTION);
 	}
+	Execute(*entry);
 
 	FunctionBinder function_binder(*this);
 	ErrorData error;

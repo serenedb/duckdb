@@ -9,11 +9,23 @@ namespace duckdb {
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
+    optional<case_insensitive_map_t<Value>> create_database_options,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
     const optional<Identifier> &database_tablespace) {
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateDatabaseInfo>();
 	info->SetName(catalog_name);
+	if (create_database_options) {
+		for (auto &option : *create_database_options) {
+			if (option.first == "connection_limit") {
+				info->connection_limit = IntegerValue::Get(option.second);
+			} else if (option.first == "allow_connections") {
+				info->allow_connections = BooleanValue::Get(option.second);
+			} else {
+				info->owner = Identifier(StringValue::Get(option.second));
+			}
+		}
+	}
 	if (with_list) {
 		for (auto &option : *with_list) {
 			auto name = StringUtil::Lower(option.first);
@@ -41,16 +53,37 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_exists, const Identifier &catalog_name,
     const optional<bool> &drop_database_force, const optional<bool> &drop_behavior) {
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::DATABASE_ENTRY;
-	result->info->SetQualifiedName(Identifier(), Identifier(), catalog_name);
-	result->info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info->cascade = drop_behavior && *drop_behavior;
-	return std::move(result);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::DATABASE_ENTRY;
+	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	info->cascade = drop_behavior && *drop_behavior;
+	return MakeDropStatement(std::move(info), {QualifiedName(catalog_name)});
 }
 
 bool PEGTransformerFactory::TransformDropDatabaseForce(PEGTransformer &transformer) {
 	return true;
+}
+
+case_insensitive_map_t<Value>
+PEGTransformerFactory::TransformCreateDatabaseOptions(PEGTransformer &transformer, const bool &has_result,
+                                                      const vector<pair<string, Value>> &create_database_option) {
+	case_insensitive_map_t<Value> result;
+	for (auto &option : create_database_option) {
+		if (!result.emplace(option.first, option.second).second) {
+			throw ParserException("conflicting or redundant options");
+		}
+	}
+	return result;
+}
+
+pair<string, Value> PEGTransformerFactory::TransformCreateDatabaseOwner(PEGTransformer &transformer,
+                                                                        const string &database_owner_name) {
+	return {"owner", Value(database_owner_name)};
+}
+
+string PEGTransformerFactory::TransformDatabaseOwnerName(PEGTransformer &transformer, const bool &has_result,
+                                                         const Identifier &col_id) {
+	return col_id.GetIdentifierName();
 }
 
 } // namespace duckdb

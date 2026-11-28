@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -26,6 +27,14 @@ namespace duckdb {
 FunctionBinder::FunctionBinder(ClientContext &context_p) : binder(nullptr), context(context_p) {
 }
 FunctionBinder::FunctionBinder(Binder &binder_p) : binder(&binder_p), context(binder_p.context) {
+}
+
+static void Execute(optional_ptr<Binder> binder, ClientContext &context, const CatalogEntry &function) {
+	if (binder) {
+		binder->Execute(function);
+	} else {
+		Check<AclMode::Execute>(context, Role(context), function).Require();
+	}
 }
 
 // Split the full (maybe-named) argument list into positional types + named (name, type) pairs.
@@ -912,7 +921,8 @@ void FunctionBinder::CastToFunctionArguments(BoundSimpleFunction &function, vect
 		// except for one special case: if the function accepts ANY argument
 		// in that case we don't add a cast
 		if (cast_result == LogicalTypeComparisonResult::DIFFERENT_TYPES) {
-			children[i] = BoundCastExpression::AddCastToType(context, std::move(children[i]), target_type);
+			children[i] = binder ? BoundCastExpression::AddCastToType(*binder, std::move(children[i]), target_type)
+			                     : BoundCastExpression::AddCastToType(context, std::move(children[i]), target_type);
 		}
 	}
 }
@@ -1007,6 +1017,7 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
 	}
 
 	// found a matching function!
+	Execute(binder, context, func);
 	auto selected_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 	auto &bound_function = *selected_function;
 
@@ -1669,6 +1680,10 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(shared_ptr<const Scala
 
 	auto result_func = make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(children),
 	                                                      std::move(bind_info), is_operator);
+	if (binder) {
+		result_func->BoundRoleMutable() = binder->BoundRole();
+		result_func->BoundSearchPathMutable() = binder->BoundSearchPath();
+	}
 
 	if (binder && result_func->Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
 		// the result depends on the query it is bound in, also when the bind_expression callback folds it
@@ -1705,7 +1720,7 @@ FunctionBinder::ResolveFunction(shared_ptr<const AggregateFunction> function_p,
 	unique_ptr<FunctionData> bind_info;
 
 	if (bound_function.GetCallbacks().HasBindCallback()) {
-		BindAggregateFunctionInput input(context, bound_function, children, argument_names);
+		BindAggregateFunctionInput input(context, bound_function, children, argument_names, binder);
 		bind_info = bound_function.GetCallbacks().GetBindCallback()(input);
 
 		// we may have lost some arguments in the bind
@@ -1768,6 +1783,7 @@ FunctionBinder::BindAggregateFunction(const AggregateFunctionCatalogEntry &func,
 	}
 
 	// found a matching function!
+	Execute(binder, context, func);
 	auto bound_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 
 	// now that the overload is fixed, split the arguments into their final positional/named children
@@ -1869,6 +1885,7 @@ FunctionBinder::BindWindowFunction(const WindowFunctionCatalogEntry &func,
 	}
 
 	// found a matching function!
+	Execute(binder, context, func);
 	auto bound_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 
 	// now that the overload is fixed, split the arguments into their final positional/named children

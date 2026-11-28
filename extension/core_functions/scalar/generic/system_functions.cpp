@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "core_functions/scalar/generic_functions.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
@@ -10,6 +11,9 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/binder.hpp"
+
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
@@ -21,43 +25,27 @@ void CurrentQueryFunction(DataChunk &input, ExpressionState &state, Vector &resu
 	result.Reference(val, count_t(input.size()));
 }
 
-// current_schema
-// PG-compliant: returns the first schema in the search path that actually
-// exists, or NULL if none of them do.
-void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+template <class VISIT>
+bool VisitUsableSearchPath(ClientContext &context, const CatalogSearchPath &search_path, const RoleAccess &role,
+                           VISIT &&visit) {
 	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
-	// Only user-set entries, with "$user" resolved — no implicit/temp/system.
-	auto entries = ClientData::Get(context).catalog_search_path->GetResolvedSetPaths();
 	bool searched_current_catalog = false;
-	for (auto &entry : entries) {
-		// an entry set without a catalog qualifier belongs to whichever database is current
+	for (auto &entry : search_path.GetResolvedSetPaths()) {
 		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
 			continue;
 		}
 		searched_current_catalog = true;
 		auto schema_entry =
 		    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-		if (schema_entry) {
-			result.Reference(Value(entry.GetSchema()), count_t(input.size()));
-			return;
+		if (schema_entry && Check<AclMode::Usage>(context, role, *schema_entry) && !visit(entry.GetSchema())) {
+			break;
 		}
 	}
-	// Only when the search path names no schema in the current catalog at all -- an
-	// embedded DuckDB rather than a serened session, which always sets one. A search
-	// path that DOES name one which happens not to exist must still report NULL, as
-	// PostgreSQL does (`SET search_path = nonexistent` -> current_schema() IS NULL),
-	// so the fallback must not swallow that case.
-	if (!searched_current_catalog) {
-		auto default_schema = ClientData::Get(context).catalog_search_path->GetDefaultSchema(context, current_catalog);
-		if (default_schema &&
-		    Catalog::GetSchema(context, current_catalog, *default_schema, OnEntryNotFound::RETURN_NULL)) {
-			result.Reference(Value(*default_schema), count_t(input.size()));
-			return;
-		}
-	}
-	result.SetVectorType(VectorType::CONSTANT_VECTOR);
-	ConstantVector::SetNull(result, true);
+	return searched_current_catalog;
+}
+
+const CatalogSearchPath &SearchPathOf(ClientContext &context, const shared_ptr<CatalogSearchPath> &function_path) {
+	return function_path ? *function_path : *ClientData::Get(context).catalog_search_path;
 }
 
 // current_database
@@ -96,8 +84,8 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 	} else {
 		auto implicit_schemas = BooleanValue::Get(schema_value);
 		vector<Value> schema_list;
-		auto &catalog_search_path = ClientData::Get(context).catalog_search_path;
-		auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
+		auto &search_path = SearchPathOf(
+		    context, input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath() : nullptr);
 		// PG-compliant implicit prefix: pg_temp (if the session has any temp
 		// objects), then pg_catalog. Then user-set schemas in the current DB.
 		if (implicit_schemas) {
@@ -122,22 +110,16 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 					schema_list.emplace_back("pg_temp");
 				}
 			}
-			schema_list.emplace_back("pg_catalog");
-		}
-		// PG-compliant: only include user-set schemas that actually exist,
-		// with "$user" resolved via the current session user.
-		for (auto &entry : catalog_search_path->GetResolvedSetPaths()) {
-			// an entry set without a catalog qualifier belongs to whichever database is current
-			if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
-				continue;
+			auto &set_paths = search_path.GetSetPaths();
+			if (absl::c_none_of(set_paths,
+			                    [](const CatalogSearchEntry &entry) { return entry.GetSchema() == "pg_catalog"; })) {
+				schema_list.emplace_back("pg_catalog");
 			}
-			auto schema_entry =
-			    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-			if (!schema_entry) {
-				continue;
-			}
-			schema_list.emplace_back(entry.GetSchema());
 		}
+		VisitUsableSearchPath(context, search_path, input.Role(), [&](const Identifier &schema) {
+			schema_list.emplace_back(schema);
+			return true;
+		});
 		result_val = Value::LIST(LogicalType::VARCHAR, schema_list);
 	}
 	return make_uniq<CurrentSchemasBindData>(std::move(result_val));
@@ -148,6 +130,27 @@ void CurrentSchemasFunction(DataChunk &input, ExpressionState &state, Vector &re
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<CurrentSchemasBindData>();
 	result.Reference(info.result, count_t(input.size()));
+}
+
+unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &search_path =
+	    SearchPathOf(context, input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath() : nullptr);
+	Value schema(LogicalType::VARCHAR);
+	const bool searched_current_catalog =
+	    VisitUsableSearchPath(context, search_path, input.Role(), [&](const Identifier &name) {
+		    schema = Value(name);
+		    return false;
+	    });
+	if (schema.IsNull() && !searched_current_catalog) {
+		auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
+		auto default_schema = search_path.GetDefaultSchema(context, current_catalog);
+		if (default_schema &&
+		    Catalog::GetSchema(context, current_catalog, *default_schema, OnEntryNotFound::RETURN_NULL)) {
+			schema = Value(*default_schema);
+		}
+	}
+	return make_uniq<CurrentSchemasBindData>(std::move(schema));
 }
 
 // in_search_path
@@ -186,7 +189,7 @@ ScalarFunction CurrentQueryFun::GetFunction() {
 }
 
 ScalarFunction CurrentSchemaFun::GetFunction() {
-	ScalarFunction current_schema({}, LogicalType::VARCHAR, CurrentSchemaFunction);
+	ScalarFunction current_schema({}, LogicalType::VARCHAR, CurrentSchemasFunction, CurrentSchemaBind);
 	current_schema.SetStability(FunctionStability::CONSISTENT_WITHIN_QUERY);
 	return current_schema;
 }

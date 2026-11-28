@@ -23,9 +23,11 @@ public:
 		this->dependencies = info.dependencies;
 		this->internal = info.internal;
 		this->extension_name = info.extension_name;
+		required_capability = info.required_capability;
 	}
 
 	Identifier alias_of;
 	vector<FunctionDescription> descriptions;
+	RoleCapability required_capability = RoleCapability::None;
 };
 } // namespace duckdb

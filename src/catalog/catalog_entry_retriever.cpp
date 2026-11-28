@@ -7,14 +7,65 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
+
+static bool SameBinding(const NameBinding &binding, const EntryLookupInfo &lookup_info) {
+	return binding.type == lookup_info.GetCatalogType() && binding.argument_count == lookup_info.GetArgumentCount() &&
+	       binding.name == lookup_info.GetEntryIdentifier();
+}
+
+optional_ptr<CatalogEntry> CatalogEntryRetriever::GetBoundEntry(const EntryLookupInfo &lookup_info) {
+	auto binding =
+	    absl::c_find_if(*bindings, [&](const NameBinding &candidate) { return SameBinding(candidate, lookup_info); });
+	if (binding == bindings->end()) {
+		return nullptr;
+	}
+	auto &catalog = binding->catalog.empty() ? bindings_catalog : binding->catalog;
+	return Catalog::GetEntry(
+	    *this,
+	    EntryLookupInfo(lookup_info, QualifiedName::FromCatalogSchema(catalog, binding->schema_path, binding->name)),
+	    OnEntryNotFound::RETURN_NULL);
+}
+
+void CatalogEntryRetriever::RecordBinding(const EntryLookupInfo &lookup_info, CatalogEntry &entry) {
+	auto &catalog = entry.ParentCatalog();
+	if (catalog.IsSystemCatalog() || catalog.IsTemporaryCatalog()) {
+		return;
+	}
+	if (absl::c_any_of(*recorded_bindings,
+	                   [&](const NameBinding &binding) { return SameBinding(binding, lookup_info); })) {
+		return;
+	}
+	recorded_bindings->push_back(NameBinding {lookup_info.GetCatalogType(), lookup_info.GetEntryIdentifier(),
+	                                          lookup_info.GetArgumentCount(),
+	                                          catalog.GetName() == bindings_catalog ? Identifier() : catalog.GetName(),
+	                                          DependencyManager::GetSchemaPath(entry)});
+}
 
 optional_ptr<CatalogEntry> CatalogEntryRetriever::GetEntry(const EntryLookupInfo &lookup_info,
                                                            OnEntryNotFound on_entry_not_found) {
-	return ReturnAndCallback(Catalog::GetEntry(*this, lookup_info, on_entry_not_found));
+	return Find(lookup_info, on_entry_not_found).entry;
+}
+
+CatalogEntryLookup CatalogEntryRetriever::Find(const EntryLookupInfo &lookup_info, OnEntryNotFound on_entry_not_found) {
+	const bool by_name = (bindings || recorded_bindings) && IsInvalidCatalog(lookup_info.GetCatalog()) &&
+	                     IsInvalidSchema(lookup_info.GetSchema());
+	auto bound = by_name && bindings ? GetBoundEntry(lookup_info) : nullptr;
+	auto found = bound ? CatalogEntryLookup {nullptr, bound} : Catalog::Find(*this, lookup_info, on_entry_not_found);
+	if (found.entry && by_name && recorded_bindings) {
+		RecordBinding(lookup_info, *found.entry);
+	}
+	if (found.entry) {
+		CheckUse(*found.entry, lookup_info.GetUse());
+		ReturnAndCallback(found.entry);
+	}
+	return found;
 }
 
 LogicalType CatalogEntryRetriever::GetType(const QualifiedName &name, OnEntryNotFound on_entry_not_found) {
@@ -34,11 +85,28 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const EntryLoo
 	if (!result) {
 		return result;
 	}
+	CheckUse(*result, schema_lookup.GetUse());
 	if (callback) {
 		// Call the callback if it's set
 		callback(*result);
 	}
 	return result;
+}
+
+optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifier &catalog,
+                                                                  const vector<Identifier> &schema_path, AclMode use,
+                                                                  OnEntryNotFound on_entry_not_found) {
+	return FindSchema(catalog, schema_path, use, on_entry_not_found).schema;
+}
+
+CatalogEntryLookup CatalogEntryRetriever::FindSchema(const Identifier &catalog, const vector<Identifier> &schema_path,
+                                                     AclMode use, OnEntryNotFound on_entry_not_found) {
+	auto found = Catalog::FindSchema(*this, catalog, schema_path, on_entry_not_found);
+	if (found.schema) {
+		CheckUse(*found.schema, use);
+		ReturnAndCallback(found.entry);
+	}
+	return found;
 }
 
 LogicalType CatalogEntryRetriever::GetType(Catalog &catalog, const Identifier &schema, const Identifier &name,
@@ -74,6 +142,21 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifi
 	    on_entry_not_found);
 }
 
+const RoleAccess &CatalogEntryRetriever::LookupRole() const {
+	return role ? *role : acting && acting->lookups ? *acting->lookups : Role(context);
+}
+
+void CatalogEntryRetriever::CheckUse(CatalogEntry &entry, AclMode use) {
+	if (use != AclMode::NoRights) {
+		Check(context,
+		      role                           ? *role
+		      : acting && acting->privileges ? *acting->privileges
+		                                     : Role(context),
+		      entry, use)
+		    .Require();
+	}
+}
+
 optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr<CatalogEntry> result) {
 	if (!result) {
 		return result;
@@ -88,7 +171,11 @@ optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr
 void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->callback = parent.callback;
 	this->search_path = parent.search_path;
+	this->function_search_path = parent.function_search_path;
 	this->at_clause = parent.at_clause;
+	this->bindings = parent.bindings;
+	this->recorded_bindings = parent.recorded_bindings;
+	this->bindings_catalog = parent.bindings_catalog;
 }
 
 const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
@@ -98,7 +185,7 @@ const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
 	return *ClientData::Get(context).catalog_search_path;
 }
 
-void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
+static vector<CatalogSearchEntry> SearchEntriesOfCatalogs(ClientContext &context, vector<CatalogSearchEntry> entries) {
 	vector<CatalogSearchEntry> new_path;
 	auto &db_manager = DatabaseManager::Get(context);
 	for (auto &entry : entries) {
@@ -107,6 +194,42 @@ void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
 		}
 		new_path.push_back(std::move(entry));
 	}
+	return new_path;
+}
+
+void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries, const Identifier &view_catalog,
+                                          const vector<NameBinding> &bindings_p) {
+	search_path =
+	    make_shared_ptr<CatalogSearchPath>(context, SearchEntriesOfCatalogs(context, std::move(entries)), false);
+	bindings = &bindings_p;
+	recorded_bindings = nullptr;
+	bindings_catalog = view_catalog;
+}
+
+void CatalogEntryRetriever::ReplaceSearchPath(vector<CatalogSearchEntry> entries) {
+	search_path = make_shared_ptr<CatalogSearchPath>(context, std::move(entries));
+	function_search_path = search_path;
+	bindings = nullptr;
+	recorded_bindings = nullptr;
+}
+
+void CatalogEntryRetriever::SwapSearchPath(CatalogEntryRetriever &other) {
+	std::swap(search_path, other.search_path);
+	std::swap(function_search_path, other.function_search_path);
+	std::swap(bindings, other.bindings);
+	std::swap(recorded_bindings, other.recorded_bindings);
+	std::swap(bindings_catalog, other.bindings_catalog);
+}
+
+void CatalogEntryRetriever::RecordBindings(const Identifier &view_catalog, vector<NameBinding> &bindings_p) {
+	recorded_bindings = &bindings_p;
+	bindings_catalog = view_catalog;
+}
+
+void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
+	bindings = nullptr;
+	recorded_bindings = nullptr;
+	auto new_path = SearchEntriesOfCatalogs(context, std::move(entries));
 	if (new_path.empty()) {
 		return;
 	}

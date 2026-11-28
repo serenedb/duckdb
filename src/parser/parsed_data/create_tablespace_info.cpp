@@ -18,7 +18,7 @@ unique_ptr<CreateInfo> CreateTablespaceInfo::Copy() const {
 string CreateTablespaceInfo::ToString() const {
 	string result = "CREATE TABLESPACE " + SQLIdentifier(GetQualifiedName().Name());
 	if (!owner.empty()) {
-		result += " OWNER " + SQLIdentifier(owner);
+		result += " OWNER " + owner.ToString();
 	}
 	return result + " LOCATION " + SQLString(location) + ";";
 }

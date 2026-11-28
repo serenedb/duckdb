@@ -300,14 +300,14 @@ unique_ptr<Expression> ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr
 	}
 	if (target_type.id() != LogicalTypeId::INVALID) {
 		// the binder has a specific target type: add a cast to that type
-		result = BoundCastExpression::AddCastToType(context, std::move(result), target_type);
+		result = BoundCastExpression::AddCastToType(binder, std::move(result), target_type);
 	} else {
 		if (!binder.CanContainNulls()) {
 			// SQL NULL type is only used internally in the binder
 			// cast to INTEGER if we encounter it outside of the binder
 			if (ContainsNullType(result->GetReturnType())) {
 				auto exchanged_type = ExchangeNullType(result->GetReturnType());
-				result = BoundCastExpression::AddCastToType(context, std::move(result), exchanged_type);
+				result = BoundCastExpression::AddCastToType(binder, std::move(result), exchanged_type);
 			}
 		}
 		if (result->GetReturnType().id() == LogicalTypeId::UNKNOWN) {

@@ -11,6 +11,7 @@
 namespace duckdb {
 
 BoundStatement Binder::Bind(LoadStatement &stmt) {
+	Check<StatementRule::Load>(CheckAs()).Require();
 	auto load_type = stmt.info->load_type;
 	const bool is_repository = load_type == LoadType::CREATE_REPOSITORY || load_type == LoadType::DROP_REPOSITORY;
 	if (is_repository && !DBConfig::GetConfig(context).options.manage_extensions) {

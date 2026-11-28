@@ -1,4 +1,8 @@
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
+#include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/function/macro_function.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 namespace duckdb {
@@ -19,6 +23,85 @@ AlterScalarFunctionInfo::~AlterScalarFunctionInfo() {
 
 CatalogType AlterScalarFunctionInfo::GetCatalogType() const {
 	return CatalogType::SCALAR_FUNCTION_ENTRY;
+}
+
+//===--------------------------------------------------------------------===//
+// RenameScalarFunctionInfo
+//===--------------------------------------------------------------------===//
+unique_ptr<AlterInfo> RenameScalarFunctionInfo::Copy() const {
+	auto result = make_uniq<RenameScalarFunctionInfo>(GetAlterEntryData(), new_name);
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	result->overload_oid = overload_oid;
+	return std::move(result);
+}
+
+string RenameScalarFunctionInfo::ToString() const {
+	string result = "ALTER " + ParseInfo::RoutineKeyword(include_functions, include_procedures) + " ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
+	return result + " RENAME TO " + SQLIdentifier(new_name) + ";";
+}
+
+//===--------------------------------------------------------------------===//
+// AlterFunctionAttributesInfo
+//===--------------------------------------------------------------------===//
+AlterFunctionAttributesInfo::AlterFunctionAttributesInfo()
+    : AlterScalarFunctionInfo(AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES) {
+}
+
+AlterFunctionAttributesInfo::AlterFunctionAttributesInfo(const AlterEntryData &data)
+    : AlterScalarFunctionInfo(AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES, data) {
+}
+
+unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
+	auto result = make_uniq<AlterFunctionAttributesInfo>(GetAlterEntryData());
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	result->set_security = set_security;
+	result->security_definer = security_definer;
+	result->set_stability = set_stability;
+	result->stability = stability;
+	result->set_strict = set_strict;
+	result->strict = strict;
+	result->replace_config = replace_config;
+	result->config = config;
+	return std::move(result);
+}
+
+string AlterFunctionAttributesInfo::ToString() const {
+	string result = "ALTER " + ParseInfo::RoutineKeyword(include_functions, include_procedures) + " " +
+	                GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
+	if (set_security) {
+		result += security_definer ? " SECURITY DEFINER" : " SECURITY INVOKER";
+	}
+	if (set_stability) {
+		result += stability == FunctionStability::CONSISTENT
+		              ? " IMMUTABLE"
+		              : (stability == FunctionStability::CONSISTENT_WITHIN_QUERY ? " STABLE" : " VOLATILE");
+	}
+	if (set_strict) {
+		result += strict ? " STRICT" : " CALLED ON NULL INPUT";
+	}
+	if (replace_config && config.empty()) {
+		result += " RESET ALL";
+	}
+	for (auto &entry : config) {
+		result += " SET " + Settings::ConfigToSQL(entry);
+	}
+	return result + ";";
 }
 
 //===--------------------------------------------------------------------===//

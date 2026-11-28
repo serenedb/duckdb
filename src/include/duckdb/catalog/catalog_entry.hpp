@@ -13,7 +13,7 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
@@ -89,6 +89,7 @@ public:
 	virtual optional_idx GetLayoutVersion(ClientContext &context) const;
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
+	virtual vector<idx_t> GetSubObjectOids() const;
 
 	virtual unique_ptr<CreateInfo> GetInfo() const;
 	virtual unique_ptr<CreateInfo> GetInfo(CatalogTransaction transaction) const;

@@ -59,6 +59,7 @@ void Planner::Optimize() {
 			optimize = false;
 		}
 	}
+	Optimizer::TrackDataVersions(context, *plan);
 	if (plan->RequireOptimizer()) {
 		{
 			auto optimizer_timer = profiler.StartTimer<MetricOptimizerTotalTime>();
@@ -207,6 +208,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		auto binding_timer = profiler.StartTimer<MetricPlannerBindingTime>();
 		binder->SetParameters(bound_parameters);
 		auto bound_statement = binder->Bind(statement);
+		binder->CheckPrivileges();
 		binding_timer.EndTimer();
 
 		RunPostBindExtensions(context, *binder, bound_statement);
@@ -287,6 +289,8 @@ shared_ptr<PreparedStatementData> Planner::PrepareSQLStatement(unique_ptr<SQLSta
 	prepared_data->types = types;
 	prepared_data->value_map = std::move(value_map);
 	prepared_data->properties = properties;
+	prepared_data->principal_role = context.security.current_role_id;
+	prepared_data->security_version = context.security.Version();
 	return prepared_data;
 }
 

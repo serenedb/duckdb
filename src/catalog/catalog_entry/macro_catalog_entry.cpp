@@ -2,8 +2,14 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
-#include "duckdb/common/exception/binder_exception.hpp"
+#include "duckdb/common/exception/catalog_exception.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
@@ -19,6 +25,48 @@ MacroCatalogEntry::MacroCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
 	this->comment = info.comment;
 	this->tags = info.tags;
 	this->permissions = info.permissions;
+	if (catalog.IsSystemCatalog()) {
+		return;
+	}
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	bool entry_oid_taken = false;
+	for (auto &macro : macros) {
+		if (macro->oid) {
+			manager.ClaimOid(macro->oid);
+		} else if (entry_oid_taken) {
+			macro->oid = manager.NextOid();
+		} else {
+			entry_oid_taken = true;
+		}
+	}
+}
+
+idx_t MacroCatalogEntry::OverloadOid(const MacroFunction &overload) const {
+	return overload.oid ? overload.oid : oid;
+}
+
+const Permissions &MacroCatalogEntry::OverloadPermissions(const MacroFunction &overload) const {
+	return overload.permissions.owner ? overload.permissions : permissions;
+}
+
+const Value &MacroCatalogEntry::OverloadComment(const MacroFunction &overload) const {
+	return overload.oid ? overload.comment : comment;
+}
+
+optional_ptr<MacroFunction> MacroCatalogEntry::FindOverload(idx_t overload_oid) const {
+	auto overload = absl::c_find_if(
+	    macros, [&](const unique_ptr<MacroFunction> &macro) { return OverloadOid(*macro) == overload_oid; });
+	return overload == macros.end() ? nullptr : overload->get();
+}
+
+vector<idx_t> MacroCatalogEntry::GetSubObjectOids() const {
+	vector<idx_t> oids;
+	for (auto &macro : macros) {
+		if (macro->oid) {
+			oids.push_back(macro->oid);
+		}
+	}
+	return oids;
 }
 
 unique_ptr<MacroCatalogEntry> MacroCatalogEntry::Create(Catalog &catalog, SchemaCatalogEntry &schema,
@@ -67,14 +115,58 @@ unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 }
 
 unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
+	auto alter_overload = [&](idx_t overload_oid, auto &&alter) {
+		auto altered = GetInfo();
+		auto &altered_macros = altered->Cast<CreateMacroInfo>().macros;
+		auto target = absl::c_find_if(altered_macros, [&](const unique_ptr<MacroFunction> &macro) {
+			return OverloadOid(*macro) == overload_oid;
+		});
+		if (target == altered_macros.end()) {
+			throw CatalogException("function with OID %llu does not exist", overload_oid);
+		}
+		alter(**target);
+		return Create(catalog, ParentSchema(transaction), altered->Cast<CreateMacroInfo>());
+	};
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().overload_oid) {
+		auto &grant = info.Cast<AlterPermissionsInfo>();
+		return alter_overload(grant.overload_oid, [&](MacroFunction &overload) {
+			if (!overload.permissions.owner) {
+				overload.permissions = permissions;
+			}
+			grant.ApplyTo(overload.permissions, type, nullptr);
+		});
+	}
+	if (info.type == AlterType::SET_COMMENT && info.Cast<SetCommentInfo>().overload_oid &&
+	    info.Cast<SetCommentInfo>().overload_oid != oid) {
+		auto &comment_info = info.Cast<SetCommentInfo>();
+		return alter_overload(comment_info.overload_oid,
+		                      [&](MacroFunction &overload) { overload.comment = comment_info.comment_value; });
+	}
 	if (info.type != AlterType::REPLACE_DEFINITION) {
 		return CatalogEntry::AlterEntry(transaction, info);
 	}
-	auto replaced = info.Cast<ReplaceDefinitionInfo>().definition->Copy();
-	auto &replaced_macro = replaced->Cast<CreateMacroInfo>();
-	if (replaced_macro.is_procedure != is_procedure) {
-		throw BinderException("cannot change routine kind");
+	auto &definition = info.Cast<ReplaceDefinitionInfo>().definition->Cast<CreateMacroInfo>();
+	definition.permissions = permissions;
+	for (auto &function : definition.macros) {
+		auto existing = absl::c_find_if(macros, [&](const unique_ptr<MacroFunction> &macro) {
+			return macro->HasParameterTypes(function->ParameterTypes());
+		});
+		if (existing != macros.end()) {
+			if ((*existing)->is_procedure != function->is_procedure) {
+				auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
+				extra_info["detail"] = StringUtil::Format("\"%s\" is a %s.", name.GetIdentifierName(),
+				                                          (*existing)->is_procedure ? "procedure" : "function");
+				throw CatalogException(extra_info, "cannot change routine kind");
+			}
+			function->oid = (*existing)->oid;
+			function->permissions = (*existing)->permissions;
+			function->comment = (*existing)->comment;
+		} else if (!function->oid && !catalog.IsSystemCatalog()) {
+			function->oid = catalog.GetDatabase().GetDatabaseManager().NextOid();
+		}
 	}
+	auto replaced = definition.Copy();
+	auto &replaced_macro = replaced->Cast<CreateMacroInfo>();
 	replaced_macro.comment = comment;
 	replaced_macro.tags = tags;
 	if (replaced_macro.type == CatalogType::MACRO_ENTRY) {

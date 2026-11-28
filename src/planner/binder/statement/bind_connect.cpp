@@ -9,6 +9,7 @@
 namespace duckdb {
 
 BoundStatement Binder::Bind(ConnectStatement &stmt) {
+	Check<StatementRule::Connect>(CheckAs()).Require();
 	BoundStatement result;
 	result.types = {LogicalType::BOOLEAN};
 	result.names = {"Success"};

@@ -39,6 +39,7 @@ static unique_ptr<FunctionData> CSVSniffBind(ClientContext &context, TableFuncti
 		throw BinderException("sniff_csv cannot take NULL as a file path parameter");
 	}
 	result->path = input.inputs[0].ToString();
+	context.CheckFileAccess(result->path, RoleCapability::ReadServerFiles);
 	auto it = input.named_parameters.find("auto_detect");
 	if (it != input.named_parameters.end()) {
 		if (it->second.IsNull()) {

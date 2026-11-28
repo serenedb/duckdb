@@ -51,8 +51,10 @@ public:
 	bool security_invoker = false;
 	idx_t rule_oid = 0;
 	idx_t row_type_oid = 0;
+	vector<ColumnAcl> column_acls;
+	vector<NameBinding> name_bindings;
 
-	vector<idx_t> GetSubObjectOids() const;
+	vector<idx_t> GetSubObjectOids() const override;
 
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;
@@ -61,6 +63,7 @@ public:
 	//! Update the view with a new set of types / names
 	virtual void UpdateBinding(const vector<LogicalType> &types, const vector<Identifier> &names);
 	Value GetColumnComment(idx_t column_index);
+	std::span<const AclItem> ColumnAcl(idx_t column_index) const;
 	//! Returns the bound name of a visible column
 	Identifier ResolveColumnName(const Identifier &column_name) const;
 

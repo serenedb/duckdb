@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/catalog/acl.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
@@ -27,12 +29,16 @@
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/types/string.hpp"
+#include "duckdb/parser/parsed_data/alter_subscription_info.hpp"
+#include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/storage/storage_index.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 
+#include <absl/functional/function_ref.h>
 #include <functional>
 
 namespace duckdb {
@@ -70,6 +76,7 @@ class Transaction;
 
 class AggregateFunctionCatalogEntry;
 class CollateCatalogEntry;
+class IndexCatalogEntry;
 class SchemaCatalogEntry;
 class TableCatalogEntry;
 class ViewCatalogEntry;
@@ -242,10 +249,18 @@ public:
 	                                                                  CreateForeignServerInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateTablespace(CatalogTransaction transaction,
 	                                                               CreateTablespaceInfo &info);
-	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
+	                                                                 CreateSubscriptionInfo &info);
+	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, const DropInfo &info);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void Scan(CatalogTransaction transaction, CatalogType type,
+	                             const std::function<void(CatalogEntry &)> &callback);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> LookupOwner(CatalogTransaction transaction, idx_t oid);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, CatalogType type,
+	                                                          const Identifier &name);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropTablespace(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropSubscription(CatalogTransaction transaction, DropInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);
@@ -295,6 +310,8 @@ public:
 
 	//! Drops an entry from the catalog
 	DUCKDB_API void DropEntry(ClientContext &context, DropInfo &info);
+	DUCKDB_API virtual void DropEntries(ClientContext &context, const catalog_entry_vector_t &entries,
+	                                    catalog_entry_map_t<vector<DropInfo>> &drops);
 	static bool InRelationNamespace(CatalogType type);
 
 	DUCKDB_API virtual optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction,
@@ -325,6 +342,8 @@ public:
 	//! Resolves the catalog qualification carried in the schema_lookup and returns the matching schema
 	DUCKDB_API static optional_ptr<SchemaCatalogEntry>
 	GetSchema(CatalogEntryRetriever &retriever, const EntryLookupInfo &schema_lookup, OnEntryNotFound if_not_found);
+	DUCKDB_API static CatalogEntryLookup FindSchema(CatalogEntryRetriever &retriever,
+	                                                const EntryLookupInfo &schema_lookup, OnEntryNotFound if_not_found);
 	[[deprecated("Fold the catalog into the EntryLookupInfo and use GetSchema(context, "
 	             "EntryLookupInfo)")]] DUCKDB_API static SchemaCatalogEntry &
 	GetSchema(ClientContext &context, const Identifier &catalog_name, const EntryLookupInfo &schema_lookup);
@@ -351,6 +370,13 @@ public:
 	DUCKDB_API static optional_ptr<SchemaCatalogEntry> GetSchema(ClientContext &context, const Identifier &catalog_name,
 	                                                             const vector<Identifier> &schema_path,
 	                                                             OnEntryNotFound if_not_found);
+	DUCKDB_API static optional_ptr<SchemaCatalogEntry> GetSchema(CatalogEntryRetriever &retriever,
+	                                                             const Identifier &catalog_name,
+	                                                             const vector<Identifier> &schema_path,
+	                                                             OnEntryNotFound if_not_found);
+	DUCKDB_API static CatalogEntryLookup FindSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,
+	                                                const vector<Identifier> &schema_path,
+	                                                OnEntryNotFound if_not_found);
 	[[deprecated("Fold the catalog into the EntryLookupInfo and use GetSchema(retriever, "
 	             "EntryLookupInfo)")]] DUCKDB_API static optional_ptr<SchemaCatalogEntry>
 	GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name, const EntryLookupInfo &schema_lookup,
@@ -362,6 +388,8 @@ public:
 	//! exist behavior depends on OnEntryNotFound
 	DUCKDB_API static optional_ptr<CatalogEntry>
 	GetEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found);
+	DUCKDB_API static CatalogEntryLookup Find(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
+	                                          OnEntryNotFound if_not_found);
 	DUCKDB_API static optional_ptr<CatalogEntry> GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info,
 	                                                      OnEntryNotFound if_not_found);
 	DUCKDB_API static CatalogEntry &GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info);
@@ -546,8 +574,19 @@ public:
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
 	virtual void ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
 	                          const std::function<void(CatalogEntry &)> &callback);
+	virtual void ScanIndexes(ClientContext &context, const TableCatalogEntry &table,
+	                         absl::FunctionRef<void(IndexCatalogEntry &)> callback);
+	DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, CatalogType objtype,
+	                            optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
+	virtual optional_ptr<CatalogEntry> PlacementTablespace(ClientContext &context, const CreateInfo &info,
+	                                                       optional_ptr<const CatalogEntry> indexed);
+	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role,
+	                                 const CreateSubscriptionInfo &info);
+	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role, CatalogEntry &subscription,
+	                                 optional_ptr<const AlterSubscriptionInfo> alter);
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
+	virtual void ScanOwned(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);
@@ -593,12 +632,13 @@ public:
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetSchemas(CatalogEntryRetriever &retriever,
 	                                                                   const string &catalog_name);
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>>
-	GetAllSchemas(ClientContext &context, bool include_hidden = false,
+	GetAllSchemas(const CatalogEntryRetriever &retriever, bool include_hidden = false,
 	              const std::function<bool(AttachedDatabase &)> &needs_database = nullptr);
-	DUCKDB_API static void ScanListedEntries(ClientContext &context, SchemaCatalogEntry &schema, CatalogType type,
-	                                         const std::function<void(CatalogEntry &)> &callback);
+	DUCKDB_API static void ScanListedEntries(const CatalogEntryRetriever &retriever, SchemaCatalogEntry &schema,
+	                                         CatalogType type, const std::function<void(CatalogEntry &)> &callback);
 
-	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, CatalogType catalog_type);
+	static vector<reference<CatalogEntry>> GetAllEntries(const CatalogEntryRetriever &retriever,
+	                                                     CatalogType catalog_type);
 
 	virtual void Verify();
 
@@ -617,7 +657,8 @@ protected:
 	//! Resolve a bound schema path, preserving time travel and error context at every level.
 	DUCKDB_API optional_ptr<SchemaCatalogEntry>
 	LookupSchemaPath(CatalogTransaction transaction, const EntryLookupInfo &schema_lookup, OnEntryNotFound if_not_found,
-	                 const std::function<optional_ptr<CatalogEntry>(const EntryLookupInfo &)> &lookup_root);
+	                 const std::function<optional_ptr<CatalogEntry>(const EntryLookupInfo &)> &lookup_root,
+	                 const std::function<bool(CatalogEntry &)> &visible = nullptr);
 
 	//! Reference to the database
 	AttachedDatabase &db;

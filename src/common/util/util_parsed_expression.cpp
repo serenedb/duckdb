@@ -884,6 +884,9 @@ bool SubqueryExpression::Equals(const ParsedExpression &other) const {
 	if (per_call != other_p.per_call) {
 		return false;
 	}
+	if (function_body != other_p.function_body) {
+		return false;
+	}
 	return true;
 }
 
@@ -902,6 +905,7 @@ unique_ptr<ParsedExpression> SubqueryExpression::Copy() const {
 	copy->child = child ? child->Copy() : nullptr;
 	copy->comparison_type = comparison_type;
 	copy->per_call = per_call;
+	copy->function_body = function_body;
 	copy->CopyBase(*this);
 	return std::move(copy);
 }

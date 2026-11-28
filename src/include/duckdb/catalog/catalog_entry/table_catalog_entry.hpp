@@ -74,6 +74,8 @@ public:
 	DUCKDB_API TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
 	                             shared_ptr<CatalogSet> inherited_triggers = nullptr);
 
+	bool has_column_acls = false;
+
 public:
 	DUCKDB_API unique_ptr<CreateInfo> GetInfo() const override;
 	DUCKDB_API static void RenameColumn(ColumnList &columns, vector<unique_ptr<Constraint>> &constraints,
@@ -94,7 +96,7 @@ public:
 	//! Returns a list of the columns of the table
 	DUCKDB_API virtual const ColumnList &GetColumns() const = 0;
 
-	vector<idx_t> GetSubObjectOids() const;
+	vector<idx_t> GetSubObjectOids() const override;
 
 	idx_t row_type_oid = 0;
 
@@ -158,6 +160,7 @@ public:
 
 	//! Returns the storage info of this table
 	virtual TableStorageInfo GetStorageInfo(ClientContext &context) = 0;
+	virtual std::string_view GetStorageLocation() const;
 
 	virtual void BindUpdateConstraints(Binder &binder, LogicalGet &get, LogicalProjection &proj, LogicalUpdate &update,
 	                                   ClientContext &context);

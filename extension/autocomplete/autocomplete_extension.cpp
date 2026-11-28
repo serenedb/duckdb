@@ -27,6 +27,7 @@
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
 namespace duckdb {
@@ -68,66 +69,66 @@ struct SQLAutoCompleteData : public GlobalTableFunctionState {
 // - PreferCaseMatching
 // - ComputeSuggestions
 
-static vector<shared_ptr<AttachedDatabase>> GetAllCatalogs(ClientContext &context) {
+static vector<shared_ptr<AttachedDatabase>> GetAllCatalogs(ClientContext &context, const RoleAccess &role) {
 	vector<shared_ptr<AttachedDatabase>> result;
 
 	auto &database_manager = DatabaseManager::Get(context);
 	auto databases = database_manager.GetDatabases(context);
 	for (auto &database : databases) {
-		result.push_back(database);
+		if (CatalogEntryRetriever(context, role).Shows(*database)) {
+			result.push_back(database);
+		}
 	}
 	return result;
 }
 
-static vector<reference<SchemaCatalogEntry>> GetAllSchemas(ClientContext &context) {
-	return Catalog::GetAllSchemas(context);
-}
-
-static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, bool for_table_names) {
+static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, const RoleAccess &role,
+                                                    bool for_table_names) {
 	vector<reference<CatalogEntry>> result;
 	// scan all the schemas for tables and collect them and collect them
 	// for column names we avoid adding internal entries, because it pollutes the auto-complete too much
 	// for table names this is generally fine, however
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto schemas = Catalog::GetAllSchemas(CatalogEntryRetriever(context, role));
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (!entry.internal || for_table_names) {
-				result.push_back(entry);
-			}
-		});
+		Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::TABLE_ENTRY,
+		                           [&](CatalogEntry &entry) {
+			                           if (!entry.internal || for_table_names) {
+				                           result.push_back(entry);
+			                           }
+		                           });
 	};
 	if (for_table_names) {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY,
+			Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::TABLE_FUNCTION_ENTRY,
 			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	} else {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
+			Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::SCALAR_FUNCTION_ENTRY,
 			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	}
 	return result;
 }
 
-static vector<reference<CatalogEntry>> GetAllTypes(ClientContext &context) {
+static vector<reference<CatalogEntry>> GetAllTypes(ClientContext &context, const RoleAccess &role) {
 	vector<reference<CatalogEntry>> result;
 	// scan all the schemas for types and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto schemas = Catalog::GetAllSchemas(CatalogEntryRetriever(context, role));
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		Catalog::ScanListedEntries(context, schema, CatalogType::TYPE_ENTRY,
+		Catalog::ScanListedEntries(CatalogEntryRetriever(context, role), schema, CatalogType::TYPE_ENTRY,
 		                           [&](CatalogEntry &entry) { result.push_back(entry); });
 	};
 	return result;
 }
 
-static vector<AutoCompleteCandidate> SuggestCatalogName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestCatalogName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_entries = GetAllCatalogs(context);
+	auto all_entries = GetAllCatalogs(context, role);
 	for (auto &entry_ref : all_entries) {
 		auto &entry = *entry_ref;
 		AutoCompleteCandidate candidate(entry.name.GetIdentifierName(), SuggestionState::SUGGEST_CATALOG_NAME, 0);
@@ -137,9 +138,9 @@ static vector<AutoCompleteCandidate> SuggestCatalogName(ClientContext &context) 
 	return suggestions;
 }
 
-static vector<AutoCompleteCandidate> SuggestSchemaName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestSchemaName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_entries = GetAllSchemas(context);
+	auto all_entries = Catalog::GetAllSchemas(CatalogEntryRetriever(context, role));
 	for (auto &entry_ref : all_entries) {
 		auto &entry = entry_ref.get();
 		AutoCompleteCandidate candidate(entry.name.GetIdentifierName(), SuggestionState::SUGGEST_SCHEMA_NAME, 0);
@@ -149,9 +150,9 @@ static vector<AutoCompleteCandidate> SuggestSchemaName(ClientContext &context) {
 	return suggestions;
 }
 
-static vector<AutoCompleteCandidate> SuggestTableName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestTableName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_entries = GetAllTables(context, true);
+	auto all_entries = GetAllTables(context, role, true);
 	for (auto &entry_ref : all_entries) {
 		auto &entry = entry_ref.get();
 		// prioritize user-defined entries (views & tables)
@@ -161,9 +162,9 @@ static vector<AutoCompleteCandidate> SuggestTableName(ClientContext &context) {
 	return suggestions;
 }
 
-static vector<AutoCompleteCandidate> SuggestType(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestType(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_entries = GetAllTypes(context);
+	auto all_entries = GetAllTypes(context, role);
 	for (auto &entry_ref : all_entries) {
 		auto &entry = entry_ref.get();
 		// prioritize user-defined types
@@ -173,9 +174,9 @@ static vector<AutoCompleteCandidate> SuggestType(ClientContext &context) {
 	}
 	return suggestions;
 }
-static vector<AutoCompleteCandidate> SuggestColumnName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestColumnName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_entries = GetAllTables(context, false);
+	auto all_entries = GetAllTables(context, role, false);
 	for (auto &entry_ref : all_entries) {
 		auto &entry = entry_ref.get();
 		if (entry.type == CatalogType::TABLE_ENTRY) {
@@ -221,9 +222,9 @@ static bool KnownExtension(const string &fname) {
 	return false;
 }
 
-static vector<AutoCompleteCandidate> SuggestPragmaName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestPragmaName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto all_pragmas = Catalog::GetAllEntries(context, CatalogType::PRAGMA_FUNCTION_ENTRY);
+	auto all_pragmas = Catalog::GetAllEntries(CatalogEntryRetriever(context, role), CatalogType::PRAGMA_FUNCTION_ENTRY);
 	for (const auto &pragma : all_pragmas) {
 		AutoCompleteCandidate candidate(pragma.get().name.GetIdentifierName(), SuggestionState::SUGGEST_PRAGMA_NAME, 0);
 		suggestions.push_back(std::move(candidate));
@@ -251,9 +252,10 @@ static vector<AutoCompleteCandidate> SuggestSettingName(ClientContext &context) 
 	return suggestions;
 }
 
-static vector<AutoCompleteCandidate> SuggestScalarFunctionName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestScalarFunctionName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto scalar_functions = Catalog::GetAllEntries(context, CatalogType::SCALAR_FUNCTION_ENTRY);
+	auto scalar_functions =
+	    Catalog::GetAllEntries(CatalogEntryRetriever(context, role), CatalogType::SCALAR_FUNCTION_ENTRY);
 	for (const auto &scalar_function : scalar_functions) {
 		AutoCompleteCandidate candidate(scalar_function.get().name.GetIdentifierName(),
 		                                SuggestionState::SUGGEST_SCALAR_FUNCTION_NAME, 0);
@@ -263,9 +265,10 @@ static vector<AutoCompleteCandidate> SuggestScalarFunctionName(ClientContext &co
 	return suggestions;
 }
 
-static vector<AutoCompleteCandidate> SuggestTableFunctionName(ClientContext &context) {
+static vector<AutoCompleteCandidate> SuggestTableFunctionName(ClientContext &context, const RoleAccess &role) {
 	vector<AutoCompleteCandidate> suggestions;
-	auto table_functions = Catalog::GetAllEntries(context, CatalogType::TABLE_FUNCTION_ENTRY);
+	auto table_functions =
+	    Catalog::GetAllEntries(CatalogEntryRetriever(context, role), CatalogType::TABLE_FUNCTION_ENTRY);
 	for (const auto &table_function : table_functions) {
 		AutoCompleteCandidate candidate(table_function.get().name.GetIdentifierName(),
 		                                SuggestionState::SUGGEST_TABLE_FUNCTION_NAME, 0);
@@ -335,34 +338,34 @@ bool StripUnicodeSpaces(const string &query_str, string &new_query);
 // ClientContext-based provider — wraps existing Suggest* functions for in-process use.
 class ClientContextCatalogProvider : public AutoCompleteCatalogProvider {
 public:
-	explicit ClientContextCatalogProvider(ClientContext &context) : context(context) {
+	ClientContextCatalogProvider(ClientContext &context, const RoleAccess &role) : context(context), role(role) {
 	}
 	vector<AutoCompleteCandidate> SuggestCatalogName() override {
-		return ::duckdb::SuggestCatalogName(context);
+		return ::duckdb::SuggestCatalogName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestSchemaName() override {
-		return ::duckdb::SuggestSchemaName(context);
+		return ::duckdb::SuggestSchemaName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestTableName() override {
-		return ::duckdb::SuggestTableName(context);
+		return ::duckdb::SuggestTableName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestType() override {
-		return ::duckdb::SuggestType(context);
+		return ::duckdb::SuggestType(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestColumnName() override {
-		return ::duckdb::SuggestColumnName(context);
+		return ::duckdb::SuggestColumnName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestFileName(string &prefix, idx_t &last_pos) override {
 		return ::duckdb::SuggestFileName(context, prefix, last_pos);
 	}
 	vector<AutoCompleteCandidate> SuggestScalarFunctionName() override {
-		return ::duckdb::SuggestScalarFunctionName(context);
+		return ::duckdb::SuggestScalarFunctionName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestTableFunctionName() override {
-		return ::duckdb::SuggestTableFunctionName(context);
+		return ::duckdb::SuggestTableFunctionName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestPragmaName() override {
-		return ::duckdb::SuggestPragmaName(context);
+		return ::duckdb::SuggestPragmaName(context, role);
 	}
 	vector<AutoCompleteCandidate> SuggestSettingName() override {
 		return ::duckdb::SuggestSettingName(context);
@@ -373,11 +376,13 @@ public:
 
 private:
 	ClientContext &context;
+	const RoleAccess &role;
 };
 
-static duckdb::unique_ptr<SQLAutoCompleteFunctionData> GenerateSuggestions(ClientContext &context, const string &sql,
+static duckdb::unique_ptr<SQLAutoCompleteFunctionData> GenerateSuggestions(ClientContext &context,
+                                                                           const RoleAccess &role, const string &sql,
                                                                            AutoCompleteParameters &parameters) {
-	ClientContextCatalogProvider provider(context);
+	ClientContextCatalogProvider provider(context, role);
 	auto result = GenerateAutoCompleteSuggestions(provider, sql, parameters);
 	return make_uniq<SQLAutoCompleteFunctionData>(std::move(result));
 }
@@ -419,7 +424,8 @@ static duckdb::unique_ptr<FunctionData> SQLAutoCompleteBind(ClientContext &conte
 	names.emplace_back("extra_char");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return GenerateSuggestions(context, StringValue::Get(input.inputs[0]), parameters);
+	return GenerateSuggestions(context, Role(context, input.BoundRole()), StringValue::Get(input.inputs[0]),
+	                           parameters);
 }
 
 unique_ptr<GlobalTableFunctionState> SQLAutoCompleteInit(ClientContext &context, TableFunctionInitInput &input) {
