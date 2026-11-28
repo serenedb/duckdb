@@ -85,8 +85,8 @@ public:
 	//! If this buffer is the last buffer of the CSV File
 	bool IsCSVFileLastBuffer() const;
 
-	//! Allocates internal buffer, sets 'block' and 'handle' variables.
-	void AllocateBuffer(idx_t buffer_size);
+	BufferHandle AllocateBuffer(idx_t buffer_size);
+	void Adopt(BufferHandle loaded);
 
 	void Reload(CSVFileHandle &file_handle);
 	//! Wrapper for the Pin Function, if it can seek, it means that the buffer might have been destroyed, hence we must

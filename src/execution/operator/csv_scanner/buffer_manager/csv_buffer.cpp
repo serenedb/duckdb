@@ -54,7 +54,7 @@ void CSVBuffer::Load(CSVFileHandle &file_handle, shared_ptr<CSVBuffer> recycled)
 		handle = std::move(recycled->handle);
 		block = std::move(recycled->block);
 	} else {
-		AllocateBuffer(requested_size);
+		Adopt(AllocateBuffer(requested_size));
 	}
 	auto buffer = char_ptr_cast(handle.GetDataMutable());
 	actual_buffer_size = file_handle.Read(buffer, requested_size);
@@ -82,11 +82,15 @@ shared_ptr<CSVBuffer> CSVBuffer::Next(CSVFileHandle &file_handle, idx_t buffer_s
 	return next_csv_buffer;
 }
 
-void CSVBuffer::AllocateBuffer(idx_t buffer_size) {
+BufferHandle CSVBuffer::AllocateBuffer(idx_t buffer_size) {
 	auto &buffer_manager = BufferManager::GetBufferManager(context);
 	bool can_destroy = !is_pipe;
-	handle = buffer_manager.Allocate(MemoryTag::CSV_READER, MaxValue<idx_t>(buffer_manager.GetBlockSize(), buffer_size),
-	                                 can_destroy);
+	return buffer_manager.Allocate(MemoryTag::CSV_READER, MaxValue<idx_t>(buffer_manager.GetBlockSize(), buffer_size),
+	                               can_destroy);
+}
+
+void CSVBuffer::Adopt(BufferHandle loaded) {
+	handle = std::move(loaded);
 	block = handle.GetBlockHandle();
 }
 
@@ -95,32 +99,34 @@ idx_t CSVBuffer::GetBufferSize() const {
 }
 
 void CSVBuffer::Reload(CSVFileHandle &file_handle) {
-	AllocateBuffer(actual_buffer_size);
+	auto loaded = AllocateBuffer(actual_buffer_size);
 	// If we can seek, we seek and return the correct pointers
 	file_handle.Seek(global_csv_start);
-	file_handle.Read(handle.GetDataMutable(), actual_buffer_size);
+	file_handle.Read(loaded.GetDataMutable(), actual_buffer_size);
+	Adopt(std::move(loaded));
 }
 
 void CSVBuffer::LoadRandomAccess(CSVFileHandle &file_handle, bool parallel) {
 	D_ASSERT(random_access);
-	AllocateBuffer(actual_buffer_size);
-	const auto data = handle.GetDataMutable();
+	auto loaded = AllocateBuffer(actual_buffer_size);
+	const auto data = loaded.GetDataMutable();
 	const idx_t pieces =
 	    parallel ? MinValue<idx_t>(TaskScheduler::QueryThreads(context), actual_buffer_size / LOAD_PIECE) : 1;
 	if (pieces <= 1) {
 		if (actual_buffer_size > 0) {
 			file_handle.ReadAt(data, actual_buffer_size, global_csv_start);
 		}
-		return;
+	} else {
+		const idx_t piece = AlignValue<idx_t, LOAD_ALIGNMENT>((actual_buffer_size + pieces - 1) / pieces);
+		TaskExecutor executor(context);
+		for (idx_t begin = 0; begin < actual_buffer_size; begin += piece) {
+			executor.ScheduleTask(make_uniq<LoadPieceTask>(executor, file_handle, data + begin,
+			                                               MinValue(piece, actual_buffer_size - begin),
+			                                               global_csv_start + begin));
+		}
+		executor.WorkOnTasks();
 	}
-	const idx_t piece = AlignValue<idx_t, LOAD_ALIGNMENT>((actual_buffer_size + pieces - 1) / pieces);
-	TaskExecutor executor(context);
-	for (idx_t begin = 0; begin < actual_buffer_size; begin += piece) {
-		executor.ScheduleTask(make_uniq<LoadPieceTask>(executor, file_handle, data + begin,
-		                                               MinValue(piece, actual_buffer_size - begin),
-		                                               global_csv_start + begin));
-	}
-	executor.WorkOnTasks();
+	Adopt(std::move(loaded));
 }
 
 shared_ptr<CSVBufferHandle> CSVBuffer::Pin(CSVFileHandle &file_handle, bool &has_seeked, bool parallel) {

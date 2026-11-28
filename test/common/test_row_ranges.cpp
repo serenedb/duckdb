@@ -2,6 +2,7 @@
 #include "catch.hpp"
 #include "duckdb.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
+#include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/formats/range_lines.hpp"
 #include "duckdb/formats/row_input.hpp"
@@ -1232,6 +1233,51 @@ TEST_CASE("A sequential CSV buffer manager releases a buffer handed back before 
 	REQUIRE(held() == loaded);
 	manager->ResetBuffer(0);
 	REQUIRE(held() + 1048576 <= loaded);
+}
+
+class FailingReadFileSystem : public LocalFileSystem {
+public:
+	explicit FailingReadFileSystem(string path_p) : path(std::move(path_p)) {
+	}
+
+	string GetName() const override {
+		return "FailingReadFileSystem";
+	}
+	bool CanHandleFile(const string &fpath) override {
+		return fpath == path;
+	}
+	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
+		if (fail.exchange(false)) {
+			throw IOException("Injected read failure");
+		}
+		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+	}
+
+	const string path;
+	std::atomic<bool> fail {false};
+};
+
+TEST_CASE("A CSV buffer whose load failed is loaded again by the next pin", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	const auto path = TestCreatePath("load_failure.csv");
+	REQUIRE_NO_FAIL(con.Query("COPY (SELECT i AS a, 'value number ' || i AS b FROM range(50000) t(i)) TO '" + path +
+	                          "' (HEADER false)"));
+	std::ifstream in(path, std::ios::binary);
+	const string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	auto failing = make_uniq<FailingReadFileSystem>(path);
+	auto &fail = failing->fail;
+	db.instance->GetFileSystem().RegisterSubSystem(std::move(failing));
+	CSVReaderOptions options;
+	options.buffer_size_option.Set(262144);
+	auto manager = CSVBufferManager::Open(*con.context, options, OpenFileInfo(path), false, nullptr);
+	REQUIRE(manager->HasKnownBufferRanges());
+	fail = true;
+	REQUIRE_THROWS(manager->GetBuffer(1));
+	REQUIRE_FALSE(fail);
+	auto buffer = manager->GetBuffer(1);
+	REQUIRE(buffer);
+	REQUIRE(string(buffer->Ptr(), buffer->actual_size) == content.substr(262144, buffer->actual_size));
 }
 
 TEST_CASE("A range reader never writes into the windows that rows it handed out still hold", "[csv]") {
