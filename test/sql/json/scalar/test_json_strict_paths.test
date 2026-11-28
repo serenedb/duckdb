@@ -34,6 +34,11 @@ SELECT s->'$.user' FROM (SELECT '{"user":{"id":}}' AS s)
 ----
 Malformed JSON
 
+statement error
+SELECT json_extract('[1, 2, 3', '$[1]')
+----
+Malformed JSON at byte 8 of input: unexpected end of data
+
 # the functions that read the whole document still reject it
 query I
 SELECT json_valid(s) FROM t
