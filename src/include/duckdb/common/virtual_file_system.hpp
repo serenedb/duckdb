@@ -70,6 +70,7 @@ public:
 	                             optional_ptr<FileOpener> opener = nullptr) override;
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
+	void CopyFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
 
 	FileExistence TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
 	                            optional_ptr<ErrorData> error) override;

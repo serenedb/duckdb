@@ -575,9 +575,9 @@ private:
 
 	//! Pins the block in [slot] when it is in memory
 	bool PinLoaded(ExternalFileCacheSlot &slot, idx_t size, FilePin &result) const;
-	//! The memory in [slot] of a block of [file], registered for a buffer of [size] bytes when the slot has none: the
-	//! bytes of the block that lie inside a file that is fetched, a whole block of a file that is written
-	BlockMemory &MemoryOf(const InputFile &file, ExternalFileCacheSlot &slot, idx_t size);
+	//! The memory in [slot] of block [block] of [file], registered for a buffer of [size] bytes when the slot has none:
+	//! the bytes of the block that lie inside a file that is fetched, a whole block of a file that is written
+	BlockMemory &MemoryOf(const InputFile &file, ExternalFileCacheSlot &slot, idx_t block, idx_t size);
 	optional_ptr<BlockMemory> ClaimMissing(InputFile &file, idx_t block);
 	//! Lets the slots of [blocks] go, destroying their blocks and the copies of them at once or with their last pin;
 	//! the copies its readers share go the same way

@@ -6,6 +6,7 @@
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/process_util.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/storage/block_copy_store.hpp"
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
@@ -842,6 +843,7 @@ TemporaryDirectoryHandle::TemporaryDirectoryHandle(DatabaseInstance &db, string 
 	}
 	temp_file = make_uniq<TemporaryFileManager>(db, temp_directory, size_on_disk, file_prefix);
 	temp_file->SetMaxSwapSpace(max_swap_space);
+	copies = make_uniq<BlockCopyStore>(db, temp_directory, *temp_file, file_prefix);
 }
 
 void TemporaryDirectoryHandle::ClaimOwner() {
@@ -912,6 +914,8 @@ void TemporaryDirectoryHandle::SweepAbandonedInstances() {
 }
 
 TemporaryDirectoryHandle::~TemporaryDirectoryHandle() {
+	// the copies that have a name stay for a later database; their count of the disk space goes first
+	copies.reset();
 	// first release any temporary files
 	temp_file.reset();
 	// Nothing here may throw - this is a destructor - but it reaches RemoveFile, which does: Windows
@@ -945,6 +949,30 @@ void TemporaryDirectoryHandle::CleanupTemporaryDirectory() {
 
 TemporaryFileManager &TemporaryDirectoryHandle::GetTempFile() const {
 	return *temp_file;
+}
+
+BlockCopyStore &TemporaryDirectoryHandle::GetCopies() const {
+	return *copies;
+}
+
+void TemporaryDirectoryHandle::RemoveLeftovers(DatabaseInstance &db, const string &directory, bool keep_copies) {
+	auto &fs = FileSystem::GetFileSystem(db);
+	if (!fs.DirectoryExists(directory)) {
+		return;
+	}
+	const auto name_prefix = TemporaryFileNamePrefix(db);
+	vector<string> leftovers;
+	fs.ListFiles(directory, [&](const string &name, bool is_dir) {
+		TemporaryFileOwner found;
+		if (!is_dir && TryParseTemporaryFileOwner(name_prefix, name, found)) {
+			leftovers.push_back(fs.JoinPath(directory, name));
+		}
+	});
+	fs.RemoveFiles(leftovers);
+	const auto copy_directory = fs.JoinPath(directory, BlockCopyStore::DIRECTORY);
+	if (!keep_copies && fs.DirectoryExists(copy_directory)) {
+		fs.RemoveDirectory(copy_directory);
+	}
 }
 
 } // namespace duckdb

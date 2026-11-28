@@ -690,6 +690,11 @@ void DatabaseFileSystem::MoveFile(const string &source, const string &target, op
 	ForgetRemoteFile(target);
 }
 
+void DatabaseFileSystem::CopyFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::CopyFile(source, target, opener);
+	ForgetRemoteFile(target);
+}
+
 void DatabaseFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
 	OpenerFileSystem::RemoveFile(filename, opener);
 	ForgetRemoteFile(filename);

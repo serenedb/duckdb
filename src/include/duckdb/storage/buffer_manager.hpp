@@ -79,8 +79,11 @@ public:
 	                                                          vector<shared_ptr<BlockHandle>> &handles);
 	//! Unpin a pin of block memory.
 	virtual void Unpin(BlockMemory &memory) = 0;
-	//! Registers an unloaded external file cache block of [block_size] bytes, without a header
-	virtual shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) = 0;
+	//! Registers an unloaded external file cache block of [block_size] bytes, without a header. A block that keeps a
+	//! copy and whose bytes have the name [copy_name] keeps it under that name, and starts with the copy an earlier
+	//! block of the same name left
+	virtual shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon,
+	                                                       const BlockCopyName &copy_name = BlockCopyName()) = 0;
 	virtual BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) = 0;
 	virtual BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) = 0;
 	virtual BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) = 0;
@@ -153,9 +156,9 @@ public:
 	//! Write a temporary file buffer.
 	virtual void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer);
 	//! Write the copy of a temporary file buffer that a block keeps, while the copies have room for it; returns
-	//! whether it was written.
+	//! whether it was written. A copy with a name [copy_name] outlives the block.
 	virtual bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id,
-	                                   FileBuffer &buffer) = 0;
+	                                   const BlockCopyName &copy_name, FileBuffer &buffer) = 0;
 	//! Read a temporary buffer.
 	virtual unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                                   unique_ptr<FileBuffer> buffer);

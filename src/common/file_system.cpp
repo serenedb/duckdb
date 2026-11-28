@@ -726,6 +726,10 @@ void FileSystem::MoveFile(const string &source, const string &target, optional_p
 	throw NotImplementedException("%s: MoveFile is not implemented!", GetName());
 }
 
+void FileSystem::CopyFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
+	throw NotImplementedException("%s: CopyFile is not implemented!", GetName());
+}
+
 FileExistence FileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
                                         optional_ptr<ErrorData> error) {
 	if (error) {

@@ -14,6 +14,41 @@
 
 namespace duckdb {
 
+string BlockCopyName::ToString() const {
+	static constexpr char DIGITS[] = "0123456789abcdef";
+	string result(32, '0');
+	for (idx_t i = 0; i < 16; i++) {
+		result[i] = DIGITS[(high >> (60 - 4 * i)) & 0xF];
+		result[16 + i] = DIGITS[(low >> (60 - 4 * i)) & 0xF];
+	}
+	return result;
+}
+
+bool BlockCopyName::TryParse(const string &text, BlockCopyName &result) {
+	if (text.size() != 32) {
+		return false;
+	}
+	BlockCopyName parsed;
+	for (idx_t i = 0; i < 32; i++) {
+		const auto c = text[i];
+		uint64_t digit;
+		if (c >= '0' && c <= '9') {
+			digit = uint64_t(c - '0');
+		} else if (c >= 'a' && c <= 'f') {
+			digit = uint64_t(c - 'a' + 10);
+		} else {
+			return false;
+		}
+		auto &half = i < 16 ? parsed.high : parsed.low;
+		half = (half << 4) | digit;
+	}
+	if (!parsed.IsSet()) {
+		return false;
+	}
+	result = parsed;
+	return true;
+}
+
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
                          idx_t block_alloc_size_p)
     : BlockMemory(buffer_manager, block_id_p, tag_p, block_alloc_size_p, FileBufferType::BLOCK,
@@ -181,7 +216,8 @@ unique_ptr<FileBuffer> BlockMemory::UnloadAndTakeBlock(BlockLock &l, QueryContex
 			buffer_manager.WriteTemporaryBuffer(context, GetMemoryTag(), BlockId(), *GetBuffer());
 			has_temporary_file = true;
 		} else {
-			has_temporary_file = buffer_manager.TryWriteTemporaryCopy(context, GetMemoryTag(), BlockId(), *GetBuffer());
+			has_temporary_file =
+			    buffer_manager.TryWriteTemporaryCopy(context, GetMemoryTag(), BlockId(), copy_name, *GetBuffer());
 		}
 		std::move(restore).Cancel();
 	}
@@ -295,6 +331,11 @@ BufferHandle BlockHandle::Load(QueryContext context, unique_ptr<FileBuffer> reus
 		auto &buffer_manager = memory.GetBufferManager();
 		auto &buffer = memory.GetBuffer();
 		buffer = buffer_manager.ReadTemporaryBuffer(context, memory.GetMemoryTag(), *this, std::move(reusable_buffer));
+		if (!buffer) {
+			// the copy of a block that has a name is gone: its owner reads the bytes again
+			memory.SetHasTemporaryFile(false);
+			return BufferHandle();
+		}
 		memory.SetHasTemporaryFile(memory.KeepsCopy());
 		SDB_PARK_ONCE_ON_FAILURE("block_load_before_loaded");
 	}

@@ -22,6 +22,7 @@
 namespace duckdb {
 
 struct EncryptionMetadata;
+class BlockCopyStore;
 class TemporaryFileManager;
 
 //===--------------------------------------------------------------------===//
@@ -392,6 +393,11 @@ public:
 
 public:
 	TemporaryFileManager &GetTempFile() const;
+	//! The copies of evicted blocks that have a name, which outlive this handle
+	BlockCopyStore &GetCopies() const;
+	//! Removes what databases left in the temporary directory [directory]: their temporary files and, unless
+	//! [keep_copies], the copies that have a name. For a caller that knows no database uses the directory
+	DUCKDB_API static void RemoveLeftovers(DatabaseInstance &db, const string &directory, bool keep_copies);
 
 private:
 	//! Removes this instance's temporary files and, if it created it, the directory. May throw; the
@@ -419,6 +425,7 @@ private:
 	TemporaryFileOwner owner;
 	string file_prefix;
 	unique_ptr<TemporaryFileManager> temp_file;
+	unique_ptr<BlockCopyStore> copies;
 };
 
 } // namespace duckdb
