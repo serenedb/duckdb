@@ -22,7 +22,10 @@
 #include "duckdb/parser/tableref/pivotref.hpp"
 #include "duckdb/planner/tableref/bound_pivotref.hpp"
 #include "duckdb/parser/column_definition.hpp"
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
+#include "duckdb/catalog/role_graph.hpp"
+#include "duckdb/parser/parsed_data/parse_info.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/planner/column_binding.hpp"
 #include "duckdb/planner/expression/bound_parameter_data.hpp"
@@ -237,6 +240,18 @@ CaseCheck CaseCheck::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void ColumnAcl::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(100, "column", column);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
+}
+
+ColumnAcl ColumnAcl::Deserialize(Deserializer &deserializer) {
+	ColumnAcl result;
+	deserializer.ReadPropertyWithDefault<Identifier>(100, "column", result.column);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
+	return result;
+}
+
 void ColumnBinding::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<TableIndex>(100, "table_index", table_index);
 	serializer.WritePropertyWithDefault<ProjectionIndex>(101, "column_index", column_index);
@@ -381,11 +396,40 @@ CommonTableExpressionMap CommonTableExpressionMap::Deserialize(Deserializer &des
 	return result;
 }
 
+void CreatePermissions::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "owner", owner);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
+	serializer.WritePropertyWithDefault<vector<DefaultAcl>>(102, "defaults", defaults);
+	serializer.WritePropertyWithDefault<bool>(103, "acl_emptied", acl_emptied, false);
+}
+
+CreatePermissions CreatePermissions::Deserialize(Deserializer &deserializer) {
+	CreatePermissions result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "owner", result.owner);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
+	deserializer.ReadPropertyWithDefault<vector<DefaultAcl>>(102, "defaults", result.defaults);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(103, "acl_emptied", result.acl_emptied, false);
+	return result;
+}
+
+void DatabaseSetting::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
+	serializer.WritePropertyWithDefault<vector<string>>(101, "config", config);
+}
+
+DatabaseSetting DatabaseSetting::Deserialize(Deserializer &deserializer) {
+	DatabaseSetting result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "role", result.role);
+	deserializer.ReadPropertyWithDefault<vector<string>>(101, "config", result.config);
+	return result;
+}
+
 void DefaultAcl::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
 	serializer.WriteProperty<CatalogType>(101, "objtype", objtype);
 	serializer.WritePropertyWithDefault<vector<AclItem>>(102, "acl", acl);
 	serializer.WritePropertyWithDefault<idx_t>(103, "scope", scope);
+	serializer.WritePropertyWithDefault<idx_t>(104, "oid", oid);
 }
 
 DefaultAcl DefaultAcl::Deserialize(Deserializer &deserializer) {
@@ -394,6 +438,7 @@ DefaultAcl DefaultAcl::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadProperty<CatalogType>(101, "objtype", result.objtype);
 	deserializer.ReadPropertyWithDefault<vector<AclItem>>(102, "acl", result.acl);
 	deserializer.ReadPropertyWithDefault<idx_t>(103, "scope", result.scope);
+	deserializer.ReadPropertyWithDefault<idx_t>(104, "oid", result.oid);
 	return result;
 }
 
@@ -639,6 +684,24 @@ MultiFileReaderBindData MultiFileReaderBindData::Deserialize(Deserializer &deser
 	return result;
 }
 
+void ObjectReference::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<QualifiedName>(100, "name", name);
+	serializer.WritePropertyWithDefault<vector<LogicalType>>(101, "func_parameters", func_parameters);
+	serializer.WritePropertyWithDefault<bool>(102, "has_func_args", has_func_args);
+	serializer.WritePropertyWithDefault<CatalogType>(103, "type", type, CatalogType::INVALID);
+	serializer.WritePropertyWithDefault<idx_t>(104, "overload_oid", overload_oid);
+}
+
+ObjectReference ObjectReference::Deserialize(Deserializer &deserializer) {
+	ObjectReference result;
+	deserializer.ReadProperty<QualifiedName>(100, "name", result.name);
+	deserializer.ReadPropertyWithDefault<vector<LogicalType>>(101, "func_parameters", result.func_parameters);
+	deserializer.ReadPropertyWithDefault<bool>(102, "has_func_args", result.has_func_args);
+	deserializer.ReadPropertyWithExplicitDefault<CatalogType>(103, "type", result.type, CatalogType::INVALID);
+	deserializer.ReadPropertyWithDefault<idx_t>(104, "overload_oid", result.overload_oid);
+	return result;
+}
+
 void OrderByNode::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<OrderType>(100, "type", type);
 	serializer.WriteProperty<OrderByNullType>(101, "null_order", null_order);
@@ -656,14 +719,16 @@ OrderByNode OrderByNode::Deserialize(Deserializer &deserializer) {
 void Permissions::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<idx_t>(100, "owner", owner);
 	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
-	serializer.WritePropertyWithDefault<vector<DefaultAcl>>(102, "defaults", defaults);
+	/* [Deleted] (vector<DefaultAcl>) "defaults" */
+	serializer.WritePropertyWithDefault<bool>(103, "acl_emptied", acl_emptied, false);
 }
 
 Permissions Permissions::Deserialize(Deserializer &deserializer) {
 	Permissions result;
 	deserializer.ReadPropertyWithDefault<idx_t>(100, "owner", result.owner);
 	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
-	deserializer.ReadPropertyWithDefault<vector<DefaultAcl>>(102, "defaults", result.defaults);
+	deserializer.ReadDeletedProperty<vector<DefaultAcl>>(102, "defaults");
+	deserializer.ReadPropertyWithExplicitDefault<bool>(103, "acl_emptied", result.acl_emptied, false);
 	return result;
 }
 

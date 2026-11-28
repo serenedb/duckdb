@@ -74,6 +74,8 @@ enum class AlterSchemaType : uint8_t;
 
 enum class AlterSequenceType : uint8_t;
 
+enum class AlterSubscriptionType : uint8_t;
+
 enum class AlterTableFunctionType : uint8_t;
 
 enum class AlterTableType : uint8_t;
@@ -408,6 +410,8 @@ enum class NType : uint8_t;
 
 enum class NewLineIdentifier : uint8_t;
 
+enum class ObjectContainer : uint8_t;
+
 enum class OnConflictAction : uint8_t;
 
 enum class OnCreateConflict : uint8_t;
@@ -530,7 +534,13 @@ enum class ResultModifierType : uint8_t;
 
 enum class ResultOrdering : uint8_t;
 
+enum class RoleCapability : uint32_t;
+
 enum class RoleOption : uint32_t;
+
+enum class RoleSpecType : uint8_t;
+
+enum class RoleUse : uint8_t;
 
 enum class RowGroupAppendMode : uint8_t;
 
@@ -564,6 +574,8 @@ enum class SetScope : uint8_t;
 
 enum class SetType : uint8_t;
 
+enum class SettingContext : uint8_t;
+
 enum class SettingScope : uint8_t;
 
 enum class ShowBehaviorType : uint8_t;
@@ -594,6 +606,8 @@ enum class StateMemoryOwnership : uint8_t;
 
 enum class StatementReturnType : uint8_t;
 
+enum class StatementRule : uint8_t;
+
 enum class StatementType : uint8_t;
 
 enum class StatisticsPropagationMode : uint8_t;
@@ -623,6 +637,8 @@ enum class TableFunctionIdentifierConversion : uint8_t;
 enum class TableFunctionParallelism : uint8_t;
 
 enum class TablePartitionInfo : uint8_t;
+
+enum class TableRefUse : uint8_t;
 
 enum class TableReferenceType : uint8_t;
 
@@ -768,6 +784,9 @@ const char* EnumUtil::ToChars<AlterSchemaType>(AlterSchemaType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterSequenceType>(AlterSequenceType value);
+
+template<>
+const char* EnumUtil::ToChars<AlterSubscriptionType>(AlterSubscriptionType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterTableFunctionType>(AlterTableFunctionType value);
@@ -1271,6 +1290,9 @@ template<>
 const char* EnumUtil::ToChars<NewLineIdentifier>(NewLineIdentifier value);
 
 template<>
+const char* EnumUtil::ToChars<ObjectContainer>(ObjectContainer value);
+
+template<>
 const char* EnumUtil::ToChars<OnConflictAction>(OnConflictAction value);
 
 template<>
@@ -1454,7 +1476,16 @@ template<>
 const char* EnumUtil::ToChars<ResultOrdering>(ResultOrdering value);
 
 template<>
+const char* EnumUtil::ToChars<RoleCapability>(RoleCapability value);
+
+template<>
 const char* EnumUtil::ToChars<RoleOption>(RoleOption value);
+
+template<>
+const char* EnumUtil::ToChars<RoleSpecType>(RoleSpecType value);
+
+template<>
+const char* EnumUtil::ToChars<RoleUse>(RoleUse value);
 
 template<>
 const char* EnumUtil::ToChars<RowGroupAppendMode>(RowGroupAppendMode value);
@@ -1505,6 +1536,9 @@ template<>
 const char* EnumUtil::ToChars<SetType>(SetType value);
 
 template<>
+const char* EnumUtil::ToChars<SettingContext>(SettingContext value);
+
+template<>
 const char* EnumUtil::ToChars<SettingScope>(SettingScope value);
 
 template<>
@@ -1550,6 +1584,9 @@ template<>
 const char* EnumUtil::ToChars<StatementReturnType>(StatementReturnType value);
 
 template<>
+const char* EnumUtil::ToChars<StatementRule>(StatementRule value);
+
+template<>
 const char* EnumUtil::ToChars<StatementType>(StatementType value);
 
 template<>
@@ -1593,6 +1630,9 @@ const char* EnumUtil::ToChars<TableFunctionParallelism>(TableFunctionParallelism
 
 template<>
 const char* EnumUtil::ToChars<TablePartitionInfo>(TablePartitionInfo value);
+
+template<>
+const char* EnumUtil::ToChars<TableRefUse>(TableRefUse value);
 
 template<>
 const char* EnumUtil::ToChars<TableReferenceType>(TableReferenceType value);
@@ -1777,6 +1817,9 @@ AlterSchemaType EnumUtil::FromString<AlterSchemaType>(std::string_view value);
 
 template<>
 AlterSequenceType EnumUtil::FromString<AlterSequenceType>(std::string_view value);
+
+template<>
+AlterSubscriptionType EnumUtil::FromString<AlterSubscriptionType>(std::string_view value);
 
 template<>
 AlterTableFunctionType EnumUtil::FromString<AlterTableFunctionType>(std::string_view value);
@@ -2280,6 +2323,9 @@ template<>
 NewLineIdentifier EnumUtil::FromString<NewLineIdentifier>(std::string_view value);
 
 template<>
+ObjectContainer EnumUtil::FromString<ObjectContainer>(std::string_view value);
+
+template<>
 OnConflictAction EnumUtil::FromString<OnConflictAction>(std::string_view value);
 
 template<>
@@ -2463,7 +2509,16 @@ template<>
 ResultOrdering EnumUtil::FromString<ResultOrdering>(std::string_view value);
 
 template<>
+RoleCapability EnumUtil::FromString<RoleCapability>(std::string_view value);
+
+template<>
 RoleOption EnumUtil::FromString<RoleOption>(std::string_view value);
+
+template<>
+RoleSpecType EnumUtil::FromString<RoleSpecType>(std::string_view value);
+
+template<>
+RoleUse EnumUtil::FromString<RoleUse>(std::string_view value);
 
 template<>
 RowGroupAppendMode EnumUtil::FromString<RowGroupAppendMode>(std::string_view value);
@@ -2514,6 +2569,9 @@ template<>
 SetType EnumUtil::FromString<SetType>(std::string_view value);
 
 template<>
+SettingContext EnumUtil::FromString<SettingContext>(std::string_view value);
+
+template<>
 SettingScope EnumUtil::FromString<SettingScope>(std::string_view value);
 
 template<>
@@ -2559,6 +2617,9 @@ template<>
 StatementReturnType EnumUtil::FromString<StatementReturnType>(std::string_view value);
 
 template<>
+StatementRule EnumUtil::FromString<StatementRule>(std::string_view value);
+
+template<>
 StatementType EnumUtil::FromString<StatementType>(std::string_view value);
 
 template<>
@@ -2602,6 +2663,9 @@ TableFunctionParallelism EnumUtil::FromString<TableFunctionParallelism>(std::str
 
 template<>
 TablePartitionInfo EnumUtil::FromString<TablePartitionInfo>(std::string_view value);
+
+template<>
+TableRefUse EnumUtil::FromString<TableRefUse>(std::string_view value);
 
 template<>
 TableReferenceType EnumUtil::FromString<TableReferenceType>(std::string_view value);
