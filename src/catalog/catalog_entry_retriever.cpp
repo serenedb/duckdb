@@ -184,7 +184,7 @@ const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
 	return *ClientData::Get(context).catalog_search_path;
 }
 
-static vector<CatalogSearchEntry> SearchEntriesOfCatalogs(vector<CatalogSearchEntry> entries) {
+static vector<CatalogSearchEntry> SearchEntriesOfCatalogs(ClientContext &context, vector<CatalogSearchEntry> entries) {
 	vector<CatalogSearchEntry> new_path;
 	auto &db_manager = DatabaseManager::Get(context);
 	for (auto &entry : entries) {
@@ -198,7 +198,8 @@ static vector<CatalogSearchEntry> SearchEntriesOfCatalogs(vector<CatalogSearchEn
 
 void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries, const Identifier &view_catalog,
                                           const vector<NameBinding> &bindings_p) {
-	search_path = make_shared_ptr<CatalogSearchPath>(context, SearchEntriesOfCatalogs(std::move(entries)), false);
+	search_path =
+	    make_shared_ptr<CatalogSearchPath>(context, SearchEntriesOfCatalogs(context, std::move(entries)), false);
 	bindings = &bindings_p;
 	recorded_bindings = nullptr;
 	bindings_catalog = view_catalog;
@@ -227,7 +228,7 @@ void CatalogEntryRetriever::RecordBindings(const Identifier &view_catalog, vecto
 void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
 	bindings = nullptr;
 	recorded_bindings = nullptr;
-	auto new_path = SearchEntriesOfCatalogs(std::move(entries));
+	auto new_path = SearchEntriesOfCatalogs(context, std::move(entries));
 	if (new_path.empty()) {
 		return;
 	}
