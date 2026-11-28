@@ -54,7 +54,7 @@ public:
 	vector<ColumnAcl> column_acls;
 	vector<NameBinding> name_bindings;
 
-	vector<idx_t> GetSubObjectOids() const;
+	vector<idx_t> GetSubObjectOids() const override;
 
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;
