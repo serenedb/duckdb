@@ -1805,3 +1805,25 @@ TEST_CASE("Range lines count the lines before a range once every range before it
 	REQUIRE(lines.Before(3) == 13);
 	REQUIRE(lines.Before(2) == 8);
 }
+
+TEST_CASE("A range failure keeps the earliest failing record and names its line once the ranges before are known",
+          "[formats]") {
+	RangeLines lines;
+	RangeFailure failure;
+	REQUIRE_FALSE(failure.Failed());
+	REQUIRE_FALSE(failure.Line(lines).IsValid());
+	REQUIRE(failure.Fail(3, 7));
+	REQUIRE(failure.Failed());
+	REQUIRE_FALSE(failure.Fail(3, 7));
+	REQUIRE_FALSE(failure.Fail(3, 9));
+	REQUIRE_FALSE(failure.Fail(4, 0));
+	REQUIRE(failure.Fail(3, 2));
+	REQUIRE(failure.Fail(2, 5));
+	REQUIRE_FALSE(failure.Line(lines).IsValid());
+	lines.Add(0, 10);
+	REQUIRE_FALSE(failure.Line(lines).IsValid());
+	lines.Add(1, 20);
+	REQUIRE(failure.Line(lines).GetIndex() == 36);
+	REQUIRE(failure.Fail(0, 4));
+	REQUIRE(failure.Line(lines).GetIndex() == 5);
+}

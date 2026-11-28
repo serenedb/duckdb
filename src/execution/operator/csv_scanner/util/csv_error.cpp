@@ -43,12 +43,10 @@ void CSVErrorHandler::ThrowOverRejectLimit() {
 }
 
 static idx_t EarliestOf(const vector<CSVError> &list) {
+	RangeFailure first;
 	idx_t earliest = 0;
-	for (idx_t i = 1; i < list.size(); i++) {
-		auto &info = list[i].error_info;
-		auto &best = list[earliest].error_info;
-		if (info.boundary_idx < best.boundary_idx ||
-		    (info.boundary_idx == best.boundary_idx && info.lines_in_batch < best.lines_in_batch)) {
+	for (idx_t i = 0; i < list.size(); i++) {
+		if (first.Fail(list[i].error_info.boundary_idx, list[i].error_info.lines_in_batch)) {
 			earliest = i;
 		}
 	}
@@ -712,7 +710,7 @@ idx_t CSVErrorHandler::GetLine(const LinesPerBoundary &error_info) {
 	return GetLineInternal(error_info);
 }
 idx_t CSVErrorHandler::GetLineInternal(const LinesPerBoundary &error_info) {
-	return 1 + error_info.lines_in_batch + lines.Before(error_info.boundary_idx);
+	return lines.Line(error_info.boundary_idx, error_info.lines_in_batch);
 }
 
 } // namespace duckdb

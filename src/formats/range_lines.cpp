@@ -30,4 +30,20 @@ idx_t RangeLines::Before(idx_t range) const {
 	return total;
 }
 
+bool RangeFailure::Fail(idx_t range_p, idx_t record_p) {
+	if (range.IsValid() && (range.GetIndex() < range_p || (range.GetIndex() == range_p && record <= record_p))) {
+		return false;
+	}
+	range = range_p;
+	record = record_p;
+	return true;
+}
+
+optional_idx RangeFailure::Line(const RangeLines &lines) const {
+	if (!range.IsValid() || !lines.Known(range.GetIndex())) {
+		return optional_idx();
+	}
+	return lines.Line(range.GetIndex(), record);
+}
+
 } // namespace duckdb

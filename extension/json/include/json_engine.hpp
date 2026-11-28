@@ -184,8 +184,7 @@ private:
 	mutable mutex lock;
 	RowChain<JsonRangeStart, JsonRangeEntry, JSON_RANGE_ORIGINS> chain;
 	RangeLines lines;
-	optional_idx error_unit;
-	idx_t error_record = 0;
+	RangeFailure failure;
 	string error_message;
 };
 

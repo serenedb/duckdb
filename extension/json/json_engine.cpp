@@ -970,7 +970,7 @@ JsonRangeStart JsonScanGlobal::StartState(idx_t range) {
 bool JsonScanGlobal::Claim(idx_t &unit, idx_t &begin) {
 	{
 		lock_guard<mutex> guard(lock);
-		if (error_unit.IsValid()) {
+		if (failure.Failed()) {
 			return false;
 		}
 	}
@@ -990,21 +990,18 @@ void JsonScanGlobal::Finish(idx_t unit, idx_t records) {
 
 void JsonScanGlobal::AddError(idx_t unit, idx_t record, string message) {
 	lock_guard<mutex> guard(lock);
-	if (!error_unit.IsValid() || unit < error_unit.GetIndex() ||
-	    (unit == error_unit.GetIndex() && record < error_record)) {
-		error_unit = unit;
-		error_record = record;
+	if (failure.Fail(unit, record)) {
 		error_message = std::move(message);
 	}
 	ThrowIfPossible();
 }
 
 void JsonScanGlobal::ThrowIfPossible() {
-	if (!error_unit.IsValid() || !lines.Known(error_unit.GetIndex())) {
+	const auto line = failure.Line(lines);
+	if (!line.IsValid()) {
 		return;
 	}
-	const idx_t line = 1 + error_record + lines.Before(error_unit.GetIndex());
-	throw InvalidInputException(StringUtil::Replace(error_message, "{line}", to_string(line)));
+	throw InvalidInputException(StringUtil::Replace(error_message, "{line}", to_string(line.GetIndex())));
 }
 
 void JsonScanGlobal::ThrowObjectSizeError(idx_t object_size) const {
