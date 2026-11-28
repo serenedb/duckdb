@@ -42,7 +42,7 @@ CREATE TABLE raw_nullstr AS FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header =
 statement ok
 CREATE TABLE raw_bad AS FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns());
 
-foreach predicate s='alpha' s<>'alpha' s<'beta' s>='gamma' (s)IN('alpha','zeta','NULL') (s)LIKE'alp%' (s)ISNULL (s)NOTNULL (n)ISNULL (n)NOTNULL s='alp"ha' s='' (s>'a'AND(s<'b')) (s)LIKE'%ph%' NOT((s)LIKE'%ph%') (s)LIKE'%a' (s)LIKE'a%a' (s)LIKE'a%h%t' (s)LIKE'%l%h%' (s)LIKE'%' (s)LIKE'' NOT((s)LIKE'alp%') (s)LIKE'b_ta%' contains(s,',') suffix(s,'ha') prefix(s,'alp"') (s)LIKE'%"%' (s)LIKE'%a%'AND(s<>'alpha')
+foreach predicate s='alpha' s<>'alpha' s<'beta' s>='gamma' (s)IN('alpha','zeta','NULL') (s)LIKE'alp%' (s)ISNULL (s)NOTNULL (n)ISNULL (n)NOTNULL s='alp"ha' s='' (s>'a'AND(s<'b')) (s)LIKE'%ph%' NOT((s)LIKE'%ph%') (s)LIKE'%a' (s)LIKE'a%a' (s)LIKE'a%h%t' (s)LIKE'%l%h%' (s)LIKE'%' (s)LIKE'' NOT((s)LIKE'alp%') (s)LIKE'b_ta%' contains(s,',') suffix(s,'ha') prefix(s,'alp"') (s)LIKE'%"%' (s)LIKE'%a%'AND(s<>'alpha') (s)LIKE'%1%' contains(s,'a,')
 
 foreach parallel true false
 

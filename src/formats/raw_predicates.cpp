@@ -7,6 +7,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
+#include "re2/literal_finder.h"
 
 #include <algorithm>
 
@@ -239,6 +240,53 @@ bool RawPasses(const vector<RawPredicate> &predicates, const char *value, idx_t 
 		}
 	}
 	return true;
+}
+
+RawContains::RawContains(string needle_p)
+    : needle(std::move(needle_p)), finder(make_uniq<duckdb_re2::LiteralFinder>(needle)) {
+}
+
+RawContains::~RawContains() {
+}
+
+shared_ptr<RawContains> RawContains::TryCreate(const vector<RawPredicate> &predicates) {
+	if (predicates.size() != 1) {
+		return nullptr;
+	}
+	auto &predicate = predicates[0];
+	if (predicate.kind != RawPredicateKind::LIKE || predicate.anchored_start || predicate.anchored_end ||
+	    predicate.values.size() != 1) {
+		return nullptr;
+	}
+	return make_shared_ptr<RawContains>(predicate.values[0]);
+}
+
+idx_t RawContains::Find(const char *base, const uint32_t *starts, const uint32_t *ends, idx_t count,
+                        uint32_t *matches) const {
+	idx_t matched = 0;
+	if (count == 0) {
+		return matched;
+	}
+	const char *const end = base + ends[count - 1];
+	idx_t value = 0;
+	const char *position = base + starts[0];
+	while (const char *hit = finder->Find(needle, position, end)) {
+		const auto offset = UnsafeNumericCast<uint32_t>(hit - base);
+		while (ends[value] <= offset) {
+			value++;
+		}
+		if (offset >= starts[value] && offset + needle.size() <= ends[value]) {
+			matches[matched++] = UnsafeNumericCast<uint32_t>(value);
+		} else if (offset < starts[value]) {
+			position = base + starts[value];
+			continue;
+		}
+		if (++value == count) {
+			break;
+		}
+		position = base + starts[value];
+	}
+	return matched;
 }
 
 } // namespace duckdb

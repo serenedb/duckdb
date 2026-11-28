@@ -196,9 +196,14 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 }
 
 void LeanRawPredicates(const LeanSource &source, idx_t count, const vector<RawPredicate> &predicates,
-                       vector<bool> &selected) {
+                       const RawContains *contains, vector<bool> &selected) {
+	D_ASSERT(count <= STANDARD_VECTOR_SIZE);
 	const uint32_t flag_test = source.quotes || source.padded || source.unquoted_escape ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
+	uint32_t starts[STANDARD_VECTOR_SIZE];
+	uint32_t ends[STANDARD_VECTOR_SIZE];
+	uint32_t rows[STANDARD_VECTOR_SIZE];
+	idx_t gathered = 0;
 	for (idx_t row = 0; row < count; row++) {
 		if (!selected[row]) {
 			continue;
@@ -224,7 +229,21 @@ void LeanRawPredicates(const LeanSource &source, idx_t count, const vector<RawPr
 			continue;
 		}
 		const bool null = empty_only_null ? size == 0 : source.IsNull(value, size, quoted);
+		if (contains && !null) {
+			starts[gathered] = UnsafeNumericCast<uint32_t>(begin);
+			ends[gathered] = UnsafeNumericCast<uint32_t>(end);
+			rows[gathered++] = UnsafeNumericCast<uint32_t>(row);
+			selected[row] = false;
+			continue;
+		}
 		selected[row] = RawPasses(predicates, value, size, null);
+	}
+	if (gathered > 0) {
+		uint32_t matches[STANDARD_VECTOR_SIZE];
+		const auto matched = contains->Find(source.data, starts, ends, gathered, matches);
+		for (idx_t i = 0; i < matched; i++) {
+			selected[rows[matches[i]]] = true;
+		}
 	}
 }
 
@@ -459,6 +478,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 				if (!CollectRawPredicates(*expression_filter.expr, string_column, filter.raw)) {
 					filter.raw.clear();
 				}
+				filter.contains = RawContains::TryCreate(filter.raw);
 			}
 			filters.push_back(std::move(filter));
 		}
@@ -1423,7 +1443,8 @@ bool CsvScan::LeanRawFilter(idx_t count) {
 			continue;
 		}
 		applied = true;
-		LeanRawPredicates(LeanSourceFor(global.columns[filter.column], 0, false), count, filter.raw, selected);
+		LeanRawPredicates(LeanSourceFor(global.columns[filter.column], 0, false), count, filter.raw,
+		                  filter.contains.get(), selected);
 	}
 	return applied;
 }

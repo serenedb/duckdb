@@ -127,6 +127,7 @@ struct CsvScanFilter {
 	reference<const TableFilter> filter;
 	idx_t column = DConstants::INVALID_INDEX;
 	vector<RawPredicate> raw;
+	shared_ptr<RawContains> contains;
 };
 
 class CsvScanGlobal {
