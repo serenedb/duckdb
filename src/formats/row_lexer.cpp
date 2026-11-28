@@ -30,7 +30,7 @@ uint64_t ExpectedPattern(idx_t columns, idx_t phase) {
 }
 
 template <int FIRST>
-inline uint32_t *WritePositions(uint64_t bits, uint32_t offset, uint32_t *out) {
+[[gnu::always_inline]] inline uint32_t *WritePositions(uint64_t bits, uint32_t offset, uint32_t *out) {
 	const int count = std::popcount(bits);
 	for (int i = 0; i < FIRST; i++) {
 		out[i] = offset + static_cast<uint32_t>(std::countr_zero(bits));
