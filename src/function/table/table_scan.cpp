@@ -1463,19 +1463,22 @@ static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunct
 
 unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &context, ReplacementScanInput &input,
                                                              optional_ptr<ReplacementScanData>) {
-	CatalogEntryRetriever retriever(context);
-	auto index = Catalog::GetEntry<IndexCatalogEntry>(context, Binder::BindTableName(retriever, input.name),
-	                                                  OnEntryNotFound::RETURN_NULL);
-	if (!index || index->index_type != ART::TYPE_NAME ||
-	    index->ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+	auto entry = input.retriever.GetEntry(
+	    EntryLookupInfo(CatalogType::INDEX_ENTRY, Binder::BindTableName(input.retriever, input.name)),
+	    OnEntryNotFound::RETURN_NULL);
+	if (!entry || entry->type != CatalogType::INDEX_ENTRY) {
+		return nullptr;
+	}
+	auto &index = entry->Cast<IndexCatalogEntry>();
+	if (index.index_type != ART::TYPE_NAME || index.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
 		return nullptr;
 	}
 	vector<unique_ptr<ParsedExpression>> path;
-	path.push_back(ConstantExpression::String(index->ParentCatalog().GetName().GetIdentifierName()));
-	for (auto &schema : index->ParentSchemaPath(index->catalog.GetCatalogTransaction(context))) {
+	path.push_back(ConstantExpression::String(index.ParentCatalog().GetName().GetIdentifierName()));
+	for (auto &schema : index.ParentSchemaPath(index.catalog.GetCatalogTransaction(context))) {
 		path.push_back(ConstantExpression::String(schema.GetIdentifierName()));
 	}
-	path.push_back(ConstantExpression::String(index->name.GetIdentifierName()));
+	path.push_back(ConstantExpression::String(index.name.GetIdentifierName()));
 	vector<unique_ptr<ParsedExpression>> arguments;
 	arguments.push_back(make_uniq<FunctionExpression>("list_value", std::move(path)));
 	auto ref = make_uniq<TableFunctionRef>();
