@@ -31,6 +31,7 @@ struct StatementNaming {
 struct SchemaView {
 	bool shown = false;
 	bool owned = false;
+	bool unowned = false;
 };
 
 struct PrivilegeTarget {

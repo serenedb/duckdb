@@ -29,10 +29,10 @@ const Permissions &PermissionsOf(const PrivilegeTarget &target) {
 		return target.permissions;
 	}
 	auto &entry = *target.entry;
-	const bool unowned =
-	    entry.permissions.owner == 0 || (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
-	const bool system_view = entry.type == CatalogType::VIEW_ENTRY && entry.ParentCatalog().IsSystemCatalog();
-	if (unowned && !system_view) {
+	const bool unowned = entry.permissions.owner == 0 ||
+	                     (!entry.internal &&
+	                      (target.schema ? target.schema->unowned : entry.ParentCatalog().GetAttached().IsReadOnly()));
+	if (unowned && !(entry.type == CatalogType::VIEW_ENTRY && entry.ParentCatalog().IsSystemCatalog())) {
 		return UNOWNED;
 	}
 	return target.permissions;
@@ -74,10 +74,7 @@ static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, const
 	return parent.versions->GetVisible(catalog.GetCatalogTransaction(context).view);
 }
 
-bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit) {
-	if (entry.internal || PermissionsOf(entry).owner == 0) {
-		return visit(ACL_ID_PUBLIC);
-	}
+static bool VisitSeers(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit) {
 	const auto &kind = ObjectKindOf(entry.type);
 	const auto holders = [&](const Permissions &permissions) {
 		if (visit(permissions.owner)) {
@@ -119,9 +116,16 @@ bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit
 	}
 }
 
+bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit) {
+	if (entry.internal || PermissionsOf(entry).owner == 0) {
+		return visit(ACL_ID_PUBLIC);
+	}
+	return VisitSeers(entry, visit);
+}
+
 SchemaView ViewOf(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema) {
 	const bool shown = static_cast<bool>(Check<AclMode::See>(context, role, schema));
-	return {shown, shown && role.MemberOf(schema.permissions.owner)};
+	return {shown, shown && role.MemberOf(schema.permissions.owner), schema.ParentCatalog().GetAttached().IsReadOnly()};
 }
 
 bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target) {
@@ -166,7 +170,7 @@ bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const 
 	default: {
 		const auto &kind = ObjectKindOf(entry.type);
 		return (role.PredefinedRoleModes(kind.acl_class) & kind.privileges) != AclMode::NoRights ||
-		       ForEachSeer(entry, [&](idx_t seer) { return seer == ACL_ID_PUBLIC || role.Uses(seer); });
+		       VisitSeers(entry, [&](idx_t seer) { return seer == ACL_ID_PUBLIC || role.Uses(seer); });
 	}
 	}
 }
