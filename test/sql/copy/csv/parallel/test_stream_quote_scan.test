@@ -22,6 +22,12 @@ COPY (SELECT line FROM literal ORDER BY i) TO '{TEMP_DIR}/quote_literal.csv' (HE
 statement ok
 COPY (SELECT line FROM literal ORDER BY i) TO '{TEMP_DIR}/quote_literal.csv.gz' (HEADER false, QUOTE '', DELIMITER '|', COMPRESSION gzip);
 
+statement ok
+COPY (SELECT CASE WHEN i % 53 = 0 THEN 'm' || i || '"x,' || i || ',z' ELSE '"q,' || i || '",' || i || ',' || repeat('y', i % 30) END AS line FROM range(4000) t(i) ORDER BY i) TO '{TEMP_DIR}/quote_rare.csv' (HEADER false, QUOTE '', DELIMITER '|');
+
+statement ok
+COPY (SELECT CASE WHEN i % 53 = 0 THEN 'm' || i || '"x,' || i || ',z' ELSE '"q,' || i || '",' || i || ',' || repeat('y', i % 30) END AS line FROM range(4000) t(i) ORDER BY i) TO '{TEMP_DIR}/quote_rare.csv.gz' (HEADER false, QUOTE '', DELIMITER '|', COMPRESSION gzip);
+
 foreach buffer_size 128 700 4096 1048576
 
 query I
@@ -53,6 +59,22 @@ SELECT count(*) FROM (
 
 query II
 SELECT count(*), sum(b) FROM read_csv('{TEMP_DIR}/quote_literal.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size})
+----
+4000	7998000
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_rare.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_rare.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_rare.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/quote_rare.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size}))
+)
+----
+0
+
+query II
+SELECT count(*), sum(b) FROM read_csv('{TEMP_DIR}/quote_rare.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', new_line = '\n', strict_mode = false, buffer_size = {buffer_size})
 ----
 4000	7998000
 

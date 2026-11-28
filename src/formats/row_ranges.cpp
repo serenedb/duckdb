@@ -931,7 +931,7 @@ void RowRangeReader::StartSearch(RowSearch &search) const {
 	search.quoted = false;
 	search.plain = !QuoteParity(dialect) && !dialect.backslash &&
 	               (!strict_lines || dialect.new_line == NewLineIdentifier::SINGLE_N);
-	search.scan_quotes = lexer.ScansQuotes() && origin != CSVState::CARRIAGE_RETURN;
+	search.scan_quotes = lexer.ScansQuotes();
 	search.quotes = RowQuoteScan();
 	search.quotes.pos = lex_start;
 	lexer.Start(search.probe, lex_start, true, false);
