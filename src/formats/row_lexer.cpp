@@ -49,6 +49,15 @@ inline uint32_t *WritePositions(uint64_t bits, uint32_t offset, uint32_t *out) {
 	return out + count;
 }
 
+struct PlainBlockMasks {
+	uint64_t after_terms;
+	uint64_t row_ends;
+	uint64_t line_ends;
+	uint64_t row_starts;
+	uint64_t boundaries;
+	uint64_t field_bits;
+};
+
 inline uint64_t Lowest(uint64_t bits) {
 	return bits & (0 - bits);
 }
@@ -326,65 +335,89 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				const idx_t run_start = pos;
 				bool need_first_term = cursor.first_term == DConstants::INVALID_INDEX;
 				idx_t last_term = DConstants::INVALID_INDEX;
-				const auto plain_block = [&]<bool STEADY> [[gnu::always_inline]] (uint64_t terms, uint64_t delims) {
-					const uint64_t from_delims = (delims << 1) | after_delimiter;
-					const uint64_t after_terms = (terms << 1) | after_term;
-					const bool block_settled = STEADY || settles(settled);
-					const uint64_t merged = d.merge_terms && !d.empty_lines ? after_terms : 0;
-					const uint64_t row_ends = terms & ~merged;
-					const uint64_t line_ends = d.empty_lines ? row_ends & ~after_terms : row_ends;
-					const uint64_t row_starts = after_terms & ~(terms & merged);
-					const uint64_t boundaries = delims | row_ends;
-					idx_t next_phase = phase;
-					if (check_arity && boundaries) {
-						const idx_t count = std::popcount(boundaries);
+				const bool merge_lines = d.merge_terms && !d.empty_lines;
+				const auto next_phase_of = [&] [[gnu::always_inline]] (uint64_t boundaries, uint64_t row_ends,
+				                                                       idx_t & next_phase) {
+					const idx_t count = std::popcount(boundaries);
 #if defined(__BMI2__)
-						const uint64_t pattern = _pext_u64(row_ends, boundaries);
+					const uint64_t pattern = _pext_u64(row_ends, boundaries);
+					const uint64_t wrong = _bzhi_u64(pattern ^ expected[phase], static_cast<uint32_t>(count));
 #else
-						uint64_t pattern = 0;
-						for (uint64_t rest = row_ends; rest; rest &= rest - 1) {
-							pattern |= uint64_t(1) << std::popcount(boundaries & (Lowest(rest) - 1));
-						}
-#endif
-						const uint64_t mask = count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
-						if (phase >= columns || ((pattern ^ expected[phase]) & mask)) {
-							return false;
-						}
-						next_phase = pattern ? count + std::countl_zero(pattern) - 64 : phase + count;
-						if (next_phase >= columns) {
-							return false;
-						}
+					uint64_t pattern = 0;
+					for (uint64_t rest = row_ends; rest; rest &= rest - 1) {
+						pattern |= uint64_t(1) << std::popcount(boundaries & (Lowest(rest) - 1));
 					}
-					const idx_t reach = line_ends ? pos + std::countr_zero(line_ends) : pos + CSV_BLOCK_BYTES;
+					const uint64_t wrong =
+					    (pattern ^ expected[phase]) & (count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1);
+#endif
+					if (phase >= columns || wrong) {
+						return false;
+					}
+					next_phase = pattern ? count + std::countl_zero(pattern) - 64 : phase + count;
+					return next_phase < columns;
+				};
+				const auto plain_masks = [&]<bool STRICT_ROWS> [[gnu::always_inline]] (
+				    uint64_t terms, uint64_t delims, uint64_t before_term, uint64_t before_delimiter) {
+					PlainBlockMasks masks;
+					masks.after_terms = (terms << 1) | before_term;
+					const uint64_t merged = STRICT_ROWS || merge_lines ? masks.after_terms : 0;
+					masks.row_ends = terms & ~merged;
+					masks.line_ends =
+					    !STRICT_ROWS && d.empty_lines ? masks.row_ends & ~masks.after_terms : masks.row_ends;
+					masks.row_starts = masks.after_terms & ~(terms & merged);
+					masks.boundaries = delims | masks.row_ends;
+					masks.field_bits = (delims << 1) | before_delimiter | masks.row_starts;
+					return masks;
+				};
+				const auto write_block = [&] [[gnu::always_inline]] (const PlainBlockMasks &masks) {
+					if constexpr (EXTRACT) {
+						const auto offset = static_cast<uint32_t>(pos - anchor);
+						rows_out = WritePositions<4>(masks.row_starts, offset, rows_out);
+						ends_out = WritePositions<8>(masks.boundaries, offset, ends_out);
+						open_rows += std::popcount(masks.row_starts);
+						open_rows -= std::popcount(masks.row_ends);
+					}
+				};
+				const auto advance_block = [&] [[gnu::always_inline]] (uint64_t terms, uint64_t delims,
+				                                                       const PlainBlockMasks &masks) {
+					rows += std::popcount(masks.row_ends);
+					lines += std::popcount(terms);
+					after_delimiter = delims >> (CSV_BLOCK_BYTES - 1);
+					after_term = terms >> (CSV_BLOCK_BYTES - 1);
+					pos += CSV_BLOCK_BYTES;
+				};
+				const auto plain_block = [&]<bool STEADY, bool STRICT_ROWS> [[gnu::always_inline]] (uint64_t terms,
+				                                                                                    uint64_t delims) {
+					const auto masks =
+					    plain_masks.template operator()<STRICT_ROWS>(terms, delims, after_term, after_delimiter);
+					const bool block_settled = STEADY || settles(settled);
+					idx_t next_phase = phase;
+					if ((STRICT_ROWS || check_arity) && masks.boundaries &&
+					    !next_phase_of(masks.boundaries, masks.row_ends, next_phase)) {
+						return false;
+					}
+					const idx_t reach =
+					    masks.line_ends ? pos + std::countr_zero(masks.line_ends) : pos + CSV_BLOCK_BYTES;
 					if (STEADY ? reach - last_row_end > max_line_size : too_long(reach, block_settled)) {
 						return false;
 					}
 					settled = block_settled;
 					phase = next_phase;
-					if constexpr (EXTRACT) {
-						const auto offset = static_cast<uint32_t>(pos - anchor);
-						rows_out = WritePositions<4>(row_starts, offset, rows_out);
-						ends_out = WritePositions<8>(boundaries, offset, ends_out);
-						open_rows += std::popcount(row_starts);
-						open_rows -= std::popcount(row_ends);
-					}
-					if (track_fields) {
-						const uint64_t field_bits = from_delims | row_starts;
-						if (field_bits) {
-							field_start = pos + 63 - std::countl_zero(field_bits);
+					write_block(masks);
+					if (STRICT_ROWS || track_fields) {
+						if (masks.field_bits) {
+							field_start = pos + 63 - std::countl_zero(masks.field_bits);
 						}
 						if ((delims | terms) >> (CSV_BLOCK_BYTES - 1)) {
 							field_start = pos + CSV_BLOCK_BYTES;
 						}
 					}
-					if (line_ends) {
+					if (masks.line_ends) {
 						if (!STEADY && last_row_end == DConstants::INVALID_INDEX) {
 							cursor.first_row_end = reach;
 						}
-						last_row_end = pos + 63 - std::countl_zero(line_ends);
+						last_row_end = pos + 63 - std::countl_zero(masks.line_ends);
 					}
-					rows += std::popcount(row_ends);
-					lines += std::popcount(terms);
 					if (terms) {
 						last_term = pos + 63 - std::countl_zero(terms);
 						if (!STEADY && need_first_term) {
@@ -393,9 +426,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 							cursor.first_boundary = cursor.first_term + 1;
 						}
 					}
-					after_delimiter = delims >> (CSV_BLOCK_BYTES - 1);
-					after_term = terms >> (CSV_BLOCK_BYTES - 1);
-					pos += CSV_BLOCK_BYTES;
+					advance_block(terms, delims, masks);
 					return true;
 				};
 				bool running = true;
@@ -405,37 +436,93 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					__builtin_prefetch(block + PREFETCH_BYTES);
 					const CsvVector vector(block);
 					const bool high = vector.HasNonAscii();
-					running = !vector.ContainsAny('\r', quote_byte) &&
-					          plain_block.template operator()<false>(vector.Equal('\n'), vector.Equal(d.delimiter));
+					running =
+					    !vector.ContainsAny('\r', quote_byte) &&
+					    plain_block.template operator()<false, false>(vector.Equal('\n'), vector.Equal(d.delimiter));
 					non_ascii |= running && high;
 				}
-				uint64_t term_masks[PLAIN_BATCH_BLOCKS];
-				uint64_t delim_masks[PLAIN_BATCH_BLOCKS];
-				while (running && pos + CSV_BLOCK_BYTES <= end) {
-					const idx_t blocks = MinValue<idx_t>(PLAIN_BATCH_BLOCKS, (end - pos) / CSV_BLOCK_BYTES);
-					idx_t classified = 0;
-					idx_t first_high = blocks;
-					for (; classified < blocks; classified++) {
-						const char *block = data + (pos + classified * CSV_BLOCK_BYTES - base);
-						__builtin_prefetch(block + PREFETCH_BYTES);
-						const CsvVector vector(block);
-						if (vector.ContainsAny('\r', quote_byte)) {
-							running = false;
-							break;
+				const auto steady_run = [&]<bool STRICT_ROWS> [[gnu::always_inline]] () {
+					uint64_t term_masks[PLAIN_BATCH_BLOCKS];
+					uint64_t delim_masks[PLAIN_BATCH_BLOCKS];
+					while (running && pos + CSV_BLOCK_BYTES <= end) {
+						const idx_t blocks = MinValue<idx_t>(PLAIN_BATCH_BLOCKS, (end - pos) / CSV_BLOCK_BYTES);
+						idx_t classified = 0;
+						idx_t first_high = blocks;
+						for (; classified < blocks; classified++) {
+							const char *block = data + (pos + classified * CSV_BLOCK_BYTES - base);
+							__builtin_prefetch(block + PREFETCH_BYTES);
+							const CsvVector vector(block);
+							if (vector.ContainsAny('\r', quote_byte)) {
+								running = false;
+								break;
+							}
+							term_masks[classified] = vector.Equal('\n');
+							delim_masks[classified] = vector.Equal(d.delimiter);
+							if (first_high == blocks && vector.HasNonAscii()) {
+								first_high = classified;
+							}
 						}
-						term_masks[classified] = vector.Equal('\n');
-						delim_masks[classified] = vector.Equal(d.delimiter);
-						if (first_high == blocks && vector.HasNonAscii()) {
-							first_high = classified;
+						idx_t consumed = 0;
+						if (pos + classified * CSV_BLOCK_BYTES - last_row_end > max_line_size) {
+							while (consumed < classified && plain_block.template operator()<true, STRICT_ROWS>(
+							                                    term_masks[consumed], delim_masks[consumed])) {
+								consumed++;
+							}
+						} else {
+							const idx_t batch_pos = pos;
+							const uint64_t batch_after_term = after_term;
+							const uint64_t batch_after_delimiter = after_delimiter;
+							for (; consumed < classified; consumed++) {
+								const uint64_t terms = term_masks[consumed];
+								const uint64_t delims = delim_masks[consumed];
+								const auto masks = plain_masks.template operator()<STRICT_ROWS>(
+								    terms, delims, after_term, after_delimiter);
+								idx_t next_phase = phase;
+								if ((STRICT_ROWS || check_arity) && masks.boundaries &&
+								    !next_phase_of(masks.boundaries, masks.row_ends, next_phase)) {
+									break;
+								}
+								phase = next_phase;
+								write_block(masks);
+								advance_block(terms, delims, masks);
+							}
+							bool need_row_end = true;
+							bool need_term = true;
+							bool need_field = STRICT_ROWS || track_fields;
+							if (need_field && consumed &&
+							    ((delim_masks[consumed - 1] | term_masks[consumed - 1]) >> (CSV_BLOCK_BYTES - 1))) {
+								field_start = pos;
+								need_field = false;
+							}
+							for (idx_t i = consumed; i-- > 0 && (need_row_end || need_term || need_field);) {
+								const uint64_t terms = term_masks[i];
+								const auto masks = plain_masks.template operator()<STRICT_ROWS>(
+								    terms, delim_masks[i],
+								    i ? term_masks[i - 1] >> (CSV_BLOCK_BYTES - 1) : batch_after_term,
+								    i ? delim_masks[i - 1] >> (CSV_BLOCK_BYTES - 1) : batch_after_delimiter);
+								const idx_t block_last = batch_pos + i * CSV_BLOCK_BYTES + 63;
+								if (need_row_end && masks.line_ends) {
+									last_row_end = block_last - std::countl_zero(masks.line_ends);
+									need_row_end = false;
+								}
+								if (need_term && terms) {
+									last_term = block_last - std::countl_zero(terms);
+									need_term = false;
+								}
+								if (need_field && masks.field_bits) {
+									field_start = block_last - std::countl_zero(masks.field_bits);
+									need_field = false;
+								}
+							}
 						}
+						non_ascii |= first_high < consumed;
+						running = running && consumed == classified;
 					}
-					idx_t consumed = 0;
-					while (consumed < classified &&
-					       plain_block.template operator()<true>(term_masks[consumed], delim_masks[consumed])) {
-						consumed++;
-					}
-					non_ascii |= first_high < consumed;
-					running = running && consumed == classified;
+				};
+				if (check_arity && track_fields && merge_lines) {
+					steady_run.template operator()<true>();
+				} else {
+					steady_run.template operator()<false>();
 				}
 				if (pos != run_start) {
 					const char *last_block = data + (pos - CSV_BLOCK_BYTES - base);
