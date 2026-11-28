@@ -668,7 +668,7 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 
 	// lookup the table to copy into
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
-	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
+	auto &table = entry_retriever.GetEntry<TableCatalogEntry>(stmt.info->GetQualifiedName());
 	const bool postgres_csv =
 	    stmt.info->format == "csv" && table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
 	if (postgres_csv) {
@@ -726,7 +726,7 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	D_ASSERT(!source_bindings.empty());
 
 	auto copy_from_function = function.copy_from_function;
-	CopyFromFunctionBindInput input(*stmt.info, copy_from_function);
+	CopyFromFunctionBindInput input(*stmt.info, copy_from_function, table);
 	auto function_data = function.copy_from_bind(context, input, expected_names, expected_types);
 	auto get = make_uniq<LogicalGet>(source_bindings[0].table_index, BoundTableFunction(copy_from_function),
 	                                 std::move(function_data), expected_types, expected_names);

@@ -99,11 +99,13 @@ struct CopyFunctionBindInput {
 };
 
 struct CopyFromFunctionBindInput {
-	explicit CopyFromFunctionBindInput(const CopyInfo &info_p, TableFunction &tf_p) : info(info_p), tf(tf_p) {
+	CopyFromFunctionBindInput(const CopyInfo &info_p, TableFunction &tf_p, TableCatalogEntry &table_p)
+	    : info(info_p), tf(tf_p), table(table_p) {
 	}
 
 	const CopyInfo &info;
 	TableFunction &tf;
+	TableCatalogEntry &table;
 };
 
 struct CopyToSelectInput {

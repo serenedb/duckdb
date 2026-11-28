@@ -1054,7 +1054,7 @@ static unique_ptr<FunctionData> ParquetCopyFromBind(ClientContext &context, Copy
 	auto info = input.info.Copy();
 	info->options.erase("codec");
 	info->options.erase("row_group_size");
-	CopyFromFunctionBindInput read_input(*info, input.tf);
+	CopyFromFunctionBindInput read_input(*info, input.tf, input.table);
 	return TableFunctionMultiFileWrapper::MultiFileBindCopyWith(context, read_input, expected_names, expected_types,
 	                                                            ParquetScanFunction::GetSingleFileFunction(),
 	                                                            ParquetScanFunction::GetMultiFileSettings());
