@@ -73,6 +73,9 @@ struct RoleAccess {
 	RoleOption options = RoleOption::None;
 	bool is_superuser = false;
 	bool owns_builtins = false;
+	bool reads_all_data = false;
+	bool writes_all_data = false;
+	bool maintains = false;
 	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
