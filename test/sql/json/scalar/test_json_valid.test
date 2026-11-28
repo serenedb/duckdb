@@ -630,3 +630,11 @@ SELECT json_valid('{"padding": "0123456789abcdef", "a": "é\n", "b": [1, -2.5e3]
        json_valid('{"padding": "0123456789abcdef", "a": tru}');
 ----
 true	false	false	false	false	true	true	false
+
+query IIII
+SELECT json_valid('{"padding": "0123456789abcdef", "a": "unclosed}'),
+       json_valid('[18446744073709551615, -1, 1.5]'),
+       json_valid('[18446744073709551616]'),
+       json_valid('{"padding": "0123456789abcdef", "a": 18446744073709551615}');
+----
+false	true	true	true
