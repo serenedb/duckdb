@@ -17,6 +17,9 @@ namespace duckdb {
 
 class BatchMemoryManager : public StateWithBlockableTasks {
 public:
+	// heuristic - we need at least 4MB of cache space per column per thread we launch
+	static constexpr const idx_t MINIMUM_MEMORY_PER_COLUMN_PER_THREAD = 4ULL * 1024ULL * 1024ULL;
+
 	BatchMemoryManager(ClientContext &context, idx_t initial_memory_request)
 	    : context(context), unflushed_memory_usage(0), min_batch_index(0), available_memory(0),
 	      can_increase_memory(true) {
@@ -100,6 +103,11 @@ public:
 
 	idx_t AvailableMemory() const {
 		return available_memory;
+	}
+
+	idx_t MaxThreads(idx_t source_max_threads, idx_t minimum_memory_per_thread) {
+		SetMemorySize(source_max_threads * minimum_memory_per_thread);
+		return MinValue<idx_t>(source_max_threads, AvailableMemory() / minimum_memory_per_thread + 1);
 	}
 
 	idx_t GetUnflushedMemory() {

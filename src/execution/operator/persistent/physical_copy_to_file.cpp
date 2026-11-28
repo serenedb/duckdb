@@ -19,6 +19,7 @@
 #include "duckdb/parallel/base_pipeline_event.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/execution/operator/persistent/batch_memory_manager.hpp"
 #include "duckdb/execution/operator/persistent/copy_batch_slicer.hpp"
 #include "duckdb/execution/operator/persistent/copy_output_gate.hpp"
 #include "duckdb/execution/operator/persistent/copy_output_lifecycle.hpp"
@@ -544,6 +545,13 @@ public:
 	//! Counters
 	atomic<idx_t> rows_copied;
 	atomic<idx_t> last_file_offset;
+
+	BatchMemoryManager memory_manager;
+
+	idx_t MaxThreads(idx_t source_max_threads) override {
+		return memory_manager.MaxThreads(source_max_threads, BatchMemoryManager::MINIMUM_MEMORY_PER_COLUMN_PER_THREAD *
+		                                                         op.children[0].get().GetTypes().size());
+	}
 };
 
 //===--------------------------------------------------------------------===//
@@ -3526,7 +3534,8 @@ void PartitionedCopy::FinalizeFileStates(vector<FileStateHandle> files_to_finali
 CopyToFileGlobalState::CopyToFileGlobalState(const PhysicalCopyToFile &op_p, ClientContext &context_p)
     : op(op_p), context(context_p), output_lifecycle(context_p), initialized(false), prepare_global_state(nullptr),
       create_file_state_fun([&](FileStateHandle &file_state) DUCKDB_EXCLUDES(lock) { RequestFileState(file_state); }),
-      lifecycle_executor(context_p), output_files(op_p), rows_copied(0), last_file_offset(0) {
+      lifecycle_executor(context_p), output_files(op_p), rows_copied(0), last_file_offset(0),
+      memory_manager(context_p, 0) {
 }
 
 CopyToFileGlobalState::~CopyToFileGlobalState() {
