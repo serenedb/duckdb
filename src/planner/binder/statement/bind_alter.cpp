@@ -233,13 +233,6 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 			throw NotImplementedException("renaming a database is not supported");
 		}
 		properties.RegisterDBModify(Catalog::GetSystemCatalog(context), context, DatabaseModificationType::ALTER_TABLE);
-		const EntryLookupInfo lookup(CatalogType::DATABASE_ENTRY, info->GetQualifiedName());
-		if (!entry_retriever.GetEntry(lookup, OnEntryNotFound::RETURN_NULL) && entry_retriever.Hides(lookup)) {
-			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-				throw CatalogException::MissingObject(CatalogType::DATABASE_ENTRY, info->GetQualifiedName().Name());
-			}
-			info.reset();
-		}
 		return nullptr;
 	}
 
@@ -249,11 +242,11 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		schema_info.SetQualifiedName(ResolveCatalog(entry_retriever, schema_info.GetQualifiedName()));
 		auto &catalog = Catalog::GetCatalog(context, schema_info.SchemaCatalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
-		if (!entry_retriever.GetSchema(schema_info.SchemaCatalog(), schema_info.SchemaPath(),
-		                               schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? AclMode::Rename
-		                                                                                               : AclMode::Own,
-		                               OnEntryNotFound::RETURN_NULL) &&
-		    entry_retriever.Hides(schema_info.SchemaCatalog(), schema_info.SchemaPath())) {
+		auto found = entry_retriever.FindSchema(
+		    schema_info.SchemaCatalog(), schema_info.SchemaPath(),
+		    schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? AclMode::Rename : AclMode::Own,
+		    OnEntryNotFound::RETURN_NULL);
+		if (!found.schema && found.hidden) {
 			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 				throw CatalogException::MissingEntry(CatalogType::SCHEMA_ENTRY, schema_info.SchemaPath().back(),
 				                                     string());
@@ -302,11 +295,11 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_TABLESPACE) {
-		auto tablespace = entry_retriever.GetEntry(
+		auto found = entry_retriever.Find(
 		    EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName(), AclMode::Rename),
 		    OnEntryNotFound::RETURN_NULL);
-		if (!tablespace) {
-			if (entry_retriever.Hides(EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName()))) {
+		if (!found.entry) {
+			if (found.hidden) {
 				if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 					throw CatalogException::MissingObject(CatalogType::TABLESPACE_ENTRY,
 					                                      info->GetQualifiedName().Name());
@@ -315,7 +308,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 			}
 			return nullptr;
 		}
-		RefuseSystemTablespace(*tablespace);
+		RefuseSystemTablespace(*found.entry);
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_ROLE) {
@@ -396,17 +389,23 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	optional_ptr<CatalogEntry> entry;
+	bool hidden = false;
 	auto use = AclMode::Own;
 	if (info->type != AlterType::SET_COLUMN_COMMENT && info->GetNewName()) {
 		use = AclMode::Rename;
 	}
 	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
-		return entry_retriever.GetEntry(EntryLookupInfo(type, info->GetQualifiedName(), use), if_not_found);
+		auto found = entry_retriever.Find(EntryLookupInfo(type, info->GetQualifiedName(), use), if_not_found);
+		hidden |= found.hidden;
+		return found.entry;
 	};
 	if (info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
 		auto &column_comment = info->Cast<SetColumnCommentInfo>();
-		entry = column_comment.TryResolveCatalogEntry(entry_retriever);
+		entry = lookup(CatalogType::TABLE_ENTRY, column_comment.if_not_found);
+		if (entry) {
+			column_comment.catalog_entry_type = entry->type;
+		}
 		if (entry && column_comment.catalog_entry_type == CatalogType::VIEW_ENTRY) {
 			// when running SET COLUMN on a VIEW - ensure the view is bound
 			auto &view = entry->Cast<ViewCatalogEntry>();
@@ -446,6 +445,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		                 set_schema.include_functions, set_schema.include_procedures, set_schema.entry_catalog_type},
 		                AclMode::Own, set_schema.if_not_found);
 		entry = bound.entry;
+		hidden = bound.hidden;
 		if (bound.overload) {
 			set_schema.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
 		}
@@ -459,6 +459,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		                          comment.include_functions, comment.include_procedures, comment.entry_catalog_type},
 		                         AclMode::Own, comment.if_not_found, true);
 		entry = bound.entry;
+		hidden = bound.hidden;
 		if (bound.overload) {
 			comment.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
 		}
@@ -471,9 +472,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (!entry) {
-		const auto type =
-		    info->type == AlterType::SET_COLUMN_COMMENT ? CatalogType::TABLE_ENTRY : info->GetCatalogType();
-		if (entry_retriever.Hides(EntryLookupInfo(type, info->GetQualifiedName()))) {
+		if (hidden) {
 			info.reset();
 			return nullptr;
 		}

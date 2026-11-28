@@ -134,6 +134,7 @@ struct RoutineReference {
 struct BoundRoutine {
 	optional_ptr<CatalogEntry> entry;
 	optional_ptr<MacroFunction> overload;
+	bool hidden = false;
 };
 
 struct CorrelatedColumnInfo {

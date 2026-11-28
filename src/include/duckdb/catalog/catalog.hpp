@@ -342,6 +342,8 @@ public:
 	//! Resolves the catalog qualification carried in the schema_lookup and returns the matching schema
 	DUCKDB_API static optional_ptr<SchemaCatalogEntry>
 	GetSchema(CatalogEntryRetriever &retriever, const EntryLookupInfo &schema_lookup, OnEntryNotFound if_not_found);
+	DUCKDB_API static CatalogEntryLookup FindSchema(CatalogEntryRetriever &retriever,
+	                                                const EntryLookupInfo &schema_lookup, OnEntryNotFound if_not_found);
 	[[deprecated("Fold the catalog into the EntryLookupInfo and use GetSchema(context, "
 	             "EntryLookupInfo)")]] DUCKDB_API static SchemaCatalogEntry &
 	GetSchema(ClientContext &context, const Identifier &catalog_name, const EntryLookupInfo &schema_lookup);
@@ -372,6 +374,9 @@ public:
 	                                                             const Identifier &catalog_name,
 	                                                             const vector<Identifier> &schema_path,
 	                                                             OnEntryNotFound if_not_found);
+	DUCKDB_API static CatalogEntryLookup FindSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,
+	                                                const vector<Identifier> &schema_path,
+	                                                OnEntryNotFound if_not_found);
 	[[deprecated("Fold the catalog into the EntryLookupInfo and use GetSchema(retriever, "
 	             "EntryLookupInfo)")]] DUCKDB_API static optional_ptr<SchemaCatalogEntry>
 	GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name, const EntryLookupInfo &schema_lookup,
@@ -383,6 +388,8 @@ public:
 	//! exist behavior depends on OnEntryNotFound
 	DUCKDB_API static optional_ptr<CatalogEntry>
 	GetEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found);
+	DUCKDB_API static CatalogEntryLookup Find(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
+	                                          OnEntryNotFound if_not_found);
 	DUCKDB_API static optional_ptr<CatalogEntry> GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info,
 	                                                      OnEntryNotFound if_not_found);
 	DUCKDB_API static CatalogEntry &GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info);

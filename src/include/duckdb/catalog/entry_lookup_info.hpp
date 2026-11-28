@@ -72,6 +72,7 @@ struct CatalogEntryLookup {
 	optional_ptr<SchemaCatalogEntry> schema;
 	optional_ptr<CatalogEntry> entry;
 	ErrorData error;
+	bool hidden = false;
 
 	DUCKDB_API bool Found() const {
 		return entry;

@@ -19,7 +19,9 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 	BoundRoutine result;
 	for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY, CatalogType::PRAGMA_FUNCTION_ENTRY}) {
 		if (routine.type == CatalogType::MACRO_ENTRY || type == routine.type) {
-			result.entry = entry_retriever.GetEntry(EntryLookupInfo(type, routine.name), OnEntryNotFound::RETURN_NULL);
+			auto found = entry_retriever.Find(EntryLookupInfo(type, routine.name), OnEntryNotFound::RETURN_NULL);
+			result.entry = found.entry;
+			result.hidden |= found.hidden;
 		}
 		if (result.entry) {
 			break;

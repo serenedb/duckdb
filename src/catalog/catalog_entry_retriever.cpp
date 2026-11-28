@@ -50,23 +50,22 @@ void CatalogEntryRetriever::RecordBinding(const EntryLookupInfo &lookup_info, Ca
 
 optional_ptr<CatalogEntry> CatalogEntryRetriever::GetEntry(const EntryLookupInfo &lookup_info,
                                                            OnEntryNotFound on_entry_not_found) {
-	optional_ptr<CatalogEntry> entry;
-	if ((bindings || recorded_bindings) && IsInvalidCatalog(lookup_info.GetCatalog()) &&
-	    IsInvalidSchema(lookup_info.GetSchema())) {
-		entry = bindings ? GetBoundEntry(lookup_info) : nullptr;
-		if (!entry) {
-			entry = Catalog::GetEntry(*this, lookup_info, on_entry_not_found);
-		}
-		if (entry && recorded_bindings) {
-			RecordBinding(lookup_info, *entry);
-		}
-	} else {
-		entry = Catalog::GetEntry(*this, lookup_info, on_entry_not_found);
+	return Find(lookup_info, on_entry_not_found).entry;
+}
+
+CatalogEntryLookup CatalogEntryRetriever::Find(const EntryLookupInfo &lookup_info, OnEntryNotFound on_entry_not_found) {
+	const bool by_name = (bindings || recorded_bindings) && IsInvalidCatalog(lookup_info.GetCatalog()) &&
+	                     IsInvalidSchema(lookup_info.GetSchema());
+	auto bound = by_name && bindings ? GetBoundEntry(lookup_info) : nullptr;
+	auto found = bound ? CatalogEntryLookup {nullptr, bound} : Catalog::Find(*this, lookup_info, on_entry_not_found);
+	if (found.entry && by_name && recorded_bindings) {
+		RecordBinding(lookup_info, *found.entry);
 	}
-	if (entry) {
-		CheckUse(*entry, lookup_info.GetUse());
+	if (found.entry) {
+		CheckUse(*found.entry, lookup_info.GetUse());
+		ReturnAndCallback(found.entry);
 	}
-	return ReturnAndCallback(entry);
+	return found;
 }
 
 LogicalType CatalogEntryRetriever::GetType(const QualifiedName &name, OnEntryNotFound on_entry_not_found) {
@@ -97,15 +96,17 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const EntryLoo
 optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifier &catalog,
                                                                   const vector<Identifier> &schema_path, AclMode use,
                                                                   OnEntryNotFound on_entry_not_found) {
-	auto result = Catalog::GetSchema(*this, catalog, schema_path, on_entry_not_found);
-	if (!result) {
-		return result;
+	return FindSchema(catalog, schema_path, use, on_entry_not_found).schema;
+}
+
+CatalogEntryLookup CatalogEntryRetriever::FindSchema(const Identifier &catalog, const vector<Identifier> &schema_path,
+                                                     AclMode use, OnEntryNotFound on_entry_not_found) {
+	auto found = Catalog::FindSchema(*this, catalog, schema_path, on_entry_not_found);
+	if (found.schema) {
+		CheckUse(*found.schema, use);
+		ReturnAndCallback(found.entry);
 	}
-	CheckUse(*result, use);
-	if (callback) {
-		callback(*result);
-	}
-	return result;
+	return found;
 }
 
 LogicalType CatalogEntryRetriever::GetType(Catalog &catalog, const Identifier &schema, const Identifier &name,

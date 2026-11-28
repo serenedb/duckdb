@@ -73,12 +73,12 @@ static void RequireRelationKind(CatalogEntryRetriever &retriever, CatalogType ty
 }
 
 bool Binder::BindDropCatalogLevel(const DropInfo &info, const ObjectReference &object) {
-	auto entry =
-	    entry_retriever.GetEntry(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
-	if (entry && entry->type == CatalogType::TABLESPACE_ENTRY && entry->internal) {
-		throw PermissionException("permission denied for tablespace %s", entry->name.GetIdentifierName());
+	auto found =
+	    entry_retriever.Find(EntryLookupInfo(info.type, object.name, AclMode::Drop), OnEntryNotFound::RETURN_NULL);
+	if (found.entry && found.entry->type == CatalogType::TABLESPACE_ENTRY && found.entry->internal) {
+		throw PermissionException("permission denied for tablespace %s", found.entry->name.GetIdentifierName());
 	}
-	if (entry || !entry_retriever.Hides(EntryLookupInfo(info.type, object.name))) {
+	if (found.entry || !found.hidden) {
 		return true;
 	}
 	if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
@@ -100,8 +100,8 @@ bool Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 		auto &catalog = Catalog::GetCatalog(context, path.front());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 		const vector<Identifier> schema_path(path.begin() + 1, path.end());
-		if (entry_retriever.GetSchema(path.front(), schema_path, AclMode::Drop, OnEntryNotFound::RETURN_NULL) ||
-		    !entry_retriever.Hides(path.front(), schema_path)) {
+		auto found = entry_retriever.FindSchema(path.front(), schema_path, AclMode::Drop, OnEntryNotFound::RETURN_NULL);
+		if (found.schema || !found.hidden) {
 			return true;
 		}
 		if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
@@ -128,20 +128,24 @@ bool Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 			properties.RegisterDBRead(*catalog, context);
 		}
 		optional_ptr<CatalogEntry> entry;
+		bool hidden = false;
 		if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
-			entry = BindRoutine({object.name, object.func_parameters, object.has_func_args,
-			                     info.is_routine || !info.is_procedure, info.is_routine || info.is_procedure, info.type,
-			                     info.is_macro && !object.has_func_args},
-			                    AclMode::Drop, info.if_not_found, true)
-			            .entry;
+			auto bound = BindRoutine({object.name, object.func_parameters, object.has_func_args,
+			                          info.is_routine || !info.is_procedure, info.is_routine || info.is_procedure,
+			                          info.type, info.is_macro && !object.has_func_args},
+			                         AclMode::Drop, info.if_not_found, true);
+			entry = bound.entry;
+			hidden = bound.hidden;
 			if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 				// Change type to table macro so future lookups get the correct one
 				object.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
 			const EntryLookupInfo lookup(info.type, object.name, AclMode::Drop);
-			entry = entry_retriever.GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
+			auto found = entry_retriever.Find(lookup, OnEntryNotFound::RETURN_NULL);
+			entry = found.entry;
+			hidden = found.hidden;
 			if (catalog && catalog->Compatibility() == SqlCompatibility::POSTGRES &&
 			    Catalog::InRelationNamespace(info.type)) {
 				RequireRelationKind(entry_retriever, info.type, object.name, entry);
@@ -151,7 +155,7 @@ bool Binder::BindDrop(const DropInfo &info, ObjectReference &object, StatementPr
 			}
 		}
 		if (!entry) {
-			return !entry_retriever.Hides(EntryLookupInfo(info.type, object.name));
+			return !hidden;
 		}
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);

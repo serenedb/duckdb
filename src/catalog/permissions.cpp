@@ -187,16 +187,6 @@ SchemaView CatalogEntryRetriever::View(const SchemaCatalogEntry &schema) const {
 	return ViewOf(context, LookupRole(), schema);
 }
 
-bool CatalogEntryRetriever::Hides(const EntryLookupInfo &lookup) const {
-	auto entry = Internal(context).GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
-	return entry && !Shows(*entry);
-}
-
-bool CatalogEntryRetriever::Hides(const Identifier &catalog, const vector<Identifier> &schema_path) const {
-	auto schema = Internal(context).GetSchema(catalog, schema_path, AclMode::NoRights, OnEntryNotFound::RETURN_NULL);
-	return schema && !Shows(*schema);
-}
-
 void CatalogEntryRetriever::VisitSearchSchemas(
     absl::FunctionRef<void(const Identifier &name, SchemaCatalogEntry &schema)> visit) {
 	auto &role = LookupRole();

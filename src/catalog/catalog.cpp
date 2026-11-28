@@ -728,26 +728,37 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(ClientContext &context, cons
 	return GetSchema(retriever, catalog_name, schema_path, if_not_found);
 }
 
-optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,
-                                                    const vector<Identifier> &schema_path,
-                                                    OnEntryNotFound if_not_found) {
+CatalogEntryLookup Catalog::FindSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,
+                                       const vector<Identifier> &schema_path, OnEntryNotFound if_not_found) {
 	D_ASSERT(!schema_path.empty());
-	auto schema =
-	    GetSchema(retriever,
-	              EntryLookupInfo(CatalogType::SCHEMA_ENTRY, QualifiedName(catalog_name, Identifier(), schema_path[0])),
-	              if_not_found);
-	if (!schema || schema_path.size() == 1) {
-		return schema;
+	auto found = FindSchema(
+	    retriever,
+	    EntryLookupInfo(CatalogType::SCHEMA_ENTRY, QualifiedName(catalog_name, Identifier(), schema_path[0])),
+	    if_not_found);
+	if (!found.schema || schema_path.size() == 1) {
+		return found;
 	}
-	auto &catalog = schema->catalog;
+	auto &root = *found.schema;
+	auto &catalog = root.catalog;
 	auto path = schema_path;
 	path.insert(path.begin(), catalog.GetName());
 	EntryLookupInfo lookup(CatalogType::SCHEMA_ENTRY, QualifiedName::FromPath(std::move(path)));
 	auto &context = retriever.GetContext();
-	return catalog.LookupSchemaPath(
+	found.schema = catalog.LookupSchemaPath(
 	    catalog.GetCatalogTransaction(context), lookup, if_not_found,
-	    [&](const EntryLookupInfo &) -> optional_ptr<CatalogEntry> { return schema.get(); },
-	    [&](CatalogEntry &entry) { return retriever.Shows(entry); });
+	    [&](const EntryLookupInfo &) -> optional_ptr<CatalogEntry> { return &root; },
+	    [&](CatalogEntry &entry) {
+		    found.hidden = !retriever.Shows(entry);
+		    return !found.hidden;
+	    });
+	found.entry = found.schema.get();
+	return found;
+}
+
+optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,
+                                                    const vector<Identifier> &schema_path,
+                                                    OnEntryNotFound if_not_found) {
+	return FindSchema(retriever, catalog_name, schema_path, if_not_found).schema;
 }
 
 optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogTransaction transaction,
@@ -1217,19 +1228,22 @@ static SchemaAccess RestrictToRole(CatalogEntryRetriever &retriever, CatalogEntr
 	if (!result.schema) {
 		if (result.Found() && !retriever.Shows(*result.entry)) {
 			result.entry = nullptr;
+			result.hidden = true;
 		}
 		return SchemaAccess::USABLE;
 	}
 	const auto view = retriever.View(*result.schema);
 	if (!view.shown) {
-		result = CatalogEntryLookup();
+		result = {nullptr, nullptr, ErrorData(), result.Found()};
 		return SchemaAccess::HIDDEN;
 	}
 	if (!Check<AclMode::Usage>(retriever.GetContext(), retriever.LookupRole(), *result.schema)) {
+		result.hidden = result.Found();
 		return SchemaAccess::NO_USAGE;
 	}
 	if (result.Found() && !retriever.Shows(*result.entry, view)) {
 		result.entry = nullptr;
+		result.hidden = true;
 	}
 	return SchemaAccess::USABLE;
 }
@@ -1262,6 +1276,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	auto &role = retriever.LookupRole();
 	auto &schema = lookup_info.GetSchema();
 	reference_set_t<SchemaCatalogEntry> schemas;
+	bool hidden = false;
 	if (IsInvalidSchema(schema)) {
 		// try all schemas for this catalog
 		auto entries = GetCatalogEntries(retriever, GetName(), Identifier::InvalidSchema());
@@ -1271,7 +1286,9 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 			auto result = TryLookupEntryInternal(
 			    transaction, EntryLookupInfo(lookup_info, QualifiedName(GetName(), candidate_schema,
 			                                                            lookup_info.GetEntryIdentifier())));
-			if (RestrictToRole(retriever, result) != SchemaAccess::USABLE) {
+			const auto access = RestrictToRole(retriever, result);
+			hidden |= result.hidden;
+			if (access != SchemaAccess::USABLE) {
 				continue;
 			}
 			if (result.Found()) {
@@ -1290,13 +1307,14 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		if (result.Found()) {
 			return result;
 		}
+		hidden = result.hidden;
 		if (result.schema) {
 			schemas.insert(*result.schema);
 		}
 	}
 
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-		return {nullptr, nullptr, ErrorData()};
+		return {nullptr, nullptr, ErrorData(), hidden};
 	}
 	// Check if the default database is actually attached. CreateMissingEntryException will throw binder exception
 	// otherwise.
@@ -1453,6 +1471,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	auto &role = retriever.LookupRole();
 	reference_set_t<SchemaCatalogEntry> schemas;
 	bool all_errors = true;
+	bool hidden = false;
 	ErrorData error_data;
 	CatalogEntryLookup result;
 	CatalogEntryLookup other_arguments;
@@ -1460,6 +1479,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
 		const auto access = RestrictToRole(retriever, result);
+		hidden |= result.hidden;
 		if (access == SchemaAccess::NO_USAGE && !IsInvalidSchema(lookup_info.GetSchema())) {
 			Check<AclMode::Usage>(context, role, *result.schema).Require();
 		}
@@ -1503,6 +1523,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	if (lookup_info.GetCatalogType() == CatalogType::TABLE_ENTRY && allow_default_lookup) {
 		if (!result.Found()) {
 			result = TryLookupDefaultTable(retriever, lookup_info, false);
+			hidden |= result.hidden;
 			if (result.error.HasError()) {
 				error_data = std::move(result.error);
 			}
@@ -1520,6 +1541,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	// catalog flagged as an implicit search catalog. Ignored if the schema already had precedence.
 	if (lookup_info.GetCatalogType() != CatalogType::TABLE_ENTRY && allow_default_lookup && !result.Found()) {
 		result = TryLookupDefaultSchema(retriever, lookup_info);
+		hidden |= result.hidden;
 		if (result.error.HasError()) {
 			error_data = std::move(result.error);
 		}
@@ -1537,7 +1559,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	}
 
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-		return {nullptr, nullptr, ErrorData()};
+		return {nullptr, nullptr, ErrorData(), hidden};
 	}
 
 	// If we have a specific schema name and no schemas were found, the schema doesn't exist.
@@ -1601,7 +1623,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriev
 		                     QualifiedName(catalog_by_name->GetName(), table_schema, table_name), at_clause, context);
 		auto result = catalog_by_name->TryLookupEntryInternal(transaction, info);
 		if (RestrictToRole(retriever, result) != SchemaAccess::USABLE) {
-			return {nullptr, nullptr, ErrorData()};
+			return {nullptr, nullptr, ErrorData(), result.hidden};
 		}
 		return result;
 	}
@@ -1613,6 +1635,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
                                                    const EntryLookupInfo &lookup_info) {
 	// look for the entry in the default schema of every catalog that was flagged as an implicit search catalog
 	auto &search_path = retriever.GetSearchPath();
+	bool hidden = false;
 	for (auto &implicit_catalog : search_path.GetImplicitSearchCatalogs()) {
 		auto catalog_entry = VisibleCatalog(retriever, implicit_catalog.GetCatalog());
 		if (!catalog_entry) {
@@ -1626,7 +1649,9 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 		EntryLookupInfo default_schema_lookup(
 		    lookup_info, QualifiedName(catalog_entry->GetName(), *default_schema, lookup_info.GetEntryIdentifier()));
 		auto result = catalog_entry->TryLookupEntryInternal(transaction, default_schema_lookup);
-		if (RestrictToRole(retriever, result) != SchemaAccess::USABLE) {
+		const auto access = RestrictToRole(retriever, result);
+		hidden |= result.hidden;
+		if (access != SchemaAccess::USABLE) {
 			continue;
 		}
 		if (result.Found() || result.error.HasError()) {
@@ -1634,11 +1659,11 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 		}
 	}
 
-	return {nullptr, nullptr, ErrorData()};
+	return {nullptr, nullptr, ErrorData(), hidden};
 }
 
-optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
-                                             OnEntryNotFound if_not_found) {
+CatalogEntryLookup Catalog::Find(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
+                                 OnEntryNotFound if_not_found) {
 	const auto type = lookup_info.GetCatalogType();
 	if (IsCatalogLevel(type)) {
 		auto &context = retriever.GetContext();
@@ -1648,13 +1673,14 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 		auto entry = catalog ? catalog->LookupEntry(catalog->GetCatalogTransaction(context), type,
 		                                            lookup_info.GetEntryIdentifier())
 		                     : nullptr;
-		if (entry && !retriever.Shows(*entry)) {
+		const bool hidden = entry && !retriever.Shows(*entry);
+		if (hidden) {
 			entry = nullptr;
 		}
 		if (!entry && if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			throw CatalogException::MissingObject(type, lookup_info.GetEntryIdentifier());
 		}
-		return entry;
+		return {nullptr, entry, ErrorData(), hidden};
 	}
 	auto result = TryLookupEntryAcrossCatalogs(retriever, lookup_info, if_not_found);
 
@@ -1669,12 +1695,13 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 	if (result.error.HasError()) {
 		result.error.Throw();
 	}
+	D_ASSERT(result.Found() || if_not_found == OnEntryNotFound::RETURN_NULL);
+	return result;
+}
 
-	if (!result.Found()) {
-		D_ASSERT(if_not_found == OnEntryNotFound::RETURN_NULL);
-		return nullptr;
-	}
-	return result.entry.get();
+optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
+                                             OnEntryNotFound if_not_found) {
+	return Find(retriever, lookup_info, if_not_found).entry;
 }
 
 optional_ptr<CatalogEntry> Catalog::GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info,
@@ -1792,11 +1819,11 @@ CatalogEntry &Catalog::GetEntry(ClientContext &context, const Identifier &catalo
 	                 OnEntryNotFound::THROW_EXCEPTION);
 }
 
-optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retriever,
-                                                    const EntryLookupInfo &schema_lookup,
-                                                    OnEntryNotFound if_not_found) {
+CatalogEntryLookup Catalog::FindSchema(CatalogEntryRetriever &retriever, const EntryLookupInfo &schema_lookup,
+                                       OnEntryNotFound if_not_found) {
 	auto &catalog_name = schema_lookup.GetCatalog();
 	auto entries = GetCatalogEntries(retriever, catalog_name, schema_lookup.GetEntryIdentifier());
+	bool hidden = false;
 	for (idx_t i = 0; i < entries.size(); i++) {
 		auto catalog = VisibleCatalog(retriever, entries[i].GetCatalog());
 		if (!catalog) {
@@ -1809,10 +1836,11 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 			if (on_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 				throw CatalogException::MissingEntry(schema_lookup, string());
 			}
+			hidden = true;
 			continue;
 		}
 		if (result) {
-			return result;
+			return {result, result.get(), ErrorData()};
 		}
 	}
 	// Catalog has not been found.
@@ -1820,7 +1848,13 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 		throw CatalogException(schema_lookup.GetErrorContext(), "Catalog with name %s does not exist!",
 		                       catalog_name.GetIdentifierName());
 	}
-	return nullptr;
+	return {nullptr, nullptr, ErrorData(), hidden};
+}
+
+optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retriever,
+                                                    const EntryLookupInfo &schema_lookup,
+                                                    OnEntryNotFound if_not_found) {
+	return FindSchema(retriever, schema_lookup, if_not_found).schema;
 }
 
 optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,

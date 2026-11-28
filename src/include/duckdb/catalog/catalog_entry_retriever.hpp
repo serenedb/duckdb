@@ -62,6 +62,7 @@ public:
 	//! Look up an entry described by the (catalog/schema-qualified) EntryLookupInfo
 	optional_ptr<CatalogEntry> GetEntry(const EntryLookupInfo &lookup_info,
 	                                    OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
+	CatalogEntryLookup Find(const EntryLookupInfo &lookup_info, OnEntryNotFound on_entry_not_found);
 	template <class T>
 	T &GetEntry(const QualifiedName &name, AclMode use = AclMode::NoRights) {
 		auto entry = GetEntry(EntryLookupInfo(T::Type, name), OnEntryNotFound::THROW_EXCEPTION);
@@ -78,6 +79,8 @@ public:
 	                                           OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	optional_ptr<SchemaCatalogEntry> GetSchema(const Identifier &catalog, const vector<Identifier> &schema_path,
 	                                           AclMode use, OnEntryNotFound on_entry_not_found);
+	CatalogEntryLookup FindSchema(const Identifier &catalog, const vector<Identifier> &schema_path, AclMode use,
+	                              OnEntryNotFound on_entry_not_found);
 
 	//! Deprecated: the catalog/schema qualification is now carried inside the EntryLookupInfo / QualifiedName - fold it
 	//! in there instead of passing it separately.
@@ -126,8 +129,6 @@ public:
 	DUCKDB_API bool Shows(CatalogEntry &entry, const SchemaView &schema) const;
 	DUCKDB_API SchemaView View(const SchemaCatalogEntry &schema) const;
 	DUCKDB_API bool Shows(AttachedDatabase &database) const;
-	DUCKDB_API bool Hides(const EntryLookupInfo &lookup) const;
-	DUCKDB_API bool Hides(const Identifier &catalog, const vector<Identifier> &schema_path) const;
 	DUCKDB_API void
 	VisitSearchSchemas(absl::FunctionRef<void(const Identifier &name, SchemaCatalogEntry &schema)> visit);
 
