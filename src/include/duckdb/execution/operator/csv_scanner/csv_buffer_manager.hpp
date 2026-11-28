@@ -75,7 +75,7 @@ public:
 
 	string GetFilePath() const;
 
-	bool AnyBlockUnloaded();
+	bool AnyBufferUnpinned() const;
 
 	ClientContext &context;
 	bool sniffing = false;

@@ -92,9 +92,9 @@ string CSVBufferManager::GetFilePath() const {
 	return file.path;
 }
 
-bool CSVBufferManager::AnyBlockUnloaded() {
+bool CSVBufferManager::AnyBufferUnpinned() const {
 	for (auto &buffer : cached_buffers) {
-		if (buffer->IsUnloaded()) {
+		if (!buffer->Pinned()) {
 			return true;
 		}
 	}

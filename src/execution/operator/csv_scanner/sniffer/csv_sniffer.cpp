@@ -170,12 +170,15 @@ SnifferResult CSVSniffer::AdaptiveSniff(const CSVSchema &file_schema) {
 
 SnifferResult CSVSniffer::SniffCSV(const bool force_match) {
 	buffer_manager->sniffing = true;
+	const auto reset_unpinned_compressed = [&]() {
+		if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED &&
+		    buffer_manager->AnyBufferUnpinned()) {
+			buffer_manager->ResetBufferManager();
+		}
+	};
 	// 1. Dialect Detection
 	DetectDialect();
-	if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED &&
-	    buffer_manager->AnyBlockUnloaded()) {
-		buffer_manager->ResetBufferManager();
-	}
+	reset_unpinned_compressed();
 	// 2. Type Detection
 	DetectTypes();
 	// 3. Type Refinement
@@ -185,12 +188,7 @@ SnifferResult CSVSniffer::SniffCSV(const bool force_match) {
 	// 5. Type Replacement
 	ReplaceTypes();
 
-	// We reset the buffer for compressed files
-	// This is done because we can't easily seek on compressed files, if a buffer goes out of scope we must read from
-	// the start
-	if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED) {
-		buffer_manager->ResetBufferManager();
-	}
+	reset_unpinned_compressed();
 	buffer_manager->sniffing = false;
 	if (best_candidate->error_handler->AnyErrors() && !options.ignore_errors.GetValue() &&
 	    best_candidate->state_machine->dialect_options.state_machine_options.strict_mode.GetValue()) {

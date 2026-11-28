@@ -99,8 +99,8 @@ public:
 	const char *Ptr() const {
 		return const_char_ptr_cast(handle.Ptr());
 	}
-	bool IsUnloaded() const {
-		return block->GetMemory().IsUnloaded();
+	bool Pinned() const {
+		return handle.IsValid();
 	}
 	//! Whether the underlying block is loaded in memory
 	bool IsInMemory() const {
