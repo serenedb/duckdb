@@ -1276,14 +1276,21 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 enum class SchemaAccess : uint8_t { USABLE, HIDDEN, NO_USAGE };
 
 static SchemaAccess RestrictToRole(CatalogEntryRetriever &retriever, CatalogEntryLookup &result) {
-	if (result.schema && !retriever.Shows(*result.schema)) {
+	if (!result.schema) {
+		if (result.Found() && !retriever.Shows(*result.entry)) {
+			result.entry = nullptr;
+		}
+		return SchemaAccess::USABLE;
+	}
+	const auto view = retriever.View(*result.schema);
+	if (!view.shown) {
 		result = CatalogEntryLookup();
 		return SchemaAccess::HIDDEN;
 	}
-	if (result.schema && !Check(retriever.GetContext(), retriever.CheckAs(), *result.schema, AclMode::Usage)) {
+	if (!Check(retriever.GetContext(), retriever.CheckAs(), *result.schema, AclMode::Usage)) {
 		return SchemaAccess::NO_USAGE;
 	}
-	if (result.Found() && !retriever.Shows(*result.entry)) {
+	if (result.Found() && !retriever.Shows(*result.entry, view)) {
 		result.entry = nullptr;
 	}
 	return SchemaAccess::USABLE;
@@ -2013,8 +2020,9 @@ void Catalog::ScanListedEntries(const CatalogEntryRetriever &retriever, SchemaCa
 		                  ex);
 		return;
 	}
+	const auto view = retriever.View(schema);
 	for (auto &entry : entries) {
-		if (!retriever.Shows(entry.get())) {
+		if (!retriever.Shows(entry.get(), view)) {
 			continue;
 		}
 		try {

@@ -97,6 +97,7 @@ struct RoleAccess {
 	bool AdminOf(idx_t other) const {
 		return absl::c_binary_search(administered, other);
 	}
+	AclMode CapabilityModes(CatalogType type) const;
 	bool Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;

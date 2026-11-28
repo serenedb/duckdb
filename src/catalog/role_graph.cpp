@@ -72,27 +72,27 @@ static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclM
 	return held;
 }
 
-static AclMode CapabilityModes(const RoleAccess &access, CatalogType type) {
+AclMode RoleAccess::CapabilityModes(CatalogType type) const {
 	AclMode modes = AclMode::NoRights;
-	if (access.capabilities == RoleCapability::None) {
+	if (capabilities == RoleCapability::None) {
 		return modes;
 	}
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::SEQUENCE_ENTRY:
-		if (access.Has(RoleCapability::ReadAllData)) {
+		if (Has(RoleCapability::ReadAllData)) {
 			modes |= AclMode::Select;
 		}
-		if (access.Has(RoleCapability::WriteAllData)) {
+		if (Has(RoleCapability::WriteAllData)) {
 			modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
 		}
-		if (access.Has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
+		if (Has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
 			modes |= AclMode::Maintain;
 		}
 		break;
 	case CatalogType::SCHEMA_ENTRY:
-		if (access.Has(RoleCapability::ReadAllData) || access.Has(RoleCapability::WriteAllData)) {
+		if (Has(RoleCapability::ReadAllData) || Has(RoleCapability::WriteAllData)) {
 			modes |= AclMode::Usage;
 		}
 		break;
@@ -110,7 +110,7 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bo
 	const auto done = [&](AclMode have) {
 		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
 	};
-	AclMode have = CapabilityModes(access, type);
+	AclMode have = access.CapabilityModes(type);
 	if (uses_default) {
 		return done(have | defaults);
 	}

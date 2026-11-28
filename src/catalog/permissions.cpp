@@ -59,36 +59,7 @@ static optional_ptr<CatalogEntry> ServerOf(ClientContext &context, AttachedDatab
 	return nullptr;
 }
 
-static bool CanConnect(ClientContext &context, const RoleAccess &role, const Identifier &name,
-                       optional_ptr<CatalogEntry> database) {
-	return !database || name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName() ||
-	       role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
-}
-
-static bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
-	if (role.is_superuser || database.IsSystem() || database.IsTemporary()) {
-		return true;
-	}
-	if (!database.IsReadOnly()) {
-		if (auto entry = SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName())) {
-			return CanConnect(context, role, database.GetName(), entry);
-		}
-	}
-	auto server = ServerOf(context, database);
-	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
-}
-
-static bool HoldsAny(const RoleAccess &role, const ObjectKind &kind, const Permissions &permissions) {
-	if (role.MemberOf(permissions.owner)) {
-		return true;
-	}
-	if (permissions.UsesDefaultAcl() && role.capabilities == RoleCapability::None) {
-		return (kind.public_privileges & kind.privileges) != AclMode::NoRights;
-	}
-	return role.CanAny(kind.acl_class, permissions, kind.privileges);
-}
-
-static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, CatalogEntry &entry) {
+static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, const CatalogEntry &entry) {
 	if (!entry.ParentSchemaOid()) {
 		return nullptr;
 	}
@@ -96,73 +67,127 @@ static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, Catal
 		return entry.ParentSchema(context);
 	}
 	auto &parent = *entry.Cast<SchemaCatalogEntry>().GetSchemaInfo()->parent;
-	return parent.versions->GetVisible(entry.ParentCatalog().GetCatalogTransaction(context).view);
+	auto &catalog = Catalog::GetCatalog(context, entry.ParentCatalog().GetName());
+	return parent.versions->GetVisible(catalog.GetCatalogTransaction(context).view);
 }
 
-static bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
-	if (role.is_superuser) {
-		return true;
-	}
-	if (entry.type == CatalogType::DATABASE_ENTRY) {
-		return CanConnect(context, role, entry.name, SystemEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
-	}
+bool ForEachSeer(const CatalogEntry &entry, absl::FunctionRef<bool(idx_t)> visit) {
 	if (entry.internal || PermissionsOf(entry).owner == 0) {
-		return true;
+		return visit(ACL_ID_PUBLIC);
 	}
-	if (auto schema = ContainingSchema(context, entry)) {
-		if (!EntryVisible(context, role, *schema)) {
-			return false;
-		}
-		if (role.MemberOf(schema->permissions.owner)) {
+	const auto &kind = ObjectKindOf(entry.type);
+	const auto holders = [&](const Permissions &permissions) {
+		if (visit(permissions.owner)) {
 			return true;
 		}
-	}
-	const auto kind = ObjectKindOf(entry.type);
+		if (permissions.UsesDefaultAcl()) {
+			return (kind.public_privileges & kind.privileges) != AclMode::NoRights && visit(ACL_ID_PUBLIC);
+		}
+		return absl::c_any_of(permissions.acl, [&](const AclItem &item) {
+			return (item.privs & kind.privileges) != AclMode::NoRights && visit(item.grantee);
+		});
+	};
 	switch (entry.type) {
 	case CatalogType::SCHEMA_ENTRY:
 	case CatalogType::SEQUENCE_ENTRY:
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::JOB_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return HoldsAny(role, kind, entry.permissions);
+		return holders(entry.permissions);
 	case CatalogType::SUBSCRIPTION_ENTRY:
-		return role.MemberOf(entry.permissions.owner);
+		return visit(entry.permissions.owner);
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
-		return HoldsAny(role, kind, entry.permissions) ||
+		return holders(entry.permissions) ||
 		       AnyColumnAcl(entry.Cast<StandardEntry>(), [&](std::span<const AclItem> acl) {
-			       return !acl.empty() && (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
+			       return absl::c_any_of(acl, [&](const AclItem &item) {
+				       return (item.privs & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights && visit(item.grantee);
+			       });
 		       });
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		return absl::c_any_of(macro.macros, [&](const unique_ptr<MacroFunction> &overload) {
-			return HoldsAny(role, kind, macro.OverloadPermissions(*overload));
+			return holders(macro.OverloadPermissions(*overload));
 		});
 	}
+	default:
+		return visit(ACL_ID_PUBLIC);
+	}
+}
+
+SchemaView ViewOf(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema) {
+	const bool shown = static_cast<bool>(Check(context, role, schema, AclMode::See));
+	return {shown, shown && role.MemberOf(schema.permissions.owner)};
+}
+
+bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target) {
+	auto &entry = target.entry;
+	if (entry.type == CatalogType::DATABASE_ENTRY) {
+		return entry.name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName() ||
+		       Holds(role, target, AclMode::Connect);
+	}
+	if (entry.internal || PermissionsOf(target).owner == 0) {
+		return true;
+	}
+	if (auto schema = ContainingSchema(context, entry)) {
+		const auto view = target.schema ? *target.schema : ViewOf(context, role, *schema);
+		if (!view.shown) {
+			return false;
+		}
+		if (view.owned) {
+			return true;
+		}
+	}
+	const auto relation_seen = [&](CatalogEntry &relation) {
+		return target.schema ? Sees(context, role, PrivilegeTarget::In(relation, *target.schema))
+		                     : Sees(context, role, relation);
+	};
+	switch (entry.type) {
 	case CatalogType::INDEX_ENTRY: {
-		auto &index = entry.Cast<IndexCatalogEntry>();
-		auto relation = index.GetRelation(index.ParentCatalog().GetCatalogTransaction(context));
-		return !relation || EntryVisible(context, role, *relation);
+		auto &schema = entry.ParentSchema(context);
+		auto relation =
+		    entry.Cast<IndexCatalogEntry>().GetRelation(schema.ParentCatalog().GetCatalogTransaction(context));
+		return !relation || relation_seen(*relation);
 	}
 	case CatalogType::TRIGGER_ENTRY: {
-		auto &trigger = entry.Cast<TriggerCatalogEntry>();
-		auto transaction = trigger.ParentCatalog().GetCatalogTransaction(context);
-		auto relation = trigger.ParentSchema(transaction)
-		                    .GetEntry(transaction, CatalogType::TABLE_ENTRY, trigger.base_table->Table());
-		return relation && EntryVisible(context, role, *relation);
+		auto &schema = entry.ParentSchema(context);
+		auto relation = schema.GetEntry(schema.ParentCatalog().GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
+		                                entry.Cast<TriggerCatalogEntry>().base_table->Table());
+		return relation && relation_seen(*relation);
 	}
-	default:
-		return true;
+	default: {
+		const auto &kind = ObjectKindOf(entry.type);
+		return (role.CapabilityModes(kind.acl_class) & kind.privileges) != AclMode::NoRights ||
+		       ForEachSeer(entry, [&](idx_t seer) { return seer == ACL_ID_PUBLIC || role.Uses(seer); });
+	}
 	}
 }
 
 bool CatalogEntryRetriever::Shows(CatalogEntry &entry) const {
-	return EntryVisible(context, CheckAs(), entry);
+	return static_cast<bool>(Check(context, CheckAs(), entry, AclMode::See));
+}
+
+bool CatalogEntryRetriever::Shows(CatalogEntry &entry, const SchemaView &schema) const {
+	return static_cast<bool>(Check(context, CheckAs(), PrivilegeTarget::In(entry, schema), AclMode::See));
+}
+
+SchemaView CatalogEntryRetriever::View(const SchemaCatalogEntry &schema) const {
+	return ViewOf(context, CheckAs(), schema);
 }
 
 bool CatalogEntryRetriever::Shows(AttachedDatabase &database) const {
-	return DatabaseVisible(context, CheckAs(), database);
+	auto &role = CheckAs();
+	if (role.is_superuser || database.IsSystem() || database.IsTemporary()) {
+		return true;
+	}
+	if (!database.IsReadOnly()) {
+		if (auto entry = SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName())) {
+			return static_cast<bool>(Check(context, role, *entry, AclMode::See));
+		}
+	}
+	auto server = ServerOf(context, database);
+	return server && Check(context, role, *server, AclMode::Usage);
 }
 
 static string ObjectNounOf(CatalogType type) {
@@ -248,6 +273,9 @@ PrivilegeCheck PrivilegeCheck::CreateIn(ClientContext &context, const RoleAccess
 
 PrivilegeCheck PrivilegeCheck::Rules(ClientContext &context, const RoleAccess &role, const PrivilegeTarget &target,
                                      AclMode use) {
+	if (Uses(use, AclMode::See)) {
+		return Sees(context, role, target) ? PrivilegeCheck() : PrivilegeCheck(Denial::Hidden, target.entry);
+	}
 	auto &entry = target.entry;
 	const auto container = ObjectKindOf(entry.type).container;
 	if (Uses(use, AclMode::SetRole) && !role.CanSet(entry.oid)) {
@@ -320,6 +348,8 @@ void PrivilegeCheck::Throw(optional_ptr<const StatementNaming> naming) const {
 	case Denial::ParentPrivilege:
 		throw PermissionException("permission denied for %s %s", ObjectNounOf(entry.type),
 		                          entry.name.GetIdentifierName());
+	case Denial::Hidden:
+		throw InternalException("a visibility check was asked to throw");
 	case Denial::None:
 		break;
 	}

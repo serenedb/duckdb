@@ -122,6 +122,8 @@ public:
 
 	DUCKDB_API const RoleAccess &CheckAs() const;
 	DUCKDB_API bool Shows(CatalogEntry &entry) const;
+	DUCKDB_API bool Shows(CatalogEntry &entry, const SchemaView &schema) const;
+	DUCKDB_API SchemaView View(const SchemaCatalogEntry &schema) const;
 	DUCKDB_API bool Shows(AttachedDatabase &database) const;
 
 private:
