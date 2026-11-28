@@ -1988,6 +1988,9 @@ bool JsonScan::FinishNode(idx_t id, idx_t count, JSONTransformScratch &scratch) 
 	case JsonDirectKind::STRING:
 		return JSONTransform::TransformStrings(*state.strings, *state.target, count, transform_options);
 	case JsonDirectKind::TREE: {
+		if (state.target->GetType().IsJSONType()) {
+			return WriteJsonValues(state.raw.data(), count, *state.target);
+		}
 		node_roots.resize(MaxValue<idx_t>(node_roots.size(), count));
 		node_values.resize(MaxValue<idx_t>(node_values.size(), count));
 		for (idx_t row = 0; row < count; row++) {
@@ -2028,6 +2031,25 @@ bool JsonScan::FinishNode(idx_t id, idx_t count, JSONTransformScratch &scratch) 
 	default:
 		return true;
 	}
+}
+
+bool JsonScan::WriteJsonValues(const std::string_view *raws, idx_t count, Vector &target) {
+	auto values = FlatVector::GetDataMutable<string_t>(target);
+	auto &validity = FlatVector::ValidityMutable(target);
+	for (idx_t row = 0; row < count; row++) {
+		const auto raw = raws[row];
+		if (raw.empty() || raw == "null") {
+			validity.SetInvalid(row);
+			continue;
+		}
+		JSONParseError error;
+		if (!parser.Write(raw.data(), raw.size(), writer, error)) {
+			return false;
+		}
+		const auto text = writer.View();
+		values[row] = StringVector::AddString(target, text.data(), text.size());
+	}
+	return true;
 }
 
 void JsonScan::NullRow(idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors) {
@@ -2388,6 +2410,12 @@ bool JsonScan::FinishDirect(idx_t rows, JsonDirectPass pass, const vector<Vector
 			}
 			break;
 		case JsonDirectKind::TREE: {
+			if (vectors[column]->GetType().IsJSONType()) {
+				if (!WriteJsonValues(direct_raw[column].data(), rows, *vectors[column])) {
+					return false;
+				}
+				break;
+			}
 			for (idx_t row = 0; row < rows; row++) {
 				auto raw = direct_raw[column][row];
 				if (raw.empty()) {

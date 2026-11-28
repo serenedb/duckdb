@@ -1,0 +1,23 @@
+# name: test/sql/json/table/read_json_json_columns.test
+# description: JSON columns of read_json, at the top and inside a STRUCT, hold each value as the JSON writer writes it
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES
+	('{"s": {"j": {"a": 1, "b": [1, 2.50, null], "c": "xA"}, "k": 1}, "t": [ 1e5 , -0, "null" ]}'),
+	('{"s": {"j": null, "k": 2}, "t": null}'),
+	('{"s": {"j": "null", "k": 3}, "t": {"deep": {"x": [true, false, {}]}}}'),
+	('{"s": null, "t": 12345678901234567890123}'),
+	('{"s": {"k": 5}, "t": "  spaced  "}')
+) t(line)) TO '{TEST_DIR}/json_columns.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query TITTT
+SELECT s.j::VARCHAR, s.k, t::VARCHAR, s.j IS NULL, t IS NULL FROM read_ndjson('{TEST_DIR}/json_columns.ndjson', columns := {s: 'STRUCT(j JSON, k INTEGER)', t: 'JSON'})
+----
+{"a":1,"b":[1,2.5,null],"c":"xA"}	1	[100000.0,0,"null"]	false	false
+NULL	2	NULL	true	true
+"null"	3	{"deep":{"x":[true,false,{}]}}	false	false
+NULL	NULL	12345678901234567890123	true	false
+NULL	5	"  spaced  "	true	false

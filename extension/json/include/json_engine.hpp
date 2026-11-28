@@ -239,6 +239,7 @@ private:
 	bool DirectLeaf(idx_t id, simdjson::ondemand::value &value, idx_t row);
 	void NullNode(idx_t id, idx_t row);
 	bool FinishNode(idx_t id, idx_t count, JSONTransformScratch &scratch);
+	bool WriteJsonValues(const std::string_view *raws, idx_t count, Vector &target);
 	idx_t Decode(DataChunk &output, idx_t count);
 	idx_t DecodeObjects(DataChunk &output, idx_t count);
 	idx_t ApplyFilters(DataChunk &output, idx_t count, bool filtered_columns_only,
