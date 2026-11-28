@@ -128,6 +128,7 @@ struct LeanSource {
 	const string *default_marker = nullptr;
 	const vector<bool> *selected;
 	idx_t first;
+	idx_t open_end = DConstants::INVALID_INDEX;
 };
 
 struct CsvScanFilter {
@@ -225,6 +226,9 @@ private:
 	bool DecodeLeanColumn(idx_t column, idx_t first, idx_t count, DataChunk &output, bool selected_only,
 	                      bool utf8_valid, bool hold);
 	LeanSource LeanSourceFor(const CsvScanColumn &column, idx_t first, bool selected_only) const;
+	idx_t OpenFieldEnd() const {
+		return cursor.open_quote ? bytes->size : DConstants::INVALID_INDEX;
+	}
 	bool LeanRawFilter(idx_t count);
 	void LeanRowNumbers(idx_t count, DataChunk &output);
 	void LeanRetry(const CsvScanColumn &column, Vector &vector, bool utf8_valid);

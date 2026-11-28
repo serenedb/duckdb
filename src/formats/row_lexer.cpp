@@ -1604,6 +1604,7 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 	} else if (c.in_quotes && !c.escape_carry) {
 		if (!dialect.strict) {
 			c.unstrict = true;
+			c.open_quote = true;
 		} else if (fields || !c.check_arity) {
 			unfinished = true;
 		} else {

@@ -110,7 +110,8 @@ bool LeanDecodes(const LogicalType &type) {
 	out = string_t(value, UnsafeNumericCast<uint32_t>(size));
 }
 
-inline bool LeanUnquote(const char *data, char quote, bool spaced, idx_t &begin, idx_t &end) {
+inline bool LeanUnquote(const char *data, char quote, idx_t open_end, bool spaced, idx_t &begin, idx_t &end) {
+	const bool unterminated = end == open_end;
 	idx_t open = begin;
 	if (spaced && end - open > 1 && data[open] == ' ' && data[open + 1] == quote) {
 		open++;
@@ -123,7 +124,7 @@ inline bool LeanUnquote(const char *data, char quote, bool spaced, idx_t &begin,
 		close--;
 	}
 	begin = open + 1;
-	end = MaxValue(close - 1, begin);
+	end = !unterminated && close > begin && data[close - 1] == quote ? close - 1 : MaxValue(close, begin);
 	return true;
 }
 
@@ -166,7 +167,7 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 				FlatVector::SetNull(vector, row, true);
 				continue;
 			}
-			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
+			quoted = quotes && LeanUnquote(data, quote, source.open_end, source.spaced, begin, end);
 			if (!quoted && source.unquoted_escape && memchr(data + begin, source.unquoted_escape, end - begin)) {
 				retry.push_back(row);
 				FlatVector::SetNull(vector, row, true);
@@ -435,7 +436,8 @@ void LeanRawPredicates(const LeanSource &source, idx_t count, const vector<CsvRa
 				selected[row] = RawPasses(predicates, nullptr, 0, true);
 				continue;
 			}
-			quoted = source.quotes && LeanUnquote(source.data, source.quote, source.spaced, begin, end);
+			quoted =
+			    source.quotes && LeanUnquote(source.data, source.quote, source.open_end, source.spaced, begin, end);
 			if (!quoted && source.unquoted_escape && memchr(source.data + begin, source.unquoted_escape, end - begin)) {
 				continue;
 			}
@@ -492,7 +494,7 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 				out[row] = string_t();
 				continue;
 			}
-			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
+			quoted = quotes && LeanUnquote(data, quote, source.open_end, source.spaced, begin, end);
 			if (!quoted && source.unquoted_escape && memchr(data + begin, source.unquoted_escape, end - begin)) {
 				retry.push_back(row);
 				out[row] = string_t();
@@ -1101,6 +1103,7 @@ idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivo
 		merged.long_rows = merged.long_rows || row_cursor.long_rows;
 		merged.unstrict = merged.unstrict || row_cursor.unstrict;
 		merged.extras_dropped = merged.extras_dropped || row_cursor.extras_dropped;
+		merged.open_quote = merged.open_quote || row_cursor.open_quote;
 		unfinished = unfinished || row_cursor.unfinished;
 		for (idx_t row = rows_before; row < fields.row_count; row++) {
 			lookup_rows.push_back(i);
@@ -1608,7 +1611,8 @@ LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool
 	source.limit = bytes->data + bytes->size;
 	source.shift = cursor.anchor - bytes->offset;
 	source.quote = grammar.quote;
-	source.escape_probe = grammar.escape && grammar.escape != grammar.quote ? grammar.escape : grammar.quote;
+	source.escape_probe = grammar.EscapeProbe();
+	source.open_end = OpenFieldEnd();
 	source.unquoted_escape = grammar.unquoted_escape ? grammar.escape : '\0';
 	source.quotes = cursor.quotes;
 	source.doubled = cursor.doubled;
@@ -1703,10 +1707,10 @@ CsvField CsvScan::LeanField(const CsvScanColumn &column, idx_t row) const {
 	begin += shift;
 	idx_t end = (end_bits & ROW_FIELD_MASK) + shift;
 	CsvField field {static_cast<uint32_t>(begin), 0, 0, 0};
+	const char probe = grammar.EscapeProbe();
 	if ((end_bits & ROW_FIELD_FLAG) && cursor.quotes &&
-	    LeanUnquote(bytes->data, grammar.quote, global.lean->Dialect().quoted_spaces, begin, end)) {
+	    LeanUnquote(bytes->data, grammar.quote, OpenFieldEnd(), global.lean->Dialect().quoted_spaces, begin, end)) {
 		field.flags |= CSV_FIELD_QUOTED;
-		const char probe = grammar.escape && grammar.escape != grammar.quote ? grammar.escape : grammar.quote;
 		if (cursor.doubled && memchr(bytes->data + begin, probe, end - begin)) {
 			field.flags |= CSV_FIELD_ESCAPED;
 		}
@@ -1768,7 +1772,8 @@ bool CsvScan::LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const {
 	end += shift;
 	bool quoted = false;
 	if ((end_bits & ROW_FIELD_FLAG) && cursor.quotes) {
-		quoted = LeanUnquote(bytes->data, grammar.quote, global.lean->Dialect().quoted_spaces, begin, end);
+		quoted =
+		    LeanUnquote(bytes->data, grammar.quote, OpenFieldEnd(), global.lean->Dialect().quoted_spaces, begin, end);
 	}
 	if (quoted && !options.allow_quoted_nulls) {
 		return false;

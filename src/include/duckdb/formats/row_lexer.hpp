@@ -161,6 +161,7 @@ struct RowCursor {
 	bool unfinished = false;
 	bool settled = false;
 	bool unterminated = false;
+	bool open_quote = false;
 	bool check_arity = true;
 	bool ok = true;
 };

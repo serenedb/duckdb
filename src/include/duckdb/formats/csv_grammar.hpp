@@ -19,6 +19,10 @@ namespace duckdb {
 struct CsvGrammar {
 	static CsvGrammar For(const CSVStateMachine &state_machine);
 
+	char EscapeProbe() const {
+		return quoted_escape ? escape : quote;
+	}
+
 	char delimiter[4] = {};
 	idx_t delimiter_size = 1;
 	char quote = '\0';

@@ -267,6 +267,32 @@ SELECT count(*) FROM read_csv('{TEMP_DIR}/unterminated_tail.csv', auto_detect = 
 ----
 Value with unterminated quote found.
 
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/unterminated_tail.csv', auto_detect = false, header = false, strict_mode = false, columns = {'i': 'INTEGER', 's': 'VARCHAR'}) ORDER BY i;
+----
+1	a
+2	b
+3	abc
+
+statement ok
+COPY (SELECT encode('1,"ab"' || chr(10) || '2,"ab"""' || chr(10) || '3,"ab""')) TO '{TEMP_DIR}/unterminated_doubled.csv' (FORMAT blob);
+
+query II
+SELECT i, s FROM read_csv('{TEMP_DIR}/unterminated_doubled.csv', auto_detect = false, header = false, strict_mode = false, columns = {'i': 'INTEGER', 's': 'VARCHAR'}) ORDER BY i;
+----
+1	ab
+2	ab"
+3	ab"
+
+statement ok
+COPY (SELECT encode('1,"ab\\"' || chr(10) || '2,"ab\"')) TO '{TEMP_DIR}/unterminated_escaped.csv' (FORMAT blob);
+
+query II
+SELECT i, s FROM read_csv('{TEMP_DIR}/unterminated_escaped.csv', auto_detect = false, header = false, strict_mode = false, escape = '\', columns = {'i': 'INTEGER', 's': 'VARCHAR'}) ORDER BY i;
+----
+1	ab\
+2	ab"
+
 statement ok
 COPY (SELECT encode('a,b' || chr(10) || '1,x') || '\xFF'::BLOB) TO '{TEMP_DIR}/invalid_utf8_tail.csv' (FORMAT blob);
 
