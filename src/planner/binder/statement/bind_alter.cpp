@@ -255,8 +255,8 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		                               OnEntryNotFound::RETURN_NULL) &&
 		    entry_retriever.Hides(schema_info.SchemaCatalog(), schema_info.SchemaPath())) {
 			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-				throw CatalogException::MissingEntry(
-				    EntryLookupInfo(CatalogType::SCHEMA_ENTRY, info->GetQualifiedName()), string());
+				throw CatalogException::MissingEntry(CatalogType::SCHEMA_ENTRY, schema_info.SchemaPath().back(),
+				                                     string());
 			}
 			info.reset();
 		}
