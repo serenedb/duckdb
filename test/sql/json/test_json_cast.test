@@ -280,6 +280,25 @@ NULL
 [7]
 
 query T
+SELECT TRY_CAST(v AS JSON[]) FROM (VALUES (''), ('  '), ('1'), ('"[1]"'), ('[1,')) t(v)
+----
+NULL
+NULL
+NULL
+NULL
+NULL
+
+statement error
+SELECT '1'::JSON[]
+----
+Cannot cast to list of JSON. Input "1"
+
+statement error
+SELECT '  '::JSON[]
+----
+Malformed JSON at byte 0 of input: input data is empty
+
+query T
 SELECT TRY_CAST(v AS JSON[]) FROM (VALUES ('[1,null,{"a":2}]')) t(v)
 ----
 [1, null, {"a":2}]
