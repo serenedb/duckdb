@@ -3,6 +3,7 @@
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 
 namespace duckdb {
@@ -11,7 +12,7 @@ enum class CastBindSource : uint8_t { CONTEXT, DEFAULT };
 
 static unique_ptr<Expression> AddCastExpressionInternal(unique_ptr<Expression> expr, const LogicalType &target_type,
                                                         BoundCastInfo bound_cast, bool try_cast,
-                                                        CastBindSource bind_source) {
+                                                        CastBindSource bind_source, optional_ptr<Binder> binder) {
 	if (ExpressionBinder::GetExpressionReturnType(*expr) == target_type) {
 		return expr;
 	}
@@ -22,12 +23,19 @@ static unique_ptr<Expression> AddCastExpressionInternal(unique_ptr<Expression> e
 	if (bind_source == CastBindSource::DEFAULT) {
 		return BoundCastExpression::CreateDefault(std::move(expr), target_type, std::move(bound_cast), try_cast);
 	}
-	return BoundCastExpression::Create(std::move(expr), target_type, std::move(bound_cast), try_cast);
+	auto cast = BoundCastExpression::Create(std::move(expr), target_type, std::move(bound_cast), try_cast);
+	if (binder) {
+		auto &call = cast->Cast<BoundFunctionExpression>();
+		call.BoundRoleMutable() = binder->BoundRole();
+		call.BoundSearchPathMutable() = binder->BoundSearchPath();
+	}
+	return cast;
 }
 
 static unique_ptr<Expression> AddCastToTypeInternal(unique_ptr<Expression> expr, const LogicalType &target_type,
                                                     CastFunctionSet &cast_functions, GetCastFunctionInput &get_input,
-                                                    bool try_cast, CastBindSource bind_source) {
+                                                    bool try_cast, CastBindSource bind_source,
+                                                    optional_ptr<Binder> binder) {
 	D_ASSERT(expr);
 	if (expr->GetExpressionClass() == ExpressionClass::BOUND_PARAMETER) {
 		auto &parameter = expr->Cast<BoundParameterExpression>();
@@ -60,7 +68,7 @@ static unique_ptr<Expression> AddCastToTypeInternal(unique_ptr<Expression> expr,
 		if (parameter.GetReturnType() == parameter.ParameterData()->return_type) {
 			auto cast_function = cast_functions.GetCastFunction(parameter.GetReturnType(), target_type, get_input);
 			return AddCastExpressionInternal(std::move(expr), target_type, std::move(cast_function), try_cast,
-			                                 bind_source);
+			                                 bind_source, binder);
 		}
 		// invalidate the type
 		parameter.ParameterData()->return_type = LogicalType::INVALID;
@@ -76,7 +84,8 @@ static unique_ptr<Expression> AddCastToTypeInternal(unique_ptr<Expression> expr,
 	}
 
 	auto cast_function = cast_functions.GetCastFunction(expr->GetReturnType(), target_type, get_input);
-	return AddCastExpressionInternal(std::move(expr), target_type, std::move(cast_function), try_cast, bind_source);
+	return AddCastExpressionInternal(std::move(expr), target_type, std::move(cast_function), try_cast, bind_source,
+	                                 binder);
 }
 
 unique_ptr<Expression> BoundCastExpression::AddDefaultCastToType(unique_ptr<Expression> expr,
@@ -85,23 +94,27 @@ unique_ptr<Expression> BoundCastExpression::AddDefaultCastToType(unique_ptr<Expr
 	GetCastFunctionInput get_input;
 	get_input.query_location = expr->GetQueryLocation();
 	return AddCastToTypeInternal(std::move(expr), target_type, default_set, get_input, try_cast,
-	                             CastBindSource::DEFAULT);
+	                             CastBindSource::DEFAULT, nullptr);
 }
 
-unique_ptr<Expression> BoundCastExpression::AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
-                                                          const LogicalType &target_type, bool try_cast,
-                                                          optional_idx caller_role) {
+static unique_ptr<Expression> AddContextCastToType(ClientContext &context, unique_ptr<Expression> expr,
+                                                   const LogicalType &target_type, bool try_cast,
+                                                   optional_ptr<Binder> binder) {
 	auto &cast_functions = DBConfig::GetConfig(context).GetCastFunctions();
 	GetCastFunctionInput get_input(context);
 	get_input.query_location = expr->GetQueryLocation();
-	get_input.caller_role = caller_role;
 	return AddCastToTypeInternal(std::move(expr), target_type, cast_functions, get_input, try_cast,
-	                             CastBindSource::CONTEXT);
+	                             CastBindSource::CONTEXT, binder);
+}
+
+unique_ptr<Expression> BoundCastExpression::AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
+                                                          const LogicalType &target_type, bool try_cast) {
+	return AddContextCastToType(context, std::move(expr), target_type, try_cast, nullptr);
 }
 
 unique_ptr<Expression> BoundCastExpression::AddCastToType(Binder &binder, unique_ptr<Expression> expr,
                                                           const LogicalType &target_type, bool try_cast) {
-	return AddCastToType(binder.context, std::move(expr), target_type, try_cast, binder.BoundRole());
+	return AddContextCastToType(binder.context, std::move(expr), target_type, try_cast, &binder);
 }
 
 unique_ptr<Expression> BoundCastExpression::AddArrayCastToList(ClientContext &context, unique_ptr<Expression> expr) {

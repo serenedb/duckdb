@@ -921,8 +921,8 @@ void FunctionBinder::CastToFunctionArguments(BoundSimpleFunction &function, vect
 		// except for one special case: if the function accepts ANY argument
 		// in that case we don't add a cast
 		if (cast_result == LogicalTypeComparisonResult::DIFFERENT_TYPES) {
-			children[i] = BoundCastExpression::AddCastToType(context, std::move(children[i]), target_type, false,
-			                                                 binder ? binder->BoundRole() : optional_idx());
+			children[i] = binder ? BoundCastExpression::AddCastToType(*binder, std::move(children[i]), target_type)
+			                     : BoundCastExpression::AddCastToType(context, std::move(children[i]), target_type);
 		}
 	}
 }
@@ -1680,7 +1680,10 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(shared_ptr<const Scala
 
 	auto result_func = make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(children),
 	                                                      std::move(bind_info), is_operator);
-	result_func->BoundRoleMutable() = binder ? binder->BoundRole() : optional_idx();
+	if (binder) {
+		result_func->BoundRoleMutable() = binder->BoundRole();
+		result_func->BoundSearchPathMutable() = binder->BoundSearchPath();
+	}
 
 	if (binder && result_func->Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
 		// the result depends on the query it is bound in, also when the bind_expression callback folds it

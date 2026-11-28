@@ -140,6 +140,14 @@ optional_idx Binder::BoundRole() const {
 	return &caller != &duckdb::Role(context) && !caller.IsSystem() ? optional_idx(caller.role) : optional_idx();
 }
 
+shared_ptr<const vector<CatalogSearchEntry>> Binder::BoundSearchPath() const {
+	auto &path = entry_retriever.FunctionSearchPath();
+	if (!path) {
+		return nullptr;
+	}
+	return shared_ptr<const vector<CatalogSearchEntry>>(path, &path->GetSetPaths());
+}
+
 const RoleAccess &Binder::FunctionBodyRole(optional_idx owner) {
 	return owner.IsValid() ? duckdb::Role(context, owner.GetIndex()) : Role();
 }

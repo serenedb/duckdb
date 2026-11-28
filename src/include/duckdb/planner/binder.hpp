@@ -463,6 +463,7 @@ public:
 	const RoleAccess &CheckAs() const;
 	const RoleAccess &Role() const;
 	optional_idx BoundRole() const;
+	shared_ptr<const vector<CatalogSearchEntry>> BoundSearchPath() const;
 	const RoleAccess &FunctionBodyRole(optional_idx owner);
 	void BindAsFunctionBody(const RoleAccess &role);
 	void BindUnchecked();

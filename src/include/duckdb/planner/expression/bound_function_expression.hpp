@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/planner/expression.hpp"
 
@@ -54,6 +55,12 @@ public:
 	optional_idx &BoundRoleMutable() {
 		return bound_role;
 	}
+	const shared_ptr<const vector<CatalogSearchEntry>> &BoundSearchPath() const {
+		return bound_search_path;
+	}
+	shared_ptr<const vector<CatalogSearchEntry>> &BoundSearchPathMutable() {
+		return bound_search_path;
+	}
 
 	using Expression::IsVolatile;
 	bool IsConsistent() const override;
@@ -90,6 +97,7 @@ private:
 	//! Whether or not the function is an operator, only used for rendering
 	bool is_operator;
 	optional_idx bound_role;
+	shared_ptr<const vector<CatalogSearchEntry>> bound_search_path;
 };
 
 } // namespace duckdb

@@ -22,7 +22,6 @@ BindCastInput::BindCastInput(CastFunctionSet &function_set, optional_ptr<BindCas
 BoundCastInfo BindCastInput::GetCastFunction(const LogicalType &source, const LogicalType &target) {
 	GetCastFunctionInput input(context);
 	input.query_location = query_location;
-	input.caller_role = caller_role;
 	return function_set.GetCastFunction(source, target, input);
 }
 
@@ -74,7 +73,6 @@ BoundCastInfo CastFunctionSet::GetCastFunction(const LogicalType &source, const 
 	auto bind_cast = [&](BindCastFunction &bind_function) {
 		BindCastInput input(*this, bind_function.info.get(), get_input.context);
 		input.query_location = get_input.query_location;
-		input.caller_role = get_input.caller_role;
 		return bind_function.function(input, source, target);
 	};
 

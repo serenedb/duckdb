@@ -123,7 +123,7 @@ bool BoundFunctionExpression::Equals(const BaseExpression &other_p) const {
 	if (!FunctionData::Equals(bind_info.get(), other.bind_info.get())) {
 		return false;
 	}
-	return bound_role == other.bound_role;
+	return bound_role == other.bound_role && bound_search_path == other.bound_search_path;
 }
 
 unique_ptr<Expression> BoundFunctionExpression::Copy() const {
@@ -141,6 +141,7 @@ unique_ptr<Expression> BoundFunctionExpression::CopyWithChildren(vector<unique_p
 	auto copy =
 	    make_uniq<BoundFunctionExpression>(function, std::move(new_children), std::move(new_bind_info), is_operator);
 	copy->bound_role = bound_role;
+	copy->bound_search_path = bound_search_path;
 	copy->CopyProperties(*this);
 	return std::move(copy);
 }
@@ -157,6 +158,10 @@ void BoundFunctionExpression::Serialize(Serializer &serializer) const {
 	FunctionSerializer::Serialize(serializer, function, bind_info.get());
 	serializer.WriteProperty(202, "is_operator", is_operator);
 	serializer.WritePropertyWithDefault<optional_idx>(203, "bound_role", bound_role, optional_idx());
+	serializer.WritePropertyWithDefault<bool>(204, "has_bound_search_path", bound_search_path != nullptr, false);
+	serializer.WritePropertyWithDefault<string>(
+	    205, "bound_search_path", bound_search_path ? CatalogSearchEntry::ListToString(*bound_search_path) : string(),
+	    string());
 }
 
 unique_ptr<Expression> BoundFunctionExpression::Deserialize(Deserializer &deserializer) {
@@ -168,6 +173,9 @@ unique_ptr<Expression> BoundFunctionExpression::Deserialize(Deserializer &deseri
 
 	auto is_operator = deserializer.ReadProperty<bool>(202, "is_operator");
 	auto bound_role = deserializer.ReadPropertyWithExplicitDefault<optional_idx>(203, "bound_role", optional_idx());
+	auto has_bound_search_path =
+	    deserializer.ReadPropertyWithExplicitDefault<bool>(204, "has_bound_search_path", false);
+	auto bound_search_path = deserializer.ReadPropertyWithExplicitDefault<string>(205, "bound_search_path", string());
 
 	if (entry.first.HasBindExpressionCallback()) {
 		// bind the function expression
@@ -187,6 +195,10 @@ unique_ptr<Expression> BoundFunctionExpression::Deserialize(Deserializer &deseri
 	    make_uniq<BoundFunctionExpression>(std::move(entry.first), std::move(children), std::move(entry.second));
 	result->is_operator = is_operator;
 	result->bound_role = bound_role;
+	if (has_bound_search_path) {
+		result->bound_search_path =
+		    make_shared_ptr<const vector<CatalogSearchEntry>>(CatalogSearchEntry::ParseList(bound_search_path));
+	}
 	if (result->return_type != return_type) {
 		// return type mismatch - push a cast
 		auto &context = deserializer.Get<ClientContext &>();
