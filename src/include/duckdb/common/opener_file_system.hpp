@@ -160,6 +160,16 @@ public:
 		GetFileSystem().MoveFile(source, target, GetOpener());
 	}
 
+	void CopyFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessFile(source);
+		VerifyCanAccessFile(target);
+		if (IsDuckDBExtensionName(target)) {
+			VerifyCanAccessExtension(target, FileFlags::FILE_FLAGS_WRITE);
+		}
+		GetFileSystem().CopyFile(source, target, GetOpener());
+	}
+
 	bool DirectoryExists(const string &directory) {
 		return FileSystem::DirectoryExists(directory, nullptr);
 	}

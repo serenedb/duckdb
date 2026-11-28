@@ -435,6 +435,8 @@ public:
 	//! properties
 	DUCKDB_API virtual void MoveFile(const string &source, const string &target,
 	                                 optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API virtual void CopyFile(const string &source, const string &target,
+	                                 optional_ptr<FileOpener> opener = nullptr);
 	//! Check if a file exists
 	DUCKDB_API virtual FileExistence TryFileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr,
 	                                               optional_ptr<ErrorData> error = nullptr);
