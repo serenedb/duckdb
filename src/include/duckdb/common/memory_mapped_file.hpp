@@ -15,6 +15,9 @@
 
 namespace duckdb {
 
+struct FileHandle;
+class QueryContext;
+
 //! How the mapping is read, which sets the kernel's read-ahead on page faults
 enum class MappedFileAccess : uint8_t { NORMAL, SEQUENTIAL, RANDOM };
 
@@ -55,6 +58,7 @@ public:
 	DUCKDB_API virtual void Release(idx_t location, idx_t nr_bytes);
 	DUCKDB_API virtual bool IsCached(idx_t location, idx_t nr_bytes);
 	DUCKDB_API void PrefetchMissing(idx_t location, idx_t nr_bytes);
+	DUCKDB_API const_data_ptr_t ReadInPlace(FileHandle &handle, QueryContext context, idx_t location, idx_t nr_bytes);
 
 	DUCKDB_API idx_t Size() const {
 		return size;

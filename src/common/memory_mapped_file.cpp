@@ -36,6 +36,14 @@ void MemoryMappedFile::PrefetchMissing(idx_t location, idx_t nr_bytes) {
 	}
 }
 
+const_data_ptr_t MemoryMappedFile::ReadInPlace(FileHandle &handle, QueryContext context, idx_t location,
+                                               idx_t nr_bytes) {
+	const auto result = GetData(location, nr_bytes);
+	PrefetchMissing(location, nr_bytes);
+	handle.ReadInPlace(context, nr_bytes, location);
+	return result;
+}
+
 MappedRange::MappedRange(shared_ptr<MemoryMappedFile> mapping_p, idx_t begin_p, idx_t end_p)
     : mapping(std::move(mapping_p)), begin(begin_p), end(end_p) {
 }

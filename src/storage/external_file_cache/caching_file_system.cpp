@@ -198,9 +198,7 @@ void CachingFileHandle::MapLocalFile() {
 }
 
 FileBufferHandleGroup CachingFileHandle::ReadMapped(idx_t nr_bytes, idx_t location) {
-	const auto data = mapping->GetData(location, nr_bytes);
-	mapping->PrefetchMissing(location, nr_bytes);
-	GetFileHandle()->ReadInPlace(context, nr_bytes, location);
+	const auto data = mapping->ReadInPlace(*GetFileHandle(), context, location, nr_bytes);
 	vector<FilePin> pins;
 	pins.emplace_back(make_shared_ptr<MappedRange>(mapping, location, location + nr_bytes), data, nr_bytes);
 	return FileBufferHandleGroup(std::move(pins));

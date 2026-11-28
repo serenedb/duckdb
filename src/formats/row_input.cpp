@@ -65,9 +65,7 @@ shared_ptr<WholeFile> WholeFile::Read(ClientContext &context, FileHandle &handle
 	result->size = handle.GetFileSize();
 	result->mapping = MapForReading(context, handle.GetPath(), handle.OnDiskFile(), result->size, 0);
 	if (result->mapping) {
-		result->mapping->PrefetchMissing(0, result->size);
-		handle.ReadInPlace(context, result->size, 0);
-		result->data = const_char_ptr_cast(result->mapping->GetData(0, result->size));
+		result->data = const_char_ptr_cast(result->mapping->ReadInPlace(handle, context, 0, result->size));
 		return result;
 	}
 	if (result->size == 0) {
