@@ -44,7 +44,7 @@ bool SetColumns::IsCandidateUnacceptable(const idx_t num_cols, bool null_padding
 		return false;
 	}
 	// if we detected more columns than we have set, it's all good because we can null-pad them
-	if (null_padding && num_cols > size) {
+	if (null_padding) {
 		return false;
 	}
 	// Unacceptable

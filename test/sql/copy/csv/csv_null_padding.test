@@ -46,3 +46,21 @@ FROM read_csv_auto('{DATA_DIR}/csv/blank_line.csv', null_padding=True)
 9
 NULL
 11
+
+statement ok
+COPY (SELECT CASE WHEN i % 3 = 0 THEN i || ',a' || i ELSE i || ',a' || i || ',b' || i END FROM range(300) t(i)) TO '{TEMP_DIR}/short_thirds.csv' (HEADER false, QUOTE '');
+
+query IIIII
+SELECT count(*), count(b), count(c), min(a), max(a) FROM read_csv('{TEMP_DIR}/short_thirds.csv', null_padding = true, columns = {'a': 'INTEGER', 'b': 'VARCHAR', 'c': 'VARCHAR'});
+----
+300	300	200	0	299
+
+query III
+SELECT * FROM read_csv('{TEMP_DIR}/short_thirds.csv', null_padding = true, columns = {'a': 'INTEGER', 'b': 'VARCHAR', 'c': 'VARCHAR'}) ORDER BY a LIMIT 2;
+----
+0	a0	NULL
+1	a1	b1
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/short_thirds.csv', columns = {'a': 'INTEGER', 'b': 'VARCHAR', 'c': 'VARCHAR'});
+----
