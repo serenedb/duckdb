@@ -858,27 +858,19 @@ idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivo
 		lexer.Start(probe, position, true, false);
 		probe.file_start = file_start;
 		probe.after_cr = after_cr;
-		idx_t stop;
-		idx_t grow = LOOKUP_BYTES;
-		while (true) {
+		const idx_t stop = lookup.ReadUntil(LOOKUP_BYTES, [&]() {
 			const idx_t arena_end = lookup.End();
 			const char *arena = lookup.bytes->data;
 			lexer.Feed(probe, arena, 0, arena_end, lookup.Eof(), nullptr);
-			if (probe.first_term != DConstants::INVALID_INDEX) {
-				stop = probe.first_term + 1;
-				if (grammar.carry_on_newline && arena[probe.first_term] == '\r' && stop < arena_end &&
-				    arena[stop] == '\n') {
-					stop++;
-				}
-				break;
+			if (probe.first_term == DConstants::INVALID_INDEX) {
+				return optional_idx();
 			}
-			if (lookup.Eof()) {
-				stop = arena_end;
-				break;
+			idx_t end = probe.first_term + 1;
+			if (grammar.carry_on_newline && arena[probe.first_term] == '\r' && end < arena_end && arena[end] == '\n') {
+				end++;
 			}
-			lookup.Extend(grow);
-			grow *= 2;
-		}
+			return optional_idx(end);
+		});
 		const bool eof = lookup.Eof() && stop == lookup.End();
 		RowCursor row_cursor;
 		lexer.Start(row_cursor, position, true);

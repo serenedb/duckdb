@@ -2682,24 +2682,16 @@ idx_t JsonScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> surviv
 			continue;
 		}
 		const idx_t begin = position.GetIndex();
-		idx_t record_end;
-		idx_t grow = JSON_LOOKUP_BYTES;
-		while (true) {
+		const idx_t record_end = lookup.ReadUntil(JSON_LOOKUP_BYTES, [&]() {
 			const char *start = lookup.bytes->data + begin;
 			const idx_t available = lookup.End() - begin;
 			const char *end = global.format == JSONFormat::NEWLINE_DELIMITED ? NextNewline(start, available)
 			                                                                 : NextJSON(start, available);
 			if (end) {
-				record_end = begin + NumericCast<idx_t>(end - start);
-				break;
+				return optional_idx(begin + NumericCast<idx_t>(end - start));
 			}
-			if (lookup.Eof() || available > options.maximum_object_size) {
-				record_end = lookup.End();
-				break;
-			}
-			lookup.Extend(grow);
-			grow *= 2;
-		}
+			return available > options.maximum_object_size ? optional_idx(lookup.End()) : optional_idx();
+		});
 		if (record_end == begin) {
 			continue;
 		}

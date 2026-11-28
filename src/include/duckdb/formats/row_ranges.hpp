@@ -294,6 +294,20 @@ public:
 	bool Eof() const {
 		return window_eof;
 	}
+	template <class RECORD_END>
+	idx_t ReadUntil(idx_t grow, RECORD_END &&record_end) {
+		while (true) {
+			const optional_idx end = record_end();
+			if (end.IsValid()) {
+				return end.GetIndex();
+			}
+			if (Eof()) {
+				return End();
+			}
+			Extend(grow);
+			grow *= 2;
+		}
+	}
 
 public:
 	shared_ptr<RowBytes> bytes;
