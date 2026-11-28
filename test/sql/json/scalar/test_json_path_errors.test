@@ -37,7 +37,7 @@ Malformed JSON at byte 9 of input: unexpected character.
 statement error
 SELECT json_extract('{"aa\q": 1}', '$.a')
 ----
-Malformed JSON at byte 9 of input: invalid escaped sequence in string.
+Malformed JSON at byte 4 of input: invalid escaped sequence in string.
 
 statement error
 SELECT json_extract('{"a": tru}', '$.a')
@@ -60,7 +60,7 @@ Malformed JSON at byte 14 of input: unexpected character.
 statement error
 SELECT json_extract('{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "b": "unterminated', '$.b')
 ----
-Malformed JSON at byte 0 of input: unexpected end of data.
+Malformed JSON at byte 66 of input: unexpected end of data.
 
 statement error
 SELECT json_extract('{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "b": [1,}', '$.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
