@@ -327,7 +327,9 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_PERMISSIONS) {
-		BindAlterPermissions(info->Cast<AlterPermissionsInfo>(), properties);
+		if (!BindAlterPermissions(info->Cast<AlterPermissionsInfo>(), properties)) {
+			info.reset();
+		}
 		return nullptr;
 	}
 

@@ -535,7 +535,10 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	} else {
 		const auto keyword = ObjectTypeKeyword(target.GetChild(0));
 		SetObjectTarget(*info, keyword == "VIEW" ? CatalogType::VIEW_ENTRY : GrantObjectType(keyword),
-		                transformer.Transform<QualifiedName>(target.GetChild(1)));
+		                transformer.Transform<QualifiedName>(target.GetChild(2)));
+		if (target.Child<OptionalParseResult>(1).HasResult()) {
+			info->if_not_found = OnEntryNotFound::RETURN_NULL;
+		}
 	}
 
 	info->new_owner = TransformOwnerRoleSpec(transformer, list_pr.GetChild(4));

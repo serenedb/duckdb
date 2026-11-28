@@ -44,7 +44,7 @@ OwnerTarget <- OwnerRoutineTarget / OwnerUnqualifiedTarget / OwnerNamedTarget
 OwnerRoutineTarget <- GrantRoutineKind RoutineSignature
 OwnerUnqualifiedTarget <- OwnerUnqualifiedObjType ColId
 OwnerUnqualifiedObjType <- 'SERVER' / 'DATABASE' / 'TABLESPACE'
-OwnerNamedTarget <- OwnerObjectType QualifiedName
+OwnerNamedTarget <- OwnerObjectType IfExists? QualifiedName
 OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
 TextSearchDictionaryObjType <- 'TEXT' 'SEARCH' 'DICTIONARY'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId

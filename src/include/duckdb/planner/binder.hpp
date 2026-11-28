@@ -692,7 +692,7 @@ private:
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
 	bool BindDrop(const DropInfo &info, ObjectReference &object, StatementProperties &properties);
 	bool BindDropCatalogLevel(const DropInfo &info, const ObjectReference &object);
-	void BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
+	bool BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
 	void ResolveOwned(AlterOwnedInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the

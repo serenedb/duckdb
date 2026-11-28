@@ -301,7 +301,9 @@ string AlterPermissionsInfo::ToString() const {
 	}
 	auto targets = StringUtil::Join(objects_sql, ", ");
 	if (!new_owner.empty()) {
-		return "ALTER " + TargetKeywordToSQL(*this) + " " + targets + " OWNER TO " + new_owner.ToString() + ";";
+		return "ALTER " + TargetKeywordToSQL(*this) +
+		       (if_not_found == OnEntryNotFound::RETURN_NULL ? " IF EXISTS " : " ") + targets + " OWNER TO " +
+		       new_owner.ToString() + ";";
 	}
 	string result;
 	if (default_objtype != CatalogType::INVALID) {
