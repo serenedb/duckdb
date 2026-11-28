@@ -962,6 +962,79 @@ static simdjson::error_code DiagnoseJSONRoot(const char *data, idx_t len, JSONRe
 	return simdjson::INCORRECT_TYPE;
 }
 
+static optional_idx JSONEscapeUnit(const char *data, idx_t len, idx_t pos) {
+	if (pos + 6 > len || data[pos] != '\\' || data[pos + 1] != 'u') {
+		return optional_idx();
+	}
+	idx_t unit = 0;
+	for (idx_t i = pos + 2; i < pos + 6; i++) {
+		const auto c = static_cast<uint8_t>(data[i]);
+		const auto lower = static_cast<uint8_t>(c | 0x20);
+		if (c >= '0' && c <= '9') {
+			unit = unit * 16 + (c - '0');
+		} else if (lower >= 'a' && lower <= 'f') {
+			unit = unit * 16 + (lower - 'a' + 10);
+		} else {
+			return optional_idx();
+		}
+	}
+	return unit;
+}
+
+static optional_idx JSONStringFault(const char *data, idx_t len, const char *&message) {
+	bool in_string = false;
+	for (idx_t i = 0; i < len; i++) {
+		const auto c = static_cast<uint8_t>(data[i]);
+		if (!in_string || c == '"') {
+			in_string = c == '"' ? !in_string : in_string;
+			continue;
+		}
+		if (c < 0x20) {
+			message = "unexpected control character in string";
+			return i;
+		}
+		if (c != '\\' || i + 1 >= len) {
+			continue;
+		}
+		switch (data[i + 1]) {
+		case '"':
+		case '\\':
+		case '/':
+		case 'b':
+		case 'f':
+		case 'n':
+		case 'r':
+		case 't':
+			i++;
+			continue;
+		case 'u':
+			break;
+		default:
+			message = "invalid escaped sequence in string";
+			return i;
+		}
+		const auto unit = JSONEscapeUnit(data, len, i);
+		if (!unit.IsValid()) {
+			message = "invalid escaped sequence in string";
+			return i;
+		}
+		if (unit.GetIndex() >= 0xDC00 && unit.GetIndex() <= 0xDFFF) {
+			message = "invalid high surrogate in string";
+			return i;
+		}
+		if (unit.GetIndex() >= 0xD800 && unit.GetIndex() <= 0xDBFF) {
+			const auto low = JSONEscapeUnit(data, len, i + 6);
+			if (!low.IsValid() || low.GetIndex() < 0xDC00 || low.GetIndex() > 0xDFFF) {
+				message = "no low surrogate in string";
+				return i;
+			}
+			i += 6;
+		}
+		i += 5;
+	}
+	return optional_idx();
+}
+
 static optional_idx JSONParseFailure(JSONParseError &error, const char *message, idx_t position) {
 	error.has_error = true;
 	error.message = message;
@@ -1179,8 +1252,18 @@ static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags,
 			position = NumericCast<idx_t>(location - data);
 		}
 		code = DiagnoseJSONRoot(data, len, flags, code, position);
+		if (code == simdjson::UNCLOSED_STRING || code == simdjson::INCOMPLETE_ARRAY_OR_OBJECT ||
+		    (code != simdjson::EMPTY && position >= len)) {
+			code = simdjson::INCOMPLETE_ARRAY_OR_OBJECT;
+			position = len;
+		}
+		const char *message = code == simdjson::EMPTY && len == 0 ? "input length is 0" : JSONErrorMessage(code);
+		if (code == simdjson::STRING_ERROR || code == simdjson::UNESCAPED_CHARS) {
+			const auto fault = JSONStringFault(data, len, message);
+			position = fault.IsValid() ? fault.GetIndex() : position;
+		}
 		st.nodes.resize(root);
-		return JSONParseFailure(error, JSONErrorMessage(code), position);
+		return JSONParseFailure(error, message, position);
 	}
 	return root;
 }
