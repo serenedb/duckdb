@@ -36,7 +36,7 @@ vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry
 	vector<idx_t> group {table.oid};
 	for (auto &target : node.truncate_group) {
 		auto name = BindTableName(entry_retriever, target->Cast<BaseTableRef>().GetQualifiedName());
-		group.push_back(Catalog::GetEntry<TableCatalogEntry>(context, name).oid);
+		group.push_back(entry_retriever.GetEntry<TableCatalogEntry>(name).oid);
 	}
 	for (auto &entry : table.ReferencingTables(context)) {
 		auto &referencing = entry.get();
