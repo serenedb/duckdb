@@ -31,7 +31,7 @@ private:
 unique_ptr<AsyncFileWriter> OpenCopyFile(ClientContext &context, FileSystem &fs, const string &path,
                                          const FileCompressionType &compression) {
 	auto flags = FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW | compression;
-	if (!fs.FileExists(path) && !fs.IsPipe(path)) {
+	if (!FileSystem::IsRemoteFile(path) && !fs.FileExists(path) && !fs.IsPipe(path)) {
 		flags |= FileFlags::FILE_FLAGS_EXCLUSIVE_CREATE;
 	}
 	return make_uniq<AsyncFileWriter>(QueryContext(context), fs, path, flags, true);
@@ -46,7 +46,9 @@ CopyFileWriter::CopyFileWriter(ClientContext &context, const string &path, const
 
 CopyFileWriter::CopyFileWriter(ClientContext &context, FileSystem &fs, const string &path,
                                const FileCompressionType &compression, string separator_p)
-    : pieced(CreatePiecedFile(fs, compression, path)), separator(std::move(separator_p)) {
+    : pieced(CreatePiecedFile(fs, compression, path)),
+      stream_compressed(!pieced && compression != FileCompressionType::UNCOMPRESSED),
+      separator(std::move(separator_p)) {
 	file = OpenCopyFile(context, fs, path, pieced ? FileCompressionType::UNCOMPRESSED : compression);
 	if (pieced) {
 		compressor = pieced->CreateCompressor();
@@ -105,8 +107,16 @@ void CopyFileWriter::WriteRows(const_data_ptr_t data, idx_t size) {
 }
 
 idx_t CopyFileWriter::FileSize() {
-	lock_guard<mutex> guard(lock);
-	return written;
+	unique_lock<mutex> guard(lock);
+	if (!stream_compressed) {
+		return written;
+	}
+	const auto idle = [&]() {
+		return !writing;
+	};
+	lock.Await(absl::Condition(&idle));
+	Drain(guard);
+	return file->GetPhysicalFileSize();
 }
 
 idx_t CopyFileWriter::Close() {

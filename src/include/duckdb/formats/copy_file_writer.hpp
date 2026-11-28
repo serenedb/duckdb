@@ -49,6 +49,7 @@ private:
 
 	mutex lock;
 	const unique_ptr<PiecedFile> pieced;
+	const bool stream_compressed;
 	unique_ptr<AsyncFileWriter> file;
 	unique_ptr<PieceCompressor> compressor;
 	unique_ptr<CompressedPiece> separator_piece;
