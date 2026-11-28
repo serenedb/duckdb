@@ -1064,60 +1064,13 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
-void ClientContext::ResolveCurrentRole() {
-	if (current_role_id == DConstants::INVALID_INDEX) {
-		current_role = &RoleAccess::System();
-		return;
-	}
-	current_role = security ? security->Access(current_role_id) : nullptr;
-	if (!current_role) {
-		unknown_role = RoleAccess {.role = current_role_id};
-		current_role = &unknown_role;
-	}
-}
-
 const RoleAccess &Role(ClientContext &context, optional_idx bound) {
 	if (!bound.IsValid()) {
-		return *context.current_role;
+		return context.security.CurrentRole();
 	}
 	static const RoleAccess NOBODY;
-	auto access = context.security ? context.security->Access(bound.GetIndex()) : nullptr;
+	auto access = context.security.snapshot ? context.security.snapshot->Access(bound.GetIndex()) : nullptr;
 	return access ? *access : NOBODY;
-}
-
-void ClientContext::SetCurrentRole(idx_t role) {
-	current_role_id = role;
-	InstallSecurity(db->GetSecurity());
-}
-
-void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
-	security_database = client_data->default_database;
-	auto database = snapshot ? snapshot->ForDatabase(security_database) : nullptr;
-	security_base = std::move(snapshot);
-	security = database ? std::move(database) : security_base;
-	ResolveCurrentRole();
-}
-
-void ClientContext::RefreshSecurity() {
-	if (transaction.HasActiveTransaction()) {
-		auto &meta = MetaTransaction::Get(*this);
-		auto &cluster = Catalog::GetSystemCatalog(*this);
-		auto cluster_transaction = meta.TryGetTransaction(cluster.GetAttached());
-		if (cluster_transaction && !cluster_transaction->IsReadOnly()) {
-			const auto version = cluster.GetCatalogVersion(*this).GetIndex();
-			if (!local_security || local_security_version != version) {
-				local_security_version = version;
-				local_security = SecuritySnapshot::Build(cluster, cluster.GetCatalogTransaction(*this));
-			}
-			if (security_base != local_security || security_database != client_data->default_database) {
-				InstallSecurity(local_security);
-			}
-			return;
-		}
-	}
-	if (db->CurrentSecurity() != security_base.get() || security_database != client_data->default_database) {
-		InstallSecurity(db->GetSecurity());
-	}
 }
 
 bool ClientContext::FileSecretsVisible() const {
@@ -1135,7 +1088,7 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 	const auto holds = [&](const RoleAccess &role) {
 		return role.is_superuser || role.Uses(sufficient);
 	};
-	if (!access_scope && holds(*current_role)) {
+	if (!access_scope && holds(security.CurrentRole())) {
 		return;
 	}
 	const auto path = DBConfig::GetConfig(*this).SanitizeAllowedPath(requested);
@@ -1158,7 +1111,7 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 	bool allowed;
 	if (access_scope) {
 		auto properties = access_scope->properties.get_mutable();
-		auto &role = access_scope->role ? *access_scope->role : *current_role;
+		auto &role = access_scope->role ? *access_scope->role : security.CurrentRole();
 		allowed = access_scope->catalog || (properties && stored(*properties));
 		if (!allowed && holds(role)) {
 			allowed = true;

@@ -196,7 +196,8 @@ static vector<idx_t> GrantorRoles(ClientContext &context, const RoleAccess &role
 	if (role.is_superuser) {
 		return {};
 	}
-	return context.security ? context.security->InheritedRoles(role.role) : vector<idx_t> {role.role};
+	auto &snapshot = context.security.snapshot;
+	return snapshot ? snapshot->InheritedRoles(role.role) : vector<idx_t> {role.role};
 }
 
 static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo &info) {
@@ -319,7 +320,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 		info.target_roles.push_back(role);
 	};
 	if (info.for_roles.empty()) {
-		add_role(context.current_role_id);
+		add_role(context.security.current_role_id);
 	}
 	for (auto &for_role : info.for_roles) {
 		add_role(binder.BindRole(for_role)->oid);

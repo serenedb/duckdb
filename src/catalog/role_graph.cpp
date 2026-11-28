@@ -5,7 +5,10 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/unordered_set.hpp"
-#include "duckdb/main/config.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 
 #include <absl/algorithm/container.h>
 #include <algorithm>
@@ -341,6 +344,49 @@ optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
 		}
 	}
 	return optional_idx();
+}
+
+void SessionSecurity::SetCurrentRole(ClientContext &context, idx_t role) {
+	current_role_id = role;
+	Install(context, context.db->GetSecurity());
+}
+
+void SessionSecurity::Install(ClientContext &context, shared_ptr<const SecuritySnapshot> installed) {
+	database = ClientData::Get(context).default_database;
+	auto for_database = installed ? installed->ForDatabase(database) : nullptr;
+	base = std::move(installed);
+	snapshot = for_database ? std::move(for_database) : base;
+	if (current_role_id == DConstants::INVALID_INDEX) {
+		current_role = &RoleAccess::System();
+		return;
+	}
+	current_role = snapshot ? snapshot->Access(current_role_id) : nullptr;
+	if (!current_role) {
+		unknown_role = RoleAccess {.role = current_role_id};
+		current_role = &unknown_role;
+	}
+}
+
+void SessionSecurity::Refresh(ClientContext &context) {
+	auto &default_database = ClientData::Get(context).default_database;
+	if (context.transaction.HasActiveTransaction()) {
+		auto &cluster = Catalog::GetSystemCatalog(context);
+		auto cluster_transaction = MetaTransaction::Get(context).TryGetTransaction(cluster.GetAttached());
+		if (cluster_transaction && !cluster_transaction->IsReadOnly()) {
+			const auto version = cluster.GetCatalogVersion(context).GetIndex();
+			if (!local || local_version != version) {
+				local_version = version;
+				local = SecuritySnapshot::Build(cluster, cluster.GetCatalogTransaction(context));
+			}
+			if (base != local || database != default_database) {
+				Install(context, local);
+			}
+			return;
+		}
+	}
+	if (context.db->CurrentSecurity() != base.get() || database != default_database) {
+		Install(context, context.db->GetSecurity());
+	}
 }
 
 } // namespace duckdb

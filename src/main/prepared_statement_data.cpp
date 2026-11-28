@@ -151,9 +151,8 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 }
 
 bool PreparedStatementData::IsCurrent(ClientContext &context) const {
-	const auto version = context.security ? context.security->version : 0;
-	if (properties.binding_generation != context.BindingGeneration() || context.current_role_id != principal_role ||
-	    version != security_version) {
+	if (properties.binding_generation != context.BindingGeneration() ||
+	    context.security.current_role_id != principal_role || context.security.Version() != security_version) {
 		return false;
 	}
 	for (auto &it : properties.read_databases) {

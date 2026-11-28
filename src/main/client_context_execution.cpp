@@ -58,7 +58,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	} else {
 		query_deadline.SetInvalid();
 	}
-	RefreshSecurity();
+	security.Refresh(*this);
 	// Notify any registered state of query begin
 	for (auto &state : registered_state->States()) {
 		state->QueryBegin(*this);

@@ -101,9 +101,9 @@ optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound i
 		return entry ? &entry->Cast<RoleEntry>() : nullptr;
 	}
 	auto &system = Catalog::GetSystemCatalog(context);
-	auto entry =
-	    system.LookupOwner(system.GetCatalogTransaction(context),
-	                       role.type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id);
+	auto entry = system.LookupOwner(system.GetCatalogTransaction(context), role.type == RoleSpecType::SESSION_USER
+	                                                                           ? context.security.session_role
+	                                                                           : context.security.current_role_id);
 	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
 		if (use != AclMode::NoRights) {
 			Check(context, CheckAs(), *entry, use).Require();
@@ -126,7 +126,8 @@ static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, 
                                       const AlterRoleInfo &info) {
 	auto &context = binder.context;
 	const auto best_admin = [&](idx_t member) {
-		return context.security ? context.security->BestAdmin(member, granted.oid) : optional_idx();
+		auto &snapshot = context.security.snapshot;
+		return snapshot ? snapshot->BestAdmin(member, granted.oid) : optional_idx();
 	};
 	if (info.granted_by.empty()) {
 		if (caller.is_superuser) {

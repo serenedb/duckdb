@@ -167,9 +167,7 @@ public:
 	optional_ptr<const AccessScope> access_scope;
 	optional_ptr<const StatementProperties> planned_properties;
 
-	shared_ptr<const SecuritySnapshot> security;
-	idx_t current_role_id = DConstants::INVALID_INDEX;
-	idx_t session_role = DConstants::INVALID_INDEX;
+	SessionSecurity security;
 
 	class AccessScopeGuard {
 	public:
@@ -223,10 +221,6 @@ public:
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message, std::string_view subtype = {});
 
-	friend const RoleAccess &Role(ClientContext &context, optional_idx bound);
-	DUCKDB_API void SetCurrentRole(idx_t role);
-	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
-	DUCKDB_API void RefreshSecurity();
 	DUCKDB_API void CheckFileAccess(const string &path, RoleCapability sufficient);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
@@ -509,8 +503,6 @@ private:
 
 	bool ErrorInvalidatesTransaction(ExceptionType type);
 
-	void ResolveCurrentRole();
-
 private:
 	//! Lock on using the ClientContext in parallel
 	mutex context_lock;
@@ -528,12 +520,6 @@ private:
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
 	shared_ptr<SchedulerAccount> scheduler_account;
-	optional_ptr<const RoleAccess> current_role = &RoleAccess::System();
-	RoleAccess unknown_role;
-	shared_ptr<const SecuritySnapshot> local_security;
-	idx_t local_security_version = 0;
-	shared_ptr<const SecuritySnapshot> security_base;
-	Identifier security_database;
 };
 
 class ClientContextLock {

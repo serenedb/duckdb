@@ -17,6 +17,7 @@
 
 namespace duckdb {
 class Catalog;
+class ClientContext;
 
 enum class RoleOption : uint32_t {
 	None = 0x0,
@@ -150,6 +151,32 @@ private:
 	unordered_map<string, idx_t> by_name;
 	unordered_map<string, idx_t> database_owners;
 	unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
+};
+
+class SessionSecurity {
+public:
+	shared_ptr<const SecuritySnapshot> snapshot;
+	idx_t current_role_id = DConstants::INVALID_INDEX;
+	idx_t session_role = DConstants::INVALID_INDEX;
+
+	const RoleAccess &CurrentRole() const {
+		return *current_role;
+	}
+	idx_t Version() const {
+		return snapshot ? snapshot->version : 0;
+	}
+	DUCKDB_API void SetCurrentRole(ClientContext &context, idx_t role);
+	DUCKDB_API void Refresh(ClientContext &context);
+
+private:
+	void Install(ClientContext &context, shared_ptr<const SecuritySnapshot> installed);
+
+	optional_ptr<const RoleAccess> current_role = &RoleAccess::System();
+	RoleAccess unknown_role;
+	shared_ptr<const SecuritySnapshot> local;
+	idx_t local_version = 0;
+	shared_ptr<const SecuritySnapshot> base;
+	Identifier database;
 };
 
 } // namespace duckdb
