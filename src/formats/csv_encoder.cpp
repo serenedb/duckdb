@@ -28,7 +28,7 @@ public:
 
 	CsvFieldQuoting Classify(const char *data, idx_t size, bool force, uint32_t &field_size) const {
 		const std::string_view field(data, size);
-		if (encoding.quote == '\0' || (!force && field != encoding.null_str && !encoding.specials.In(field))) {
+		if (encoding.quote == '\0' || (!force && !encoding.specials.Quote(field, encoding.null_str))) {
 			field_size = NumericCast<uint32_t>(size);
 			return FIELD_RAW;
 		}

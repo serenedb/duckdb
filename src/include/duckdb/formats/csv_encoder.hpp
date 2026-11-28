@@ -25,6 +25,9 @@ public:
 		return Find(field, 0) < field.size();
 	}
 	idx_t Find(std::string_view field, idx_t from) const;
+	bool Quote(std::string_view field, std::string_view null_str) const {
+		return field == null_str || In(field);
+	}
 
 private:
 	uint8_t low[16] = {};
