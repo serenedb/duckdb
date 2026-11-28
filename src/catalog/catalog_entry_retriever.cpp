@@ -141,7 +141,7 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifi
 	    on_entry_not_found);
 }
 
-const RoleAccess &CatalogEntryRetriever::CheckAs() const {
+const RoleAccess &CatalogEntryRetriever::LookupRole() const {
 	return role ? *role : acting && acting->lookups ? *acting->lookups : Role(context);
 }
 

@@ -1287,7 +1287,7 @@ static SchemaAccess RestrictToRole(CatalogEntryRetriever &retriever, CatalogEntr
 		result = CatalogEntryLookup();
 		return SchemaAccess::HIDDEN;
 	}
-	if (!Check(retriever.GetContext(), retriever.CheckAs(), *result.schema, AclMode::Usage)) {
+	if (!Check(retriever.GetContext(), retriever.LookupRole(), *result.schema, AclMode::Usage)) {
 		return SchemaAccess::NO_USAGE;
 	}
 	if (result.Found() && !retriever.Shows(*result.entry, view)) {
@@ -1321,7 +1321,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	// resolve the catalog by name, so it is safe to use in contexts where the catalog is not yet registered (e.g. WAL
 	// replay).
 	auto &context = retriever.GetContext();
-	auto &role = retriever.CheckAs();
+	auto &role = retriever.LookupRole();
 	auto &schema = lookup_info.GetSchema();
 	reference_set_t<SchemaCatalogEntry> schemas;
 	if (IsInvalidSchema(schema)) {
@@ -1512,7 +1512,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
                                            const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found,
                                            bool allow_default_lookup) {
 	auto &context = retriever.GetContext();
-	auto &role = retriever.CheckAs();
+	auto &role = retriever.LookupRole();
 	reference_set_t<SchemaCatalogEntry> schemas;
 	bool all_errors = true;
 	ErrorData error_data;

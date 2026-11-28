@@ -165,19 +165,19 @@ bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const 
 }
 
 bool CatalogEntryRetriever::Shows(CatalogEntry &entry) const {
-	return static_cast<bool>(Check(context, CheckAs(), entry, AclMode::See));
+	return static_cast<bool>(Check(context, LookupRole(), entry, AclMode::See));
 }
 
 bool CatalogEntryRetriever::Shows(CatalogEntry &entry, const SchemaView &schema) const {
-	return static_cast<bool>(Check(context, CheckAs(), PrivilegeTarget::In(entry, schema), AclMode::See));
+	return static_cast<bool>(Check(context, LookupRole(), PrivilegeTarget::In(entry, schema), AclMode::See));
 }
 
 SchemaView CatalogEntryRetriever::View(const SchemaCatalogEntry &schema) const {
-	return ViewOf(context, CheckAs(), schema);
+	return ViewOf(context, LookupRole(), schema);
 }
 
 bool CatalogEntryRetriever::Shows(AttachedDatabase &database) const {
-	auto &role = CheckAs();
+	auto &role = LookupRole();
 	if (role.is_superuser || database.IsSystem() || database.IsTemporary()) {
 		return true;
 	}
