@@ -1,8 +1,6 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/statement/merge_into_statement.hpp"
 #include "duckdb/parser/query_node/merge_query_node.hpp"
-#include "duckdb/parser/tableref.hpp"
-#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/tableref/bound_joinref.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression_binder/where_binder.hpp"
@@ -265,15 +263,11 @@ BoundStatement Binder::BindNode(MergeQueryNode &node, bool inserts_checked) {
 	if (target_get.function.verify_dml_target) {
 		target_get.function.verify_dml_target(context, target_get.bind_data.get());
 	}
-	if (node.target->type == TableReferenceType::BASE_TABLE) {
-		// A catalog may delegate the scan of its table to a storage table in
-		// another catalog; the merge targets the entry the name resolves to.
-		auto &target_ref = node.target->Cast<BaseTableRef>();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.GetQualifiedName());
-		auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
-		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
-			table_ptr = &resolved->Cast<TableCatalogEntry>();
-		}
+	// A catalog may delegate the scan of its table to a storage table in
+	// another catalog; the merge targets the entry the name resolves to.
+	auto resolved = target_binder->bind_context.GetBinding(target_get.table_index)->GetStandardEntry();
+	if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+		table_ptr = &resolved->Cast<TableCatalogEntry>();
 	}
 	auto &table = *table_ptr;
 	const auto target = ChecksOf(table);

@@ -171,6 +171,8 @@ public:
 
 	optional_ptr<Binding> GetBinding(const BindingAlias &alias, const Identifier &column_name, ErrorData &out_error);
 
+	optional_ptr<Binding> GetBinding(TableIndex index);
+
 	//! Get all bindings that match a specific binding alias - returns an error if none match
 	vector<reference<Binding>> GetBindings(const BindingAlias &alias, ErrorData &out_error);
 

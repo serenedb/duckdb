@@ -4,8 +4,6 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
-#include "duckdb/parser/tableref.hpp"
-#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/tableref/bound_joinref.hpp"
@@ -259,15 +257,11 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	if (bound_table_get.function.verify_dml_target) {
 		bound_table_get.function.verify_dml_target(context, bound_table_get.bind_data.get());
 	}
-	if (node.table->type == TableReferenceType::BASE_TABLE) {
-		// A catalog may delegate the scan of its table to a storage table in
-		// another catalog; the update targets the entry the name resolves to.
-		auto &target_ref = node.table->Cast<BaseTableRef>();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.GetQualifiedName());
-		auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
-		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
-			table_ptr = &resolved->Cast<TableCatalogEntry>();
-		}
+	// A catalog may delegate the scan of its table to a storage table in
+	// another catalog; the update targets the entry the name resolves to.
+	auto resolved = bind_context.GetBinding(bound_table_get.table_index)->GetStandardEntry();
+	if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+		table_ptr = &resolved->Cast<TableCatalogEntry>();
 	}
 	auto &table = *table_ptr;
 

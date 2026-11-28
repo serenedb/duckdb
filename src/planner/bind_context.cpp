@@ -875,6 +875,15 @@ void BindContext::AddGenericBinding(TableIndex index, const Identifier &alias, c
 	AddBinding(make_uniq<Binding>(BindingType::BASE, BindingAlias(alias), types, names, index, case_sensitive));
 }
 
+optional_ptr<Binding> BindContext::GetBinding(TableIndex index) {
+	for (auto &binding : bindings_list) {
+		if (binding->GetIndex() == index) {
+			return binding.get();
+		}
+	}
+	return nullptr;
+}
+
 void BindContext::AddColumnAlias(TableIndex index, const Identifier &column_alias, column_t column_index) {
 	for (auto &binding : bindings_list) {
 		if (binding->GetIndex() == index) {
