@@ -87,7 +87,7 @@ AclMode RoleAccess::CapabilityModes(CatalogType type) const {
 		if (Has(RoleCapability::WriteAllData)) {
 			modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
 		}
-		if (Has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
+		if (Has(RoleCapability::Maintain)) {
 			modes |= AclMode::Maintain;
 		}
 		break;
