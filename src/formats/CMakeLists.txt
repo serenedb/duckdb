@@ -12,6 +12,7 @@ add_library_unity(
   csv_sniff.cpp
   json_ranges.cpp
   range_lines.cpp
+  raw_predicates.cpp
   row_input.cpp
   row_lexer.cpp
   row_ranges.cpp

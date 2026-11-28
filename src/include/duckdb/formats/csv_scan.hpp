@@ -15,6 +15,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
+#include "duckdb/formats/raw_predicates.hpp"
 #include "duckdb/formats/row_input.hpp"
 #include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/formats/value_codecs.hpp"
@@ -78,16 +79,6 @@ struct CsvScanSource {
 	bool placeholder = false;
 };
 
-enum class CsvRawKind : uint8_t { COMPARE, IN_LIST, IS_NULL, IS_NOT_NULL, LIKE, NOT_LIKE };
-
-struct CsvRawPredicate {
-	CsvRawKind kind;
-	ExpressionType compare = ExpressionType::INVALID;
-	vector<string> values;
-	bool anchored_start = false;
-	bool anchored_end = false;
-};
-
 struct LeanSource {
 	bool IsNull(const char *value, idx_t size, bool quoted) const {
 		if (quoted && !allow_quoted_nulls) {
@@ -135,7 +126,7 @@ struct CsvScanFilter {
 	idx_t output_column;
 	reference<const TableFilter> filter;
 	idx_t column = DConstants::INVALID_INDEX;
-	vector<CsvRawPredicate> raw;
+	vector<RawPredicate> raw;
 };
 
 class CsvScanGlobal {
