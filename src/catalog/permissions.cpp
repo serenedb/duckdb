@@ -133,7 +133,11 @@ bool PrivilegeCheck::Sees(ClientContext &context, const RoleAccess &role, const 
 	if (entry.internal || PermissionsOf(target).owner == 0) {
 		return true;
 	}
-	if (auto schema = ContainingSchema(context, entry)) {
+	optional_ptr<CatalogEntry> schema;
+	if (!target.schema) {
+		schema = ContainingSchema(context, entry);
+	}
+	if (target.schema || schema) {
 		const auto view = target.schema ? *target.schema : ViewOf(context, role, *schema);
 		if (!view.shown) {
 			return false;
