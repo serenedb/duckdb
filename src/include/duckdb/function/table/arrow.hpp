@@ -16,8 +16,8 @@
 #include "duckdb/common/thread.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/function/built_in_functions.hpp"
+#include "duckdb/formats/pushed_filters.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
-#include "duckdb/planner/table_filter_state.hpp"
 
 namespace duckdb {
 
@@ -123,11 +123,6 @@ public:
 	}
 };
 
-struct ArrowScanFilter {
-	idx_t column;
-	unique_ptr<TableFilterState> state;
-};
-
 struct ArrowScanExpression {
 	unique_ptr<ExpressionExecutor> executor;
 	DataChunk input;
@@ -150,7 +145,7 @@ public:
 	//! The DataChunk containing all read columns (even filter columns that are immediately removed)
 	DataChunk all_columns;
 	vector<idx_t> arrow_columns;
-	vector<ArrowScanFilter> scan_filters;
+	PushedFilters scan_filters;
 	vector<bool> filtered_columns;
 	unordered_map<idx_t, unique_ptr<ArrowScanExpression>> column_expressions;
 	SelectionVector filter_selection;

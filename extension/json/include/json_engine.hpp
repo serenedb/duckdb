@@ -14,6 +14,7 @@
 #include "duckdb/common/json_document.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/formats/json_ranges.hpp"
+#include "duckdb/formats/pushed_filters.hpp"
 #include "duckdb/formats/range_lines.hpp"
 #include "duckdb/formats/row_chain.hpp"
 #include "duckdb/planner/table_filter.hpp"
@@ -271,7 +272,7 @@ private:
 	JSONTreeParser parser;
 	JSONStringWriter writer;
 	JSONTransformOptions transform_options;
-	vector<unique_ptr<TableFilterState>> filter_states;
+	PushedFilters pushed_filters;
 	SelectionVector filter_selection;
 	idx_t count = 0;
 	idx_t batch_bytes = 0;

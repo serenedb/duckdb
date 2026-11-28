@@ -22,7 +22,6 @@
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/table/column_segment.hpp"
 
 #include <bit>
 #include <cmath>
@@ -1018,7 +1017,7 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
       transform_options(global_p.columns.transform_options), direct_memory(BufferAllocator::Get(global_p.context)) {
 	transform_options.parameters.context = &global.context;
 	for (auto &filter : global.columns.filters) {
-		filter_states.push_back(TableFilterState::Initialize(global.context, filter.filter.get()));
+		pushed_filters.Add(global.context, filter.filter.get(), filter.output_column);
 	}
 	filter_selection.Initialize(STANDARD_VECTOR_SIZE);
 	if (global.direct) {
@@ -1540,11 +1539,10 @@ idx_t JsonScan::ApplyFilters(DataChunk &output, idx_t rows, bool filtered_column
 	} else {
 		filter_selection.Initialize(nullptr);
 	}
-	for (idx_t i = 0; i < filters.size() && approved > 0; i++) {
-		auto &vector = output.data[filters[i].output_column];
-		FlatVector::SetSize(vector, count_t(rows));
-		ColumnSegment::FilterSelection(filter_selection, vector, *filter_states[i], rows, approved);
+	for (auto &filter : filters) {
+		FlatVector::SetSize(output.data[filter.output_column], count_t(rows));
 	}
+	approved = pushed_filters.Apply(filter_selection, output, rows, approved);
 	if (approved == rows) {
 		return rows;
 	}

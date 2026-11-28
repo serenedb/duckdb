@@ -13,7 +13,6 @@
 #include "duckdb/common/types/arrow_string_view_type.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/function/table/arrow.hpp"
-#include "duckdb/storage/table/column_segment.hpp"
 
 #include "duckdb/common/bswap.hpp"
 
@@ -1791,22 +1790,19 @@ static void ArrowScanColumnToDuckDB(ArrowScanLocalState &scan_state, const arrow
 idx_t ArrowTableFunction::ArrowToDuckDBFiltered(ArrowScanLocalState &scan_state,
                                                 const arrow_column_map_t &arrow_convert_data, DataChunk &output,
                                                 idx_t size, optional_ptr<const SelectionVector> rows, idx_t count) {
-	for (auto &filter : scan_state.scan_filters) {
-		ArrowScanColumnToDuckDB(scan_state, arrow_convert_data, output, filter.column, size, rows, count);
+	auto &filters = scan_state.scan_filters;
+	for (idx_t i = 0; i < filters.Count(); i++) {
+		ArrowScanColumnToDuckDB(scan_state, arrow_convert_data, output, filters.Column(i), size, rows, count);
 	}
-	idx_t approved = count;
 	auto &selection = scan_state.filter_selection;
 	selection.Initialize(nullptr);
-	for (idx_t i = 0; i < scan_state.scan_filters.size() && approved > 0; i++) {
-		auto &filter = scan_state.scan_filters[i];
-		ColumnSegment::FilterSelection(selection, output.data[filter.column], *filter.state, count, approved);
-	}
+	const auto approved = filters.Apply(selection, output, count, count);
 	if (approved == 0) {
 		return 0;
 	}
 	if (approved < count) {
-		for (auto &filter : scan_state.scan_filters) {
-			output.data[filter.column].Slice(selection, approved);
+		for (idx_t i = 0; i < filters.Count(); i++) {
+			output.data[filters.Column(i)].Slice(selection, approved);
 		}
 		if (rows) {
 			for (idx_t i = 0; i < approved; i++) {

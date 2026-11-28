@@ -156,10 +156,10 @@ static void InitializeScanFilters(ClientContext &context, TableFunctionInitInput
 	}
 	for (auto &entry : *input.filters) {
 		auto column = entry.GetIndex().GetIndex();
-		state.scan_filters.push_back(ArrowScanFilter {column, TableFilterState::Initialize(context, entry.Filter())});
+		state.scan_filters.Add(context, entry.Filter(), column);
 		state.filtered_columns[column] = true;
 	}
-	if (state.scan_filters.empty()) {
+	if (state.scan_filters.Empty()) {
 		return;
 	}
 	state.filter_rows.Initialize(STANDARD_VECTOR_SIZE);
@@ -237,7 +237,7 @@ void ArrowTableFunction::ArrowScanFunction(ClientContext &context, TableFunction
 		if (global_state.CanRemoveFilterColumns()) {
 			state.all_columns.Reset();
 		}
-		if (state.scan_filters.empty()) {
+		if (state.scan_filters.Empty()) {
 			result.SetChildCardinality(output_size);
 			ArrowToDuckDB(state, data.arrow_table.GetColumns(), result);
 		} else if (ArrowToDuckDBFiltered(state, data.arrow_table.GetColumns(), result, output_size, nullptr,

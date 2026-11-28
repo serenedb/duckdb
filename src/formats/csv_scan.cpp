@@ -25,7 +25,6 @@
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/table/column_segment.hpp"
 #include "simdutf.h"
 #include "utf8proc_wrapper.hpp"
 
@@ -695,7 +694,7 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 	keep.Initialize(STANDARD_VECTOR_SIZE);
 	filter_candidates.Initialize(STANDARD_VECTOR_SIZE);
 	for (auto &filter : global.filters) {
-		filter_states.push_back(TableFilterState::Initialize(global.context, filter.filter.get()));
+		pushed_filters.Add(global.context, filter.filter.get(), filter.output_column);
 	}
 	auto &allocator = Allocator::Get(global.context);
 	vector<LogicalType> parse_types(global.columns.size(), LogicalType::VARCHAR);
@@ -1367,11 +1366,10 @@ void CsvScan::Filter(idx_t count, DataChunk &output) {
 		}
 	}
 	filter_selection.Initialize(filter_candidates);
-	for (idx_t i = 0; i < global.filters.size() && approved > 0; i++) {
-		auto &vector = output.data[global.filters[i].output_column];
-		FlatVector::SetSize(vector, count_t(count));
-		ColumnSegment::FilterSelection(filter_selection, vector, *filter_states[i], count, approved);
+	for (auto &filter : global.filters) {
+		FlatVector::SetSize(output.data[filter.output_column], count_t(count));
 	}
+	approved = pushed_filters.Apply(filter_selection, output, count, approved);
 	for (idx_t row = 0; row < count; row++) {
 		selected[row] = false;
 	}

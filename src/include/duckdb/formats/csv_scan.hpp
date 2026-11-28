@@ -15,6 +15,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
+#include "duckdb/formats/pushed_filters.hpp"
 #include "duckdb/formats/raw_predicates.hpp"
 #include "duckdb/formats/row_input.hpp"
 #include "duckdb/formats/row_ranges.hpp"
@@ -280,7 +281,7 @@ private:
 	vector<idx_t> retry;
 	bool lean_errors = false;
 	bool rows_failed = false;
-	vector<unique_ptr<TableFilterState>> filter_states;
+	PushedFilters pushed_filters;
 	SelectionVector filter_selection;
 	SelectionVector filter_candidates;
 	SelectionVector keep;
