@@ -15,6 +15,13 @@ namespace duckdb {
 class BaseStatistics;
 class ClientContext;
 
+enum class RewriteGuard : uint8_t {
+	NONE,
+	SCORED,
+	FIXED_CHILDREN,
+	UNSCORED,
+};
+
 //!  The Expression class represents a bound Expression with a return type
 class Expression : public BaseExpression {
 public:
@@ -24,6 +31,7 @@ public:
 protected:
 	//! The return type of the expression
 	LogicalType return_type;
+	RewriteGuard rewrite_guard = RewriteGuard::NONE;
 
 protected:
 	//! Expression statistics (if any) - ONLY USED FOR VERIFICATION
@@ -36,6 +44,14 @@ public:
 	virtual void SetReturnType(LogicalType type) {
 		return_type = std::move(type);
 	}
+
+	RewriteGuard GetRewriteGuard() const {
+		return rewrite_guard;
+	}
+	void SetRewriteGuard(RewriteGuard guard) {
+		rewrite_guard = guard;
+	}
+	bool IsScored() const;
 
 	//! Preserve the SQL result type when replacing an expression with an equivalent value.
 	static unique_ptr<Expression> PreserveReturnType(const LogicalType &type, unique_ptr<Expression> replacement);
@@ -95,6 +111,7 @@ protected:
 		expression_class = other.expression_class;
 		alias = other.alias;
 		SetReturnType(other.return_type);
+		rewrite_guard = other.rewrite_guard;
 		query_location = other.query_location;
 	}
 };

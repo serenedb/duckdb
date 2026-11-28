@@ -38,6 +38,14 @@
         "default": "0",
         "equals_skip": true,
         "hash_skip": true
+      },
+      {
+        "id": 105,
+        "name": "rewrite_guard",
+        "type": "RewriteGuard",
+        "default": "RewriteGuard::NONE",
+        "equals_skip": true,
+        "hash_skip": true
       }
     ]
   },

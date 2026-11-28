@@ -57,6 +57,9 @@ unique_ptr<Expression> DistributivityRule::ExtractExpression(BoundConjunctionExp
 unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
                                                  bool &changes_made, bool is_root) {
 	auto &initial_or = bindings[0].get().Cast<BoundConjunctionExpression>();
+	if (initial_or.GetRewriteGuard() == RewriteGuard::FIXED_CHILDREN) {
+		return nullptr;
+	}
 
 	// we want to find expressions that occur in each of the children of the OR
 	// i.e. (X AND A) OR (X AND B) => X occurs in all branches
@@ -64,12 +67,16 @@ unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<ref
 	// this is our initial candidate set (in the example: [X, A])
 	hashed_expression_set_t<Expression> candidate_set;
 	AddExpressionSet(*initial_or.GetChildrenMutable()[0], candidate_set);
+	idx_t smallest = candidate_set.size();
+	idx_t largest = candidate_set.size();
 	// now for each of the remaining children, we create a set again and intersect them
 	// in our example: the second set would be [X, B]
 	// the intersection would leave [X]
 	for (idx_t i = 1; i < initial_or.GetChildrenMutable().size(); i++) {
 		hashed_expression_set_t<Expression> next_set;
 		AddExpressionSet(*initial_or.GetChildrenMutable()[i], next_set);
+		smallest = MinValue(smallest, next_set.size());
+		largest = MaxValue(largest, next_set.size());
 		hashed_expression_set_t<Expression> intersect_result;
 		for (auto &expr : candidate_set) {
 			if (next_set.find(expr) != next_set.end()) {
@@ -81,6 +88,19 @@ unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<ref
 	if (candidate_set.empty()) {
 		// nothing found: abort
 		return nullptr;
+	}
+	if (largest != candidate_set.size()) {
+		if (smallest == candidate_set.size()) {
+			if (initial_or.IsScored()) {
+				return nullptr;
+			}
+		} else {
+			erase_if(candidate_set,
+			         [](const HashedExpression<Expression> &expr) { return expr.expr.get().IsScored(); });
+			if (candidate_set.empty()) {
+				return nullptr;
+			}
+		}
 	}
 	// now for each of the remaining expressions in the candidate set we know that it is contained in all branches of
 	// the OR

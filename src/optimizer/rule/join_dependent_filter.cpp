@@ -108,6 +108,9 @@ unique_ptr<Expression> JoinDependentFilterRule::Apply(LogicalOperator &op, vecto
 
 	auto derived_filter = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
 	for (auto &entry : conjuncted_expressions[0]) {
+		if (entry.second->IsScored()) {
+			continue;
+		}
 		auto derived_entry_filter = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR);
 		derived_entry_filter->GetChildrenMutable().push_back(entry.second->Copy());
 
@@ -115,7 +118,7 @@ unique_ptr<Expression> JoinDependentFilterRule::Apply(LogicalOperator &op, vecto
 		for (idx_t conj_idx = 1; conj_idx < children.size(); conj_idx++) {
 			auto &other_entry = conjuncted_expressions[conj_idx];
 			auto other_it = other_entry.find(entry.first);
-			if (other_it == other_entry.end()) {
+			if (other_it == other_entry.end() || other_it->second->IsScored()) {
 				found = false;
 				break; // Expression does not appear in every conjuncted expression, cannot derive any restriction
 			}

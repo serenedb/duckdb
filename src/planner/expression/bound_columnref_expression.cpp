@@ -17,7 +17,9 @@ BoundColumnRefExpression::BoundColumnRefExpression(LogicalType type, ColumnBindi
 }
 
 unique_ptr<Expression> BoundColumnRefExpression::Copy() const {
-	return make_uniq<BoundColumnRefExpression>(alias, return_type, binding, depth);
+	auto copy = make_uniq<BoundColumnRefExpression>(alias, return_type, binding, depth);
+	copy->rewrite_guard = rewrite_guard;
+	return std::move(copy);
 }
 
 hash_t BoundColumnRefExpression::NodeHash() const {

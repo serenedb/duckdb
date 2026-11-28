@@ -168,6 +168,10 @@ unique_ptr<Expression> PredicateFactoringRule::Apply(LogicalOperator &op, vector
 	for (auto binding_it = sorted_bindings.rbegin(); binding_it != sorted_bindings.rend(); ++binding_it) {
 		auto &predicates = binding_map.find(*binding_it)->second;
 		D_ASSERT(!predicates.empty());
+		if (std::any_of(predicates.begin(), predicates.end(),
+		                [](const reference<Expression> &predicate) { return predicate.get().IsScored(); })) {
+			continue;
+		}
 
 		// Create disjunction on single-column predicates
 		if (predicates.size() == 1) {
@@ -180,6 +184,9 @@ unique_ptr<Expression> PredicateFactoringRule::Apply(LogicalOperator &op, vector
 			column_filter->GetChildrenMutable().push_back(expr.get().Copy());
 		}
 		derived_filter->GetChildrenMutable().push_back(std::move(column_filter));
+	}
+	if (derived_filter->GetChildren().empty()) {
+		return nullptr;
 	}
 
 	// Now add the derived filter as an AND to the original expression
