@@ -18,6 +18,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_file_opener.hpp"
 #include "duckdb/parallel/task_executor.hpp"
+#include "duckdb/storage/block_copy_store.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/cache_validation.hpp"
@@ -2813,6 +2814,66 @@ bool HoldsUploadedBytes(const string &path, idx_t size) {
 
 } // namespace
 
+TEST_CASE("External file cache reads remote files without copies when the configuration disables the local file system",
+          "[external_file_cache]") {
+	const auto directory = TestCreatePath("external_file_cache_local_disabled");
+	LocalFileSystem local;
+	if (local.DirectoryExists(directory)) {
+		local.RemoveDirectory(directory);
+	}
+	DBConfig config;
+	LimitMemory(config, 8, directory);
+	DuckDB db(nullptr, &config);
+	CountingSourceFileSystem fs;
+	ExternalFileCache cache(*db.instance);
+	TestFile file("external_file_cache_local_disabled.bin", 32 * BLOCK);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET disabled_filesystems = 'LocalFileSystem'"));
+
+	auto cached = file.Open(cache, fs);
+	for (idx_t round = 0; round < 2; round++) {
+		for (idx_t block = 0; block < 32; block++) {
+			REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
+		}
+	}
+	REQUIRE(cache.GetStatistics().spilled == 0);
+	REQUIRE(!local.DirectoryExists(directory));
+}
+
+TEST_CASE("External file cache fetches the blocks it keeps copies of again once the configuration disables the local "
+          "file system",
+          "[external_file_cache]") {
+	const auto directory = TestCreatePath("external_file_cache_local_disabled_later");
+	LocalFileSystem local;
+	if (local.DirectoryExists(directory)) {
+		local.RemoveDirectory(directory);
+	}
+	DBConfig config;
+	LimitMemory(config, 8, directory);
+	DuckDB db(nullptr, &config);
+	CountingSourceFileSystem fs;
+	ExternalFileCache cache(*db.instance);
+	TestFile file("external_file_cache_local_disabled_later.bin", 32 * BLOCK);
+	auto cached = file.Open(cache, fs);
+	for (idx_t block = 0; block < 32; block++) {
+		REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
+	}
+	const auto kept = cache.GetStatistics().spilled;
+	REQUIRE(kept > 0);
+
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET disabled_filesystems = 'LocalFileSystem'"));
+	const auto reads = fs.ReadCount();
+	for (idx_t block = 0; block < 32; block++) {
+		REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
+	}
+	REQUIRE(fs.ReadCount() >= reads + kept);
+	REQUIRE(cache.GetStatistics().spilled == kept);
+	cached.reset();
+	cache.ForgetFile(file.path);
+	REQUIRE(local.DirectoryExists(local.JoinPath(directory, BlockCopyStore::DIRECTORY)));
+}
+
 TEST_CASE("The database filesystem reads remote files through the external file cache and forgets the ones it changes",
           "[external_file_cache]") {
 	DuckDB db(nullptr);
@@ -3197,8 +3258,8 @@ TEST_CASE("External file cache keeps evicted blocks of remote files in temporary
 	REQUIRE(buffer_manager.GetUsedSwap() == 0);
 }
 
-TEST_CASE("External file cache keeps the end of a fetched file in a buffer of its own size and fetches it again once "
-          "it left memory",
+TEST_CASE("External file cache keeps the end of a fetched file in a buffer of its own size and a copy of it once it "
+          "left memory",
           "[external_file_cache]") {
 	const auto directory = TestCreatePath("external_file_cache_tail");
 	DBConfig config;
@@ -3231,7 +3292,7 @@ TEST_CASE("External file cache keeps the end of a fetched file in a buffer of it
 	auto tail = cache.Pin(*cached, 32);
 	REQUIRE(tail.Size() == 1000);
 	REQUIRE(HoldsExpectedBytesAt(tail, 32 * BLOCK));
-	REQUIRE(fs.ReadCount() == 34);
+	REQUIRE(fs.ReadCount() == 33);
 
 	TestFile tiny("external_file_cache_tiny.bin", 47);
 	auto tiny_cached = tiny.Open(cache, fs);
@@ -3284,6 +3345,244 @@ TEST_CASE("External file cache drops evicted blocks of remote files when externa
 	REQUIRE(fs.ReadCount() > 32);
 	REQUIRE(cache.GetStatistics().spilled == 0);
 	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
+}
+
+namespace {
+
+//! The temporary directory [name], empty
+string EmptyTemporaryDirectory(const string &name) {
+	const auto directory = TestCreatePath(name);
+	LocalFileSystem local;
+	if (local.DirectoryExists(directory)) {
+		local.RemoveDirectory(directory);
+	}
+	return directory;
+}
+
+//! The files of the copies that have a name in the temporary directory [directory]
+vector<string> NamedCopies(const string &directory) {
+	LocalFileSystem local;
+	const auto copies = local.JoinPath(directory, BlockCopyStore::DIRECTORY);
+	vector<string> result;
+	if (local.DirectoryExists(copies)) {
+		local.ListFiles(copies, [&](const string &name, bool is_directory) {
+			if (!is_directory) {
+				result.push_back(local.JoinPath(copies, name));
+			}
+		});
+	}
+	return result;
+}
+
+//! The disk space a copy of a whole block takes
+constexpr idx_t COPY_SIZE = 32 + BLOCK;
+
+//! Pins the [blocks] blocks of [file] in the order [order] gives them, checking their bytes
+template <class ORDER>
+void PinBlocks(ExternalFileCache &cache, InputFile &file, idx_t blocks, ORDER &&order) {
+	for (idx_t i = 0; i < blocks; i++) {
+		const auto block = order(i);
+		REQUIRE(HoldsExpectedBytes(cache.Pin(file, block), block));
+	}
+}
+
+struct SmallDatabaseConfig {
+	SmallDatabaseConfig(const string &directory, idx_t copy_limit) {
+		LimitMemory(config, 8, directory);
+		config.options.external_file_cache_spill_size = copy_limit;
+	}
+	DBConfig config;
+};
+
+//! A database whose buffer pool holds 8 blocks and evicts to [directory], with copies of at most [copy_limit] bytes
+struct SmallDatabase : SmallDatabaseConfig {
+	explicit SmallDatabase(const string &directory, idx_t copy_limit = DConstants::INVALID_INDEX)
+	    : SmallDatabaseConfig(directory, copy_limit), db(nullptr, &config), cache(*db.instance) {
+	}
+	BufferManager &Buffers() {
+		return BufferManager::GetBufferManager(*db.instance);
+	}
+
+	DuckDB db;
+	CountingSourceFileSystem fs;
+	ExternalFileCache cache;
+};
+
+} // namespace
+
+TEST_CASE("External file cache reads the copies of evicted blocks of remote files that an earlier database left in "
+          "its temporary directory",
+          "[external_file_cache]") {
+	const auto directory = EmptyTemporaryDirectory("external_file_cache_named_copies");
+	TestFile file("external_file_cache_named_copies.bin", 32 * BLOCK);
+	const auto forward = [](idx_t i) {
+		return i;
+	};
+	const auto backward = [](idx_t i) {
+		return 31 - i;
+	};
+	idx_t kept;
+	{
+		SmallDatabase first(directory);
+		auto cached = file.Open(first.cache, first.fs);
+		PinBlocks(first.cache, *cached, 32, forward);
+		REQUIRE(first.fs.ReadCount() == 32);
+		REQUIRE(first.cache.GetStatistics().spilled > 0);
+		REQUIRE(CountFiles(directory, ".tmp") == 0);
+	}
+	// the blocks in memory at the close got no copy
+	kept = NamedCopies(directory).size();
+	REQUIRE(kept >= 16);
+	REQUIRE(kept < 32);
+	{
+		SmallDatabase second(directory);
+		auto cached = file.Open(second.cache, second.fs);
+		PinBlocks(second.cache, *cached, 32, backward);
+		REQUIRE(second.fs.ReadCount() == 32 - kept);
+		REQUIRE(second.cache.GetStatistics().spill_reads >= kept);
+	}
+	REQUIRE(NamedCopies(directory).size() == 32);
+	{
+		SmallDatabase third(directory);
+		auto cached = file.Open(third.cache, third.fs);
+		PinBlocks(third.cache, *cached, 32, forward);
+		REQUIRE(third.fs.ReadCount() == 0);
+		REQUIRE(third.Buffers().GetUsedSwap() == 32 * COPY_SIZE);
+
+		// bytes that are no longer the file's lose their copies
+		cached.reset();
+		third.cache.ForgetFile(file.path);
+		REQUIRE(NamedCopies(directory).empty());
+		REQUIRE(third.Buffers().GetUsedSwap() == 0);
+	}
+	{
+		SmallDatabase fourth(directory);
+		auto cached = file.Open(fourth.cache, fourth.fs);
+		PinBlocks(fourth.cache, *cached, 32, forward);
+	}
+	// a copy of one version is never read for another
+	SmallDatabase fifth(directory);
+	auto cached = file.Open(fifth.cache, fifth.fs, "v2");
+	PinBlocks(fifth.cache, *cached, 32, forward);
+	REQUIRE(fifth.fs.ReadCount() == 32);
+}
+
+TEST_CASE("External file cache fetches the blocks whose copies are damaged or gone again", "[external_file_cache]") {
+	const auto directory = EmptyTemporaryDirectory("external_file_cache_damaged_copies");
+	TestFile file("external_file_cache_damaged_copies.bin", 32 * BLOCK);
+	const auto forward = [](idx_t i) {
+		return i;
+	};
+	{
+		SmallDatabase first(directory);
+		auto cached = file.Open(first.cache, first.fs);
+		PinBlocks(first.cache, *cached, 32, forward);
+	}
+	auto copies = NamedCopies(directory);
+	REQUIRE(copies.size() >= 16);
+	const auto kept = copies.size();
+	LocalFileSystem local;
+	{
+		auto truncated = local.OpenFile(copies[0], FileFlags::FILE_FLAGS_WRITE);
+		truncated->Truncate(COPY_SIZE / 2);
+		auto flipped = local.OpenFile(copies[1], FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_WRITE);
+		data_t byte;
+		flipped->Read(QueryContext(), &byte, 1, COPY_SIZE - 1);
+		byte ^= 0xFF;
+		flipped->Write(QueryContext(), &byte, 1, COPY_SIZE - 1);
+	}
+	const auto copy_directory = local.JoinPath(directory, BlockCopyStore::DIRECTORY);
+	const auto stray = local.JoinPath(copy_directory, "stray");
+	const auto empty = local.JoinPath(copy_directory, BlockCopyName {1, 2}.ToString());
+	for (auto &path : {stray, empty}) {
+		local.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE)->Close();
+	}
+	{
+		SmallDatabase second(directory);
+		auto cached = file.Open(second.cache, second.fs);
+		PinBlocks(second.cache, *cached, 32, forward);
+		REQUIRE(second.fs.ReadCount() == 32 - kept + 2);
+		REQUIRE(!local.FileExists(stray));
+		REQUIRE(!local.FileExists(empty));
+	}
+	// a copy removed after the database found it is fetched again too
+	SmallDatabase third(directory);
+	auto cached = file.Open(third.cache, third.fs);
+	REQUIRE(HoldsExpectedBytes(third.cache.Pin(*cached, 0), 0));
+	const auto reads = third.fs.ReadCount();
+	for (auto &copy : NamedCopies(directory)) {
+		local.RemoveFile(copy);
+	}
+	for (idx_t block = 1; block < 32; block++) {
+		REQUIRE(HoldsExpectedBytes(third.cache.Pin(*cached, block), block));
+	}
+	REQUIRE(third.fs.ReadCount() == reads + 31);
+}
+
+TEST_CASE("External file cache copies that no block holds make room for new ones, the oldest first",
+          "[external_file_cache]") {
+	const auto directory = EmptyTemporaryDirectory("external_file_cache_copy_room");
+	TestFile first_file("external_file_cache_copy_room_first.bin", 32 * BLOCK);
+	TestFile second_file("external_file_cache_copy_room_second.bin", 32 * BLOCK);
+	const auto forward = [](idx_t i) {
+		return i;
+	};
+	{
+		SmallDatabase first(directory);
+		auto cached = first_file.Open(first.cache, first.fs);
+		PinBlocks(first.cache, *cached, 32, forward);
+	}
+	REQUIRE(NamedCopies(directory).size() > 16);
+	{
+		// the copies an earlier database left beyond the limit go when the directory is first used
+		SmallDatabase second(directory, 16 * COPY_SIZE);
+		auto cached = second_file.Open(second.cache, second.fs);
+		REQUIRE(HoldsExpectedBytes(second.cache.Pin(*cached, 0), 0));
+		REQUIRE(second.Buffers().GetUsedSwap() <= 16 * COPY_SIZE);
+		PinBlocks(second.cache, *cached, 32, forward);
+		REQUIRE(second.Buffers().GetUsedSwap() <= 16 * COPY_SIZE);
+	}
+	// the copies of the second file, which its blocks held, pushed out those of the first
+	REQUIRE(NamedCopies(directory).size() == 16);
+	SmallDatabase third(directory);
+	auto first_cached = first_file.Open(third.cache, third.fs);
+	PinBlocks(third.cache, *first_cached, 32, forward);
+	REQUIRE(third.fs.ReadCount() == 32);
+	auto second_cached = second_file.Open(third.cache, third.fs);
+	PinBlocks(third.cache, *second_cached, 32, forward);
+	REQUIRE(third.fs.ReadCount() == 32 + 16);
+}
+
+TEST_CASE("External file cache keeps the copies of blocks of a file without a version only while they live",
+          "[external_file_cache]") {
+	const auto directory = EmptyTemporaryDirectory("external_file_cache_unnamed_copies");
+	TestFile file("external_file_cache_unnamed_copies.bin", 32 * BLOCK);
+	{
+		SmallDatabase db(directory);
+		auto cached = file.Open(db.cache, db.fs, "");
+		PinBlocks(db.cache, *cached, 32, [](idx_t i) { return i; });
+		REQUIRE(db.cache.GetStatistics().spilled > 0);
+		REQUIRE(NamedCopies(directory).empty());
+	}
+	REQUIRE(NamedCopies(directory).empty());
+	REQUIRE(CountFiles(directory, ".tmp") == 0);
+}
+
+TEST_CASE("External file cache keeps the copies of blocks of a written file under the version it published",
+          "[external_file_cache]") {
+	const auto directory = EmptyTemporaryDirectory("external_file_cache_written_copies");
+	TestFile written("external_file_cache_written_copies.bin", 4 * BLOCK);
+	TestFile other("external_file_cache_written_copies_other.bin", 32 * BLOCK);
+	{
+		SmallDatabase db(directory);
+		PublishVersion(db.cache, written.path, 4 * BLOCK);
+		auto pushing = other.Open(db.cache, db.fs);
+		PinBlocks(db.cache, *pushing, 32, [](idx_t i) { return i; });
+	}
+	SmallDatabase db(directory);
+	auto cached = written.Open(db.cache, db.fs);
+	PinBlocks(db.cache, *cached, 4, [](idx_t i) { return i; });
+	REQUIRE(db.fs.ReadCount() == 0);
 }
 
 TEST_CASE("External file cache fetches evicted blocks again when the temporary files have no room or the file is local",

@@ -20,6 +20,7 @@
 
 namespace duckdb {
 
+class BlockCopyStore;
 class BlockManager;
 class BufferPool;
 class TemporaryMemoryManager;
@@ -80,7 +81,8 @@ public:
 	vector<unique_ptr<AsyncTask>> CreatePrefetchTasks(QueryContext context,
 	                                                  vector<shared_ptr<BlockHandle>> &handles) final;
 	void Unpin(BlockMemory &memory) final;
-	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) final;
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon,
+	                                               const BlockCopyName &copy_name = BlockCopyName()) final;
 	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) final;
 	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) final;
 	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) final;
@@ -149,7 +151,17 @@ protected:
 
 	//! Write a temporary buffer to disk
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) final;
-	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) final;
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, const BlockCopyName &copy_name,
+	                           FileBuffer &buffer) final;
+	//! The bytes the copies blocks keep may take in temporary files
+	idx_t CopyLimit();
+	//! Whether the temporary directory is set and the configuration does not disable its file system
+	bool TemporaryDirectoryReachable();
+	//! Whether blocks may keep copies in the temporary directory: it is reachable, which a copy is never worth failing
+	//! a read or an eviction over, and external_file_cache_spill is on
+	bool CopiesAllowed();
+	//! The copies that have a name, when the temporary directory has any: it is prepared for them on first use
+	optional_ptr<BlockCopyStore> FindCopies();
 	//! Read a temporary buffer from disk
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer = nullptr) final;
@@ -218,8 +230,10 @@ protected:
 	//! Buffers written to and read back from temporary files per tag, since start
 	array<atomic<idx_t>, MEMORY_TAG_COUNT> temporary_writes_per_tag {};
 	array<atomic<idx_t>, MEMORY_TAG_COUNT> temporary_reads_per_tag {};
-	//! The bytes of the copies blocks that keep one have in temporary files
+	//! The bytes of the copies without a name that blocks keep in temporary files
 	atomic<idx_t> copy_bytes {0};
+	//! Set once the temporary directory was found without copies that have a name, before it was used
+	atomic<bool> no_copies {false};
 };
 
 } // namespace duckdb

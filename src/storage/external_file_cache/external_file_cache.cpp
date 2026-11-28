@@ -10,6 +10,7 @@
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "mbedtls_wrapper.hpp"
 
 #include <absl/cleanup/cleanup.h>
 #include <algorithm>
@@ -84,6 +85,30 @@ void NarrowPins(const ExternalFileCacheBlocks &blocks, vector<FilePin> &pins, id
 	last.Narrow(0, end - blocks.BlockStart(blocks.BlockOf(offset) + pins.size() - 1));
 	auto &head = pins.front();
 	head.Narrow(blocks.OffsetInBlock(offset), head.Size() - blocks.OffsetInBlock(offset));
+}
+
+//! The name of the bytes of block [block] of [block_size] bytes of the version [validation] of [path], which every
+//! process that reads them gives them; unset for a version without a tag, whose bytes a name cannot tell apart
+BlockCopyName CopyNameOf(const string &path, const CacheValidationInfo &validation, idx_t block_size, idx_t block) {
+	if (validation.version_tag.empty()) {
+		return {};
+	}
+	duckdb_mbedtls::MbedTlsWrapper::SHA256State state;
+	const auto add = [&](uint64_t value) {
+		state.AddBytes(const_data_ptr_cast(&value), sizeof(value));
+	};
+	add(path.size());
+	state.AddString(path);
+	add(validation.version_tag.size());
+	state.AddString(validation.version_tag);
+	add(validation.file_size);
+	add(block_size);
+	add(block);
+	const auto digest = state.Finalize();
+	BlockCopyName name;
+	memcpy(&name.high, digest.data(), sizeof(name.high));
+	memcpy(&name.low, digest.data() + sizeof(name.high), sizeof(name.low));
+	return name;
 }
 
 //! Calls [callback] with the offset and the block count of each piece of a run of [count] blocks: equal pieces of at
@@ -744,10 +769,29 @@ shared_ptr<InputFile> ExternalFileCache::CreateWrittenFile(const string &path) {
 
 void ExternalFileCache::PublishWrittenFile(InputFile &file, const CacheValidationInfo &written) {
 	D_ASSERT(!file.IsUnbacked());
-	annotated_lock_guard<annotated_mutex> guard(file_lock);
-	auto entry = files.find(file.path);
-	if (entry != files.end() && entry->second.blocks == file.blocks) {
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		auto entry = files.find(file.path);
+		if (entry == files.end() || entry->second.blocks != file.blocks) {
+			return;
+		}
 		entry->second.info.validation = written;
+	}
+	// the blocks the writer created take the name of the version it published, which their copies keep for later
+	// processes; a block that keeps a copy already keeps it without a name
+	vector<std::pair<idx_t, reference<BlockMemory>>> created;
+	file.blocks->ForEach([&](idx_t block, ExternalFileCacheSlot &slot) {
+		if (const auto memory = slot.load(std::memory_order_acquire)) {
+			created.emplace_back(block, *memory);
+		}
+	});
+	for (auto &[block, memory] : created) {
+		auto &target = memory.get();
+		const auto name = CopyNameOf(file.path, written, file.BlockSize(), block);
+		auto lock = target.GetLock();
+		if (target.KeepsCopy() && !target.HasTemporaryFile() && !target.GetCopyName().IsSet()) {
+			target.SetCopyName(name);
+		}
 	}
 }
 
@@ -798,7 +842,7 @@ void ExternalFileCache::ForgetDirectory(const string &directory) {
 	return true;
 }
 
-BlockMemory &ExternalFileCache::MemoryOf(const InputFile &file, ExternalFileCacheSlot &slot, idx_t size) {
+BlockMemory &ExternalFileCache::MemoryOf(const InputFile &file, ExternalFileCacheSlot &slot, idx_t block, idx_t size) {
 	auto memory = slot.load(std::memory_order_acquire);
 	if (memory) {
 		return *memory;
@@ -806,7 +850,11 @@ BlockMemory &ExternalFileCache::MemoryOf(const InputFile &file, ExternalFileCach
 	const auto destroy_buffer_upon = file.IsUnbacked()     ? DestroyBufferUpon::BLOCK
 	                                 : file.Info().on_disk ? DestroyBufferUpon::EVICTION
 	                                                       : DestroyBufferUpon::KEEP_COPY;
-	auto handle = buffer_manager.RegisterUnloadedMemory(size, destroy_buffer_upon);
+	auto handle = buffer_manager.RegisterUnloadedMemory(
+	    size, destroy_buffer_upon,
+	    destroy_buffer_upon == DestroyBufferUpon::KEEP_COPY
+	        ? CopyNameOf(file.path, file.Info().validation, file.BlockSize(), block)
+	        : BlockCopyName());
 	auto &created = handle->GetMemory();
 	if (!slot.compare_exchange_strong(memory, &created, std::memory_order_seq_cst)) {
 		return *memory;
@@ -818,7 +866,7 @@ BlockMemory &ExternalFileCache::MemoryOf(const InputFile &file, ExternalFileCach
 
 optional_ptr<BlockMemory> ExternalFileCache::ClaimMissing(InputFile &file, idx_t block) {
 	auto &slot = file.blocks->Get(block);
-	auto &memory = MemoryOf(file, slot, file.BlockBytes(block));
+	auto &memory = MemoryOf(file, slot, block, file.BlockBytes(block));
 	if (!memory.TryClaim()) {
 		return nullptr;
 	}
@@ -1081,7 +1129,7 @@ FilePin ExternalFileCache::Pin(InputFile &file, idx_t block) {
 		if (PinLoaded(slot, size, result)) {
 			return result;
 		}
-		auto &memory = MemoryOf(file, slot, size);
+		auto &memory = MemoryOf(file, slot, block, size);
 		if (!memory.TryClaim()) {
 			WaitForLoad(memory);
 			continue;
@@ -1533,7 +1581,7 @@ FilePin ExternalFileCache::CreateBlock(InputFile &file, idx_t block) {
 	if (slot.load(std::memory_order_acquire)) {
 		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
 	}
-	auto &memory = MemoryOf(file, slot, file.BlockSize());
+	auto &memory = MemoryOf(file, slot, block, file.BlockSize());
 	if (!memory.TryClaim()) {
 		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
 	}

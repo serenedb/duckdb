@@ -33,6 +33,31 @@ struct EvictionQueue;
 
 using BlockLock = unique_lock<mutex>;
 
+//! The name of the bytes a block holds, the same in every process that reads them: a copy of an evicted block that
+//! has a name outlives the block, and a later block with the same name reads it instead of fetching the bytes again
+struct BlockCopyName {
+	uint64_t high = 0;
+	uint64_t low = 0;
+
+	//! Whether the block has a name; a block without one keeps its copy only while it lives
+	bool IsSet() const {
+		return high != 0 || low != 0;
+	}
+	bool operator==(const BlockCopyName &other) const {
+		return high == other.high && low == other.low;
+	}
+	//! 32 hex digits
+	DUCKDB_API string ToString() const;
+	//! Parses what ToString returns, and nothing else
+	DUCKDB_API static bool TryParse(const string &text, BlockCopyName &result);
+};
+
+struct BlockCopyNameHash {
+	size_t operator()(const BlockCopyName &name) const {
+		return name.low;
+	}
+};
+
 class ABSL_CACHELINE_ALIGNED BlockMemory : public enable_shared_from_this<BlockMemory> {
 	friend class BufferPool;
 	friend struct EvictionQueue;
@@ -236,6 +261,13 @@ public:
 	bool HasTemporaryFile() const {
 		return has_temporary_file;
 	}
+	//! The name of the bytes of a block that keeps a copy, set before the block is shared
+	const BlockCopyName &GetCopyName() const {
+		return copy_name;
+	}
+	void SetCopyName(const BlockCopyName &name) {
+		copy_name = name;
+	}
 	//! Returns the memory usage.
 	idx_t GetMemoryUsage() const {
 		return memory_usage;
@@ -317,6 +349,7 @@ private:
 	//! Set when the block handle went away while readers remained; the last reader releases it.
 	shared_ptr<BlockMemory> orphan_owner;
 	atomic<bool> has_temporary_file {false};
+	BlockCopyName copy_name;
 	//! The memory usage of the block when loaded.
 	//! Determines the memory to reserve when pinning/loading an unloaded block.
 	atomic<idx_t> memory_usage;

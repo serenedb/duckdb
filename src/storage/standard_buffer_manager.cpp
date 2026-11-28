@@ -8,6 +8,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/query_profiler.hpp"
+#include "duckdb/storage/block_copy_store.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/in_memory_block_manager.hpp"
 #include "duckdb/storage/temporary_file_manager.hpp"
@@ -193,12 +194,54 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterMemory(MemoryTag tag, idx
 }
 
 shared_ptr<BlockHandle> StandardBufferManager::RegisterUnloadedMemory(idx_t block_size,
-                                                                      DestroyBufferUpon destroy_buffer_upon) {
+                                                                      DestroyBufferUpon destroy_buffer_upon,
+                                                                      const BlockCopyName &copy_name) {
 	constexpr auto tag = MemoryTag::EXTERNAL_FILE_CACHE;
 	auto result = make_shared_ptr<BlockHandle>(*temp_block_manager, ++temporary_id, tag, FileBufferTypeOf(tag),
 	                                           destroy_buffer_upon, GetAllocSize(block_size));
-	result->GetMemory().SetOwner(result);
+	auto &memory = result->GetMemory();
+	memory.SetOwner(result);
+	// a copy outlives its block only unencrypted: the key of temporary files is the database's own
+	if (copy_name.IsSet() && memory.KeepsCopy() && !EncryptTemporaryFiles() && CopiesAllowed()) {
+		memory.SetCopyName(copy_name);
+		auto copies = FindCopies();
+		memory.SetHasTemporaryFile(copies && copies->Hold(copy_name));
+	}
 	return result;
+}
+
+bool StandardBufferManager::TemporaryDirectoryReachable() {
+	return HasTemporaryDirectory() && !FileSystem::GetFileSystem(db).IsDisabledForPath(temporary_directory.path);
+}
+
+bool StandardBufferManager::CopiesAllowed() {
+	return Settings::Get<ExternalFileCacheSpillSetting>(db) && TemporaryDirectoryReachable();
+}
+
+idx_t StandardBufferManager::CopyLimit() {
+	const auto limit = DBConfig::GetConfig(db).options.external_file_cache_spill_size;
+	return limit != DConstants::INVALID_INDEX
+	           ? limit
+	           : temporary_directory.handle->GetTempFile().GetMaxSwapSpace().GetIndex() / 2;
+}
+
+optional_ptr<BlockCopyStore> StandardBufferManager::FindCopies() {
+	{
+		lock_guard<mutex> guard(temporary_directory.lock);
+		if (temporary_directory.handle) {
+			return &temporary_directory.handle->GetCopies();
+		}
+	}
+	if (no_copies.load(std::memory_order_relaxed)) {
+		return nullptr;
+	}
+	auto &fs = FileSystem::GetFileSystem(db);
+	if (!fs.DirectoryExists(fs.JoinPath(temporary_directory.path, BlockCopyStore::DIRECTORY))) {
+		no_copies.store(true, std::memory_order_relaxed);
+		return nullptr;
+	}
+	RequireTemporaryDirectory();
+	return &temporary_directory.handle->GetCopies();
 }
 
 BufferHandle StandardBufferManager::PinNew(shared_ptr<BlockHandle> &block) {
@@ -520,7 +563,16 @@ void StandardBufferManager::Discard(BlockMemory &memory) {
 	unique_ptr<FileBuffer> buffer;
 	auto lock = memory.GetLock();
 	if (memory.HasTemporaryFile()) {
-		DeleteTemporaryFile(memory);
+		auto &name = memory.GetCopyName();
+		if (name.IsSet() && TemporaryDirectoryReachable()) {
+			// the bytes are no longer those of the file: no later block reads the copy
+			temporary_directory.handle->GetCopies().Remove(name);
+		} else if (name.IsSet()) {
+			// the configuration keeps the database out of the temporary directory, whose copies go least recently used
+			temporary_directory.handle->GetCopies().Release(name);
+		} else {
+			DeleteTemporaryFile(memory);
+		}
 		memory.SetHasTemporaryFile(false);
 	}
 	if (memory.GetState() == BlockState::BLOCK_LOADED) {
@@ -548,12 +600,22 @@ void StandardBufferManager::SetSwapLimit(optional_idx limit) {
 }
 
 vector<MemoryInformation> StandardBufferManager::GetMemoryUsageInfo() const {
+	idx_t named_copies = 0;
+	{
+		lock_guard<mutex> guard(temporary_directory.lock);
+		if (temporary_directory.handle) {
+			named_copies = temporary_directory.handle->GetCopies().Bytes();
+		}
+	}
 	vector<MemoryInformation> result;
 	for (idx_t k = 0; k < MEMORY_TAG_COUNT; k++) {
 		MemoryInformation info;
 		info.tag = MemoryTag(k);
 		info.size = buffer_pool.memory_usage.GetUsedMemory(MemoryTag(k), BufferPool::MemoryUsageCaches::FLUSH);
 		info.evicted_data = evicted_data_per_tag[k].load();
+		if (info.tag == MemoryTag::EXTERNAL_FILE_CACHE) {
+			info.evicted_data += named_copies;
+		}
 		info.evictions = buffer_pool.GetEvictions(MemoryTag(k));
 		info.temporary_writes = temporary_writes_per_tag[k].load(std::memory_order_relaxed);
 		info.temporary_reads = temporary_reads_per_tag[k].load(std::memory_order_relaxed);
@@ -579,6 +641,7 @@ void StandardBufferManager::RequireTemporaryDirectory() {
 		// temp directory has not been created yet: initialize it
 		temporary_directory.handle = make_uniq<TemporaryDirectoryHandle>(
 		    db, temporary_directory.path, temporary_directory.size_on_disk, temporary_directory.maximum_swap_space);
+		temporary_directory.handle->GetCopies().Load(CopyLimit());
 	}
 }
 
@@ -652,20 +715,26 @@ void StandardBufferManager::WriteTemporaryBuffer(QueryContext context, MemoryTag
 }
 
 bool StandardBufferManager::TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id,
-                                                  FileBuffer &buffer) {
-	if (!HasTemporaryDirectory() || !TemporaryFileManager::FitsGroupedFiles(buffer) ||
-	    !Settings::Get<ExternalFileCacheSpillSetting>(db)) {
+                                                  const BlockCopyName &copy_name, FileBuffer &buffer) {
+	if (!CopiesAllowed() || (!copy_name.IsSet() && !TemporaryFileManager::FitsGroupedFiles(buffer))) {
 		return false;
 	}
 	RequireTemporaryDirectory();
 	auto &temporary_files = temporary_directory.handle->GetTempFile();
+	auto &copies = temporary_directory.handle->GetCopies();
 	const auto swap_limit = temporary_files.GetMaxSwapSpace().GetIndex();
-	auto copy_limit = DBConfig::GetConfig(db).options.external_file_cache_spill_size;
-	if (copy_limit == DConstants::INVALID_INDEX) {
-		copy_limit = swap_limit / 2;
+	const auto copy_limit = CopyLimit();
+	const auto unnamed = copy_bytes.load(std::memory_order_relaxed);
+	if (copy_name.IsSet()) {
+		if (EncryptTemporaryFiles() ||
+		    !copies.TryWrite(context, copy_name, buffer, copy_limit - MinValue(copy_limit, unnamed))) {
+			return false;
+		}
+		temporary_writes_per_tag[uint8_t(tag)].fetch_add(1, std::memory_order_relaxed);
+		return true;
 	}
 	const auto size = buffer.AllocSize();
-	if (copy_bytes.load(std::memory_order_relaxed) + size > copy_limit ||
+	if (unnamed + copies.Bytes() + size > copy_limit ||
 	    temporary_files.GetTotalUsedSpaceInBytes() + size > swap_limit) {
 		return false;
 	}
@@ -681,6 +750,21 @@ unique_ptr<FileBuffer> StandardBufferManager::ReadTemporaryBuffer(QueryContext c
 	auto id = block.BlockId();
 	if (!temporary_directory.handle) {
 		throw InternalException("ReadTemporaryBuffer called but temporary directory has not been instantiated yet");
+	}
+	auto &memory = block.GetMemory();
+	if (memory.GetCopyName().IsSet()) {
+		auto &copies = temporary_directory.handle->GetCopies();
+		if (!TemporaryDirectoryReachable()) {
+			// the configuration keeps the database out of the temporary directory: the block reads its bytes again
+			copies.Release(memory.GetCopyName());
+			return nullptr;
+		}
+		auto buffer = copies.Read(context, memory.GetCopyName(), memory.GetBufferType(), memory.GetMemoryUsage(),
+		                          std::move(reusable_buffer));
+		if (buffer) {
+			temporary_reads_per_tag[uint8_t(tag)].fetch_add(1, std::memory_order_relaxed);
+		}
+		return buffer;
 	}
 	if (temporary_directory.handle->GetTempFile().HasTemporaryBuffer(id)) {
 		// This is a block that was offloaded to a regular .tmp file, the file contains blocks of a fixed size
@@ -769,6 +853,11 @@ void StandardBufferManager::DeleteTemporaryFile(BlockMemory &memory) {
 			// temporary directory was not initialized yet: nothing to delete
 			return;
 		}
+	}
+	if (memory.GetCopyName().IsSet()) {
+		// the copy outlives the block, for a later block of the same bytes
+		temporary_directory.handle->GetCopies().Release(memory.GetCopyName());
+		return;
 	}
 
 	// check if we should delete the file from the shared pool of files, or from the general file system

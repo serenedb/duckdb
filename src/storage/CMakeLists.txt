@@ -16,6 +16,7 @@ add_library_unity(
   temporary_memory_manager.cpp
   block.cpp
   block_allocator.cpp
+  block_copy_store.cpp
   shared_object_cache.cpp
   database_handle.cpp
   data_pointer.cpp

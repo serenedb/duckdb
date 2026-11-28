@@ -206,8 +206,9 @@ public:
 		return buffer_manager.GetTemporaryMemoryManager();
 	}
 
-	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) override {
-		return buffer_manager.RegisterUnloadedMemory(block_size, destroy_buffer_upon);
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon,
+	                                               const BlockCopyName &copy_name) override {
+		return buffer_manager.RegisterUnloadedMemory(block_size, destroy_buffer_upon, copy_name);
 	}
 	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) override {
 		return buffer_manager.LoadClaimed(context, handle);
@@ -224,8 +225,9 @@ public:
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);
 	}
-	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
-		return buffer_manager.TryWriteTemporaryCopy(context, tag, block_id, buffer);
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, const BlockCopyName &copy_name,
+	                           FileBuffer &buffer) override {
+		return buffer_manager.TryWriteTemporaryCopy(context, tag, block_id, copy_name, buffer);
 	}
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer) override {
