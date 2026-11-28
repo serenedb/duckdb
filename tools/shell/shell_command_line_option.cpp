@@ -114,8 +114,6 @@ MetadataResult SetPsqlUser(ShellState &state, const vector<string> &args) {
 }
 
 MetadataResult PsqlPasswordNoOp(ShellState &state, const vector<string> &args) {
-	// -w/-W are psql password-prompt knobs; serened has no auth yet so
-	// we accept them silently for psql script compatibility.
 	return MetadataResult::SUCCESS;
 }
 
@@ -505,9 +503,11 @@ static const CommandLineOption psql_options[] = {
     {"dbname", 1, "DBNAME", SetPsqlDbname, nullptr, "(psql) database name"},
     {"U", 1, "USERNAME", SetPsqlUser, nullptr, "(psql) user name (default: $PGUSER, $USER, or 'postgres')"},
     {"username", 1, "USERNAME", SetPsqlUser, nullptr, "(psql) user name"},
-    {"w", 0, "", PsqlPasswordNoOp, nullptr, "(psql) accepted, ignored (no authentication yet)"},
+    {"w", 0, "", PsqlPasswordNoOp, nullptr,
+     "(psql) accepted, ignored (the password comes from PGPASSWORD or ~/.pgpass)"},
     {"no-password", 0, "", PsqlPasswordNoOp, nullptr, "(psql) accepted, ignored"},
-    {"W", 0, "", PsqlPasswordNoOp, nullptr, "(psql) accepted, ignored (no authentication yet)"},
+    {"W", 0, "", PsqlPasswordNoOp, nullptr,
+     "(psql) accepted, ignored (the password comes from PGPASSWORD or ~/.pgpass)"},
     {"password", 0, "", PsqlPasswordNoOp, nullptr, "(psql) accepted, ignored"},
     // Help / version: psql spells them -? and -V.
     {"?", 0, "", EnableBatch, PrintHelpAndExit, "(psql) show help message"},
@@ -941,8 +941,8 @@ static void PrintPsqlSections(ShellState &state) {
 	      "server host (default: $PGHOST or \"localhost\";\npsql defaults to a Unix socket, serenedb psql to TCP)");
 	entry("  -p, --port=<PORT>", "server port (default: $PGPORT or \"5432\")");
 	entry("  -U, --username=<USERNAME>", "user name (default: $PGUSER, $USER, or \"postgres\")");
-	entry("  -w, --no-password", "accepted, ignored (no authentication yet)");
-	entry("  -W, --password", "accepted, ignored (no authentication yet)");
+	entry("  -w, --no-password", "accepted, ignored: never prompts, the password\ncomes from PGPASSWORD or ~/.pgpass");
+	entry("  -W, --password", "accepted, ignored: never prompts, the password\ncomes from PGPASSWORD or ~/.pgpass");
 	state.PrintF("\n");
 }
 
