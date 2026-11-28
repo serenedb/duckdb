@@ -304,9 +304,7 @@ idx_t ScanFile::FileSize() const {
 }
 
 void ScanFile::ReadInOrder() {
-	if (input->file) {
-		input->file->in_order = true;
-	}
+	input->ReadInOrder();
 }
 
 double ScanFile::Progress() const {

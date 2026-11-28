@@ -516,6 +516,9 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	if (copy && copy->options.header_match) {
 		MatchCopyHeader(head);
 	}
+	if (!source.sniffing) {
+		input->ReadInOrder();
+	}
 	idx_t range_bytes = DConstants::INVALID_INDEX;
 	if (!stream && !source.sniffing) {
 		const idx_t data_size = size - MinValue(start, size);

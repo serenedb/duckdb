@@ -140,6 +140,11 @@ public:
 		}
 		return *file;
 	}
+	void ReadInOrder() {
+		if (file) {
+			file->in_order = true;
+		}
+	}
 
 public:
 	shared_ptr<RowSource> host_stream;
