@@ -221,8 +221,7 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformSetRole(PEGTransformer 
 }
 
 // SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
-// Routes to the `session_authorization` setting. Same NoOverwrite shape as
-// SET ROLE.
+// Routes to the `session_authorization` setting.
 unique_ptr<SetStatement>
 PEGTransformerFactory::TransformSetSessionAuthorization(PEGTransformer &transformer,
                                                         unique_ptr<ParsedExpression> role_spec) {

@@ -198,6 +198,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 	}
 	case MergeActionType::MERGE_DELETE:
 	case MergeActionType::MERGE_DO_NOTHING:
+		// DELETE / DO NOTHING have nothing extra to bind
 		break;
 	default:
 		throw InternalException("Unsupported merge action type");

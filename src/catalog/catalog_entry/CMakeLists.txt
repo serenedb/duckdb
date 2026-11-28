@@ -9,7 +9,6 @@ add_library_unity(
   duck_index_entry.cpp
   duck_schema_entry.cpp
   duck_table_entry.cpp
-  function_entry.cpp
   type_catalog_entry.cpp
   index_catalog_entry.cpp
   macro_catalog_entry.cpp
