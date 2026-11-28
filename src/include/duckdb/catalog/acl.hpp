@@ -23,6 +23,7 @@
 namespace duckdb {
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
+constexpr idx_t BOOTSTRAP_ROLE_OID = 16384;
 
 DUCKDB_API AclMode FindPrivilege(std::string_view keyword);
 

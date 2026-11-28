@@ -125,8 +125,7 @@ public:
 		vector<Membership> member_of;
 	};
 
-	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
-	                 idx_t database_owner_role, idx_t bootstrap_role);
+	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
@@ -150,8 +149,6 @@ private:
 	unordered_map<idx_t, Node> nodes;
 	unordered_map<string, idx_t> by_name;
 	unordered_map<string, idx_t> database_owners;
-	idx_t database_owner_role;
-	idx_t bootstrap_role;
 	unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 

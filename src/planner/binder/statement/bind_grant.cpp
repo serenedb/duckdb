@@ -354,10 +354,9 @@ static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<RoleSpec> &n
 }
 
 static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, const string &action) {
-	const auto bootstrap = DBConfig::GetConfig(binder.context).bootstrap_role;
-	if (bootstrap != 0 && absl::c_linear_search(roles, bootstrap)) {
+	if (absl::c_linear_search(roles, BOOTSTRAP_ROLE_OID)) {
 		throw DependencyException("cannot %s owned by role %s because they are required by the database system", action,
-		                          binder.RoleName(bootstrap));
+		                          binder.RoleName(BOOTSTRAP_ROLE_OID));
 	}
 }
 

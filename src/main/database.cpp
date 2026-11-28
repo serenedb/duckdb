@@ -860,8 +860,6 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		    config.options.block_allocator_size);
 	}
 	config.replacement_scans = std::move(new_config.replacement_scans);
-	config.bootstrap_role = new_config.bootstrap_role;
-	config.database_owner_role = new_config.database_owner_role;
 	config.hidden_settings = std::move(new_config.hidden_settings);
 	if (new_config.callback_manager) {
 		config.callback_manager = std::move(new_config.callback_manager);

@@ -170,10 +170,8 @@ static idx_t NextSnapshotVersion() {
 	return ++versions;
 }
 
-SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
-                                   idx_t database_owner_role_p, idx_t bootstrap_role_p)
-    : version(NextSnapshotVersion()), nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
-      database_owner_role(database_owner_role_p), bootstrap_role(bootstrap_role_p) {
+SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p)
+    : version(NextSnapshotVersion()), nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)) {
 	vector<Role> roles_p;
 	roles_p.reserve(nodes.size());
 	for (auto &[oid, node] : nodes) {
@@ -211,7 +209,8 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		access.role = role.role;
 		access.options = role.options;
 		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
-		access.owns_builtins = role.role == bootstrap_role || absl::c_binary_search(role.closure, bootstrap_role);
+		access.owns_builtins =
+		    role.role == BOOTSTRAP_ROLE_OID || absl::c_binary_search(role.closure, BOOTSTRAP_ROLE_OID);
 		if (!role.closure.empty()) {
 			const auto words = FilterWords(role.closure.size());
 			const auto filter_begin = arena.size();
@@ -245,7 +244,8 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		}
 		roles.push_back(access);
 	}
-	if (!nodes.count(database_owner_role)) {
+	const auto database_owner = PredefinedRoleOid(RoleCapability::DatabaseOwner);
+	if (!nodes.count(database_owner)) {
 		return;
 	}
 	for (auto &database : database_owners) {
@@ -254,9 +254,9 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 			continue;
 		}
 		auto implied = nodes;
-		implied[owner].member_of.push_back(Membership {database_owner_role, database_owner_role, false, true, true});
-		derived.emplace(owner, make_shared_ptr<const SecuritySnapshot>(
-		                           std::move(implied), unordered_map<string, idx_t>(), 0, bootstrap_role));
+		implied[owner].member_of.push_back(Membership {database_owner, database_owner, false, true, true});
+		derived.emplace(owner,
+		                make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>()));
 	}
 }
 
@@ -277,9 +277,7 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &catalog, Cat
 	catalog.Scan(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
 	});
-	auto &config = DBConfig::GetConfig(catalog.GetDatabase());
-	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
-	                                               config.database_owner_role, config.bootstrap_role);
+	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners));
 }
 
 shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {

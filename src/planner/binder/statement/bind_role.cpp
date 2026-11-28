@@ -88,7 +88,7 @@ static void RequireAdminOf(ClientContext &context, const RoleAccess &caller, con
 
 static void CheckMembershipAuthorization(ClientContext &context, const RoleAccess &caller, const RoleEntry &granted,
                                          bool revoke) {
-	if (!revoke && granted.oid == DBConfig::GetConfig(context).database_owner_role) {
+	if (!revoke && granted.oid == PredefinedRoleOid(RoleCapability::DatabaseOwner)) {
 		throw NotImplementedException("role \"%s\" cannot have explicit members", granted.name.GetIdentifierName());
 	}
 	RequireAdminOf(context, caller, granted, revoke ? RoleChange::REVOKE : RoleChange::GRANT);
@@ -125,13 +125,12 @@ string Binder::RoleName(idx_t role) {
 static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, const RoleEntry &granted,
                                       const AlterRoleInfo &info) {
 	auto &context = binder.context;
-	const auto bootstrap = DBConfig::GetConfig(context).bootstrap_role;
 	const auto best_admin = [&](idx_t member) {
 		return context.security ? context.security->BestAdmin(member, granted.oid) : optional_idx();
 	};
 	if (info.granted_by.empty()) {
 		if (caller.is_superuser) {
-			return bootstrap;
+			return BOOTSTRAP_ROLE_OID;
 		}
 		auto grantor = best_admin(caller.role);
 		if (!grantor.IsValid()) {
@@ -154,7 +153,7 @@ static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, 
 		                       grantor_name),
 		    "permission denied to grant privileges as role \"%s\"", grantor_name);
 	}
-	if (!info.revoke && grantor.oid != bootstrap) {
+	if (!info.revoke && grantor.oid != BOOTSTRAP_ROLE_OID) {
 		auto admin = best_admin(grantor.oid);
 		if (!admin.IsValid() || admin.GetIndex() != grantor.oid) {
 			throw PermissionException::WithDetail(
@@ -199,7 +198,7 @@ static void BindMemberships(Binder &binder, const RoleAccess &caller, AlterRoleI
 		}
 		info.grantor_ids.push_back(ResolveMembershipGrantor(binder, caller, *granted, info));
 		for (auto &member : members) {
-			if (!info.revoke && member.get().oid == DBConfig::GetConfig(context).database_owner_role) {
+			if (!info.revoke && member.get().oid == PredefinedRoleOid(RoleCapability::DatabaseOwner)) {
 				throw NotImplementedException("role \"%s\" cannot be a member of any role",
 				                              member.get().name.GetIdentifierName());
 			}
@@ -291,11 +290,10 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 			CheckMembershipAuthorization(context, caller, *granted, false);
 		}
 	}
-	const auto database_owner = DBConfig::GetConfig(context).database_owner_role;
 	for (auto members : {&info.role_members, &info.admin_members}) {
 		for (auto &spec : *members) {
 			auto member = resolve(spec);
-			if (member && member->oid == database_owner) {
+			if (member && member->oid == PredefinedRoleOid(RoleCapability::DatabaseOwner)) {
 				throw NotImplementedException("role \"%s\" cannot be a member of any role",
 				                              member->name.GetIdentifierName());
 			}
