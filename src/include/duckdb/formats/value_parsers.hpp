@@ -13,6 +13,7 @@
 #include "duckdb/common/operator/double_cast_operator.hpp"
 #include "duckdb/common/operator/integer_cast_operator.hpp"
 #include "duckdb/common/swar.hpp"
+#include "duckdb/common/types/cast_helpers.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -150,54 +151,88 @@ template <class T>
 	return true;
 }
 
-template <class T>
-[[gnu::always_inline]] inline bool FastDecimal(const char *value, idx_t size, const char *limit, T &out, char separator,
-                                               uint8_t width, uint8_t scale) {
-	if (size == 0 || width > 18) {
+struct SplitNumber {
+	const char *digits;
+	idx_t remaining;
+	idx_t integer_digits;
+	idx_t fraction_digits;
+	bool negative;
+	bool dot;
+};
+
+[[gnu::always_inline]] inline bool SplitDecimalDigits(const char *value, idx_t size, const char *limit, char separator,
+                                                      SplitNumber &split) {
+	if (size == 0) {
 		return false;
 	}
 	idx_t pos = 0;
-	bool negative = false;
+	split.negative = false;
 	if (value[0] == '-') {
-		negative = true;
+		split.negative = true;
 		pos = 1;
 	}
-	const char *digits = value + pos;
-	const idx_t remaining = size - pos;
-	const idx_t integer_digits = FindByte(digits, remaining, limit, separator);
-	const bool dot = integer_digits < remaining;
-	const idx_t fraction_digits = dot ? remaining - integer_digits - 1 : 0;
-	if (integer_digits == 0 || integer_digits > static_cast<idx_t>(width - scale) || fraction_digits > scale ||
-	    (dot && fraction_digits == 0)) {
-		return false;
-	}
-	if (dot && remaining <= 9 && digits + 8 <= limit) {
+	split.digits = value + pos;
+	split.remaining = size - pos;
+	split.integer_digits = FindByte(split.digits, split.remaining, limit, separator);
+	split.dot = split.integer_digits < split.remaining;
+	split.fraction_digits = split.dot ? split.remaining - split.integer_digits - 1 : 0;
+	return split.integer_digits != 0 && !(split.dot && split.fraction_digits == 0);
+}
+
+[[gnu::always_inline]] inline bool JoinedDigits(const SplitNumber &split, const char *limit, uint64_t &out) {
+	const char *digits = split.digits;
+	if (split.dot && split.remaining <= 9 && digits + 8 <= limit) {
 		uint64_t chunk;
 		memcpy(&chunk, digits, sizeof(chunk));
-		const uint64_t integer_bytes = ~uint64_t(0) >> (64 - 8 * integer_digits);
+		const uint64_t integer_bytes = ~uint64_t(0) >> (64 - 8 * split.integer_digits);
 		chunk = (chunk & integer_bytes) | ((chunk >> 8) & ~integer_bytes);
-		if (remaining == 9) {
+		if (split.remaining == 9) {
 			chunk = (chunk & 0x00FFFFFFFFFFFFFFULL) | (static_cast<uint64_t>(static_cast<uint8_t>(digits[8])) << 56);
 		}
-		uint64_t joined;
-		if (!ChunkDigits(chunk, remaining - 1, joined)) {
-			return false;
-		}
-		const auto result = static_cast<int64_t>(joined * VALUE_POWERS_OF_TEN[scale - fraction_digits]);
-		out = static_cast<T>(negative ? -result : result);
-		return true;
+		return ChunkDigits(chunk, split.remaining - 1, out);
 	}
 	uint64_t integer;
-	if (!ParseDigits(digits, integer_digits, limit, integer)) {
+	if (!ParseDigits(digits, split.integer_digits, limit, integer)) {
 		return false;
 	}
 	uint64_t fraction = 0;
-	if (fraction_digits && !ParseDigits(digits + integer_digits + 1, fraction_digits, limit, fraction)) {
+	if (split.dot && !ParseDigits(digits + split.integer_digits + 1, split.fraction_digits, limit, fraction)) {
 		return false;
 	}
-	const auto result = static_cast<int64_t>(integer * VALUE_POWERS_OF_TEN[scale] +
-	                                         fraction * VALUE_POWERS_OF_TEN[scale - fraction_digits]);
-	out = static_cast<T>(negative ? -result : result);
+	out = integer * VALUE_POWERS_OF_TEN[split.fraction_digits] + fraction;
+	return true;
+}
+
+template <class T>
+[[gnu::always_inline]] inline bool FastDecimal(const char *value, idx_t size, const char *limit, T &out, char separator,
+                                               uint8_t width, uint8_t scale) {
+	SplitNumber split;
+	if (width > 18 || !SplitDecimalDigits(value, size, limit, separator, split) ||
+	    split.integer_digits > static_cast<idx_t>(width - scale) || split.fraction_digits > scale) {
+		return false;
+	}
+	uint64_t joined;
+	if (!JoinedDigits(split, limit, joined)) {
+		return false;
+	}
+	const auto result = static_cast<int64_t>(joined * VALUE_POWERS_OF_TEN[scale - split.fraction_digits]);
+	out = static_cast<T>(split.negative ? -result : result);
+	return true;
+}
+
+[[gnu::always_inline]] inline bool FastDouble(const char *value, idx_t size, const char *limit, double &out,
+                                              char separator) {
+	SplitNumber split;
+	if (!SplitDecimalDigits(value, size, limit, separator, split) ||
+	    split.integer_digits + split.fraction_digits > 15) {
+		return false;
+	}
+	uint64_t mantissa;
+	if (!JoinedDigits(split, limit, mantissa)) {
+		return false;
+	}
+	const double magnitude = static_cast<double>(mantissa) / NumericHelper::DOUBLE_POWERS_OF_TEN[split.fraction_digits];
+	out = split.negative ? -magnitude : magnitude;
 	return true;
 }
 
@@ -286,6 +321,24 @@ struct DecimalParser {
 	bool strict;
 };
 
+template <class T>
+struct DoubleParser {
+	[[gnu::always_inline]] bool operator()(const char *value, idx_t size, T &out) const {
+		if constexpr (std::is_same<T, double>::value) {
+			if (!strict && FastDouble(value, size, limit, out, separator)) {
+				return true;
+			}
+		}
+		return Slow(value, size, out);
+	}
+	[[gnu::noinline]] bool Slow(const char *value, idx_t size, T &out) const {
+		return TryDoubleCast<T>(value, size, out, strict, separator);
+	}
+	const char *limit;
+	char separator;
+	bool strict;
+};
+
 struct ValueParseContext {
 	const StrpTimeFormat *date_format;
 	const StrpTimeFormat *timestamp_format;
@@ -329,13 +382,9 @@ bool WithValueParser(const LogicalType &type, const ValueParseContext &context, 
 			return TryCast::Operation<string_t, uhugeint_t>(string_t(value, NumericCast<uint32_t>(size)), out, strict);
 		});
 	case LogicalTypeId::DOUBLE:
-		return fn(ParsedAs<double>(), [separator, strict](const char *value, idx_t size, double &out) {
-			return TryDoubleCast<double>(value, size, out, strict, separator);
-		});
+		return fn(ParsedAs<double>(), DoubleParser<double> {limit, separator, strict});
 	case LogicalTypeId::FLOAT:
-		return fn(ParsedAs<float>(), [separator, strict](const char *value, idx_t size, float &out) {
-			return TryDoubleCast<float>(value, size, out, strict, separator);
-		});
+		return fn(ParsedAs<float>(), DoubleParser<float> {limit, separator, strict});
 	case LogicalTypeId::DATE: {
 		const auto format = context.date_format;
 		if (!format->Empty()) {
