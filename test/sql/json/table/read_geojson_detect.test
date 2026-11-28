@@ -1,0 +1,84 @@
+# name: test/sql/json/table/read_geojson_detect.test
+# description: a GeoJSON file is read as a FeatureCollection only when its header leads to a "features" array; any other header is read as plain JSON
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT '{"na\"me": "x\"y", "bbox": [0, "a\"]b", {"k": "}"}], "count": 2 ,"geometry": null, "type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]}, "properties": {"k": 1}}]}' AS c) TO '{TEMP_DIR}/fc_members.geojson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT ST_AsText(geometry), k FROM read_json('{TEMP_DIR}/fc_members.geojson');
+----
+POINT (1 2)	1
+
+statement ok
+COPY (SELECT '[{"type": "Feature", "geometry": {"type": "Point", "coordinates": [3, 4]}, "properties": {"k": 2}}]' AS c) TO '{TEMP_DIR}/feature_array.geojson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT ST_AsText(geometry), k FROM read_json('{TEMP_DIR}/feature_array.geojson');
+----
+POINT (3 4)	2
+
+statement ok
+COPY (SELECT encode('   ')) TO '{TEMP_DIR}/blank.geojson' (FORMAT BLOB);
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/blank.geojson');
+----
+0
+
+statement ok
+COPY (SELECT '{"type": "FeatureCollection", "features": {}}' AS c) TO '{TEMP_DIR}/features_object.geojson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/features_object.geojson');
+----
+1
+
+statement ok
+COPY (SELECT encode('{"type":1}')) TO '{TEMP_DIR}/short_type.geojson' (FORMAT BLOB);
+
+query I
+SELECT "type" FROM read_json('{TEMP_DIR}/short_type.geojson');
+----
+1
+
+statement ok
+COPY (SELECT '{"x": 1}' AS c) TO '{TEMP_DIR}/no_features.geojson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT x FROM read_json('{TEMP_DIR}/no_features.geojson');
+----
+1
+
+foreach header {"count":1 {count:1} {"cou {"count" {"count"1} {"count": {"name":"abc {"name":"a\ {"bbox":[1,2 {"bbox":["abc
+
+statement ok
+COPY (SELECT encode('{header}')) TO '{TEMP_DIR}/cut_header.geojson' (FORMAT BLOB);
+
+statement error
+SELECT * FROM read_json('{TEMP_DIR}/cut_header.geojson');
+----
+<REGEX>:.*Malformed JSON in file.*
+
+endloop
+
+statement ok
+COPY (SELECT '{"count": 1' AS c) TO '{TEMP_DIR}/cut_line.geojson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_json('{TEMP_DIR}/cut_line.geojson');
+----
+<REGEX>:.*Malformed JSON in file.*
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"type":"Feature","geometry":{"type":"Point","coordinates":[1,2]},"properties":{"k":1}}'),
+	(2, '{"type":"Feature","geometry":{"type":"Point","coordinates":["x","y"]},"properties":{"k":2}}')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/bad_geometry.geojsonl' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT k, ST_AsText(geometry) FROM read_json('{TEMP_DIR}/bad_geometry.geojsonl');
+----
+<REGEX>:.*must contain only numbers.*

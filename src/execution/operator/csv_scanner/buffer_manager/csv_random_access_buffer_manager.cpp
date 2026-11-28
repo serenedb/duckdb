@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/csv_scanner/csv_random_access_buffer_manager.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
+#include "duckdb/formats/row_input.hpp"
 
 namespace duckdb {
 
@@ -11,13 +12,27 @@ CSVRandomAccessBufferManager::CSVRandomAccessBufferManager(ClientContext &contex
 }
 
 void CSVRandomAccessBufferManager::Initialize() {
-	const idx_t buffer_count = KnownBufferCount();
-	cached_buffers.resize(buffer_count);
-	cached_buffers[0] = make_shared_ptr<CSVBuffer>(context, buffer_size, KnownBufferSize(0), 0, 0, buffer_count == 1);
-	cached_buffers[0]->LoadRandomAccess(*file_handle);
+	cached_buffers.resize(KnownBufferCount());
+}
+
+shared_ptr<CSVBufferHandle> CSVRandomAccessBufferManager::MappedBuffer(const idx_t pos) const {
+	const idx_t count = KnownBufferCount();
+	if (pos >= count) {
+		return nullptr;
+	}
+	const idx_t begin = pos * buffer_size;
+	const idx_t size = KnownBufferSize(pos);
+	mapped->Want(begin, begin + size);
+	mapped->ReadInPlace(begin, begin + size);
+	auto memory = mapped->Memory();
+	return make_shared_ptr<CSVBufferHandle>(memory.buffer, memory.data + begin, size, buffer_size, pos + 1 == count,
+	                                        pos);
 }
 
 shared_ptr<CSVBufferHandle> CSVRandomAccessBufferManager::GetBuffer(const idx_t pos) {
+	if (mapped) {
+		return MappedBuffer(pos);
+	}
 	shared_ptr<CSVBuffer> buffer;
 	{
 		lock_guard<mutex> parallel_lock(main_mutex);
@@ -33,7 +48,7 @@ shared_ptr<CSVBufferHandle> CSVRandomAccessBufferManager::GetBuffer(const idx_t 
 	// the load of a fresh or evicted buffer runs inside Pin, under the buffer's own lock,
 	// so loads of different buffers proceed in parallel
 	bool has_seeked = false;
-	return buffer->Pin(*file_handle, has_seeked);
+	return buffer->Pin(*file_handle, has_seeked, sniffing);
 }
 
 CSVBufferResidency CSVRandomAccessBufferManager::GetBufferResidency(const idx_t pos,

@@ -1,0 +1,29 @@
+# name: test/sql/copy/csv/test_sniff_parallel_load.test
+# description: A buffer loaded in parallel pieces while sniffing holds the bytes of the file
+# group: [csv]
+
+statement ok
+SET threads = 4;
+
+statement ok
+COPY (SELECT i, md5(i::VARCHAR) AS h FROM range(100000) t(i)) TO '{TEMP_DIR}/parallel_load.csv' (HEADER true);
+
+query I
+SELECT count(*) FROM (SELECT i, h FROM read_csv('{TEMP_DIR}/parallel_load.csv') EXCEPT SELECT i, md5(i::VARCHAR) FROM range(100000) t(i));
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/parallel_load.csv');
+----
+100000
+
+query I
+SELECT count(*) FROM (SELECT i, h FROM read_csv('{TEMP_DIR}/parallel_load.csv', auto_detect = false, header = true, columns = {'i': 'BIGINT', 'h': 'VARCHAR'}) EXCEPT SELECT i, md5(i::VARCHAR) FROM range(100000) t(i));
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/parallel_load.csv', auto_detect = false, header = true, columns = {'i': 'BIGINT', 'h': 'VARCHAR'});
+----
+100000

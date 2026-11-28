@@ -81,6 +81,7 @@ public:
 	uint32_t key_bit_width = 0;
 
 	PrimitiveDictionary<SRC, TGT, OP> dictionary;
+	vector<uint32_t> dictionary_indices;
 	duckdb_parquet::Encoding::type encoding;
 };
 
@@ -89,10 +90,12 @@ class StandardWriterPageState : public ColumnWriterPageState {
 public:
 	explicit StandardWriterPageState(const idx_t total_value_count, const idx_t estimated_page_size,
 	                                 duckdb_parquet::Encoding::type encoding_p,
-	                                 const PrimitiveDictionary<SRC, TGT, OP> &dictionary_p)
+	                                 const PrimitiveDictionary<SRC, TGT, OP> &dictionary_p,
+	                                 const uint32_t *dictionary_indices_p)
 	    : encoding(encoding_p), dbp_initialized(false), dbp_encoder(total_value_count), dlba_initialized(false),
 	      dlba_encoder(total_value_count, estimated_page_size), bss_initialized(false),
-	      bss_encoder(total_value_count, sizeof(TGT)), dictionary(dictionary_p), dict_written_value(false),
+	      bss_encoder(total_value_count, sizeof(TGT)), dictionary(dictionary_p),
+	      dictionary_indices(dictionary_indices_p), dict_written_value(false),
 	      dict_bit_width(RleBpDecoder::ComputeBitWidthFromValueCount(dictionary.GetSize())),
 	      dict_encoder(dict_bit_width) {
 	}
@@ -108,6 +111,7 @@ public:
 	BssEncoder bss_encoder;
 
 	const PrimitiveDictionary<SRC, TGT, OP> &dictionary;
+	const uint32_t *dictionary_indices;
 	bool dict_written_value;
 	uint32_t dict_bit_width;
 	RleBpEncoder dict_encoder;
@@ -138,10 +142,20 @@ public:
 	                                                      idx_t page_idx) override {
 		auto &state = state_p.Cast<StandardColumnWriterState<SRC, TGT, OP>>();
 		const auto &page_info = state_p.page_info[page_idx];
+		const uint32_t *dictionary_indices = nullptr;
+		if (!state.dictionary_indices.empty()) {
+			idx_t first_value = 0;
+			for (idx_t i = 0; i < page_idx; i++) {
+				const auto &previous = state_p.page_info[i];
+				first_value += previous.row_count - (previous.empty_count + previous.null_count);
+			}
+			D_ASSERT(first_value <= state.dictionary_indices.size());
+			dictionary_indices = state.dictionary_indices.data() + first_value;
+		}
 		// The prepared page size bounds the string payload for DELTA_LENGTH_BYTE_ARRAY.
 		auto result = make_uniq<StandardWriterPageState<SRC, TGT, OP>>(
 		    page_info.row_count - (page_info.empty_count + page_info.null_count), page_info.estimated_page_size,
-		    state.encoding, state.dictionary);
+		    state.encoding, state.dictionary, dictionary_indices);
 		return std::move(result);
 	}
 
@@ -197,8 +211,33 @@ public:
 
 	void Analyze(ColumnWriterState &state_p, ColumnWriterState *parent, Vector &vector, idx_t count) override {
 		auto &state = state_p.Cast<StandardColumnWriterState<SRC, TGT, OP>>();
+		if (state.dictionary.IsFull()) {
+			return;
+		}
 
 		auto data_ptr = FlatVector::GetData<SRC>(vector);
+		const auto &validity = FlatVector::Validity(vector);
+
+		if (!parent) {
+			auto &indices = state.dictionary_indices;
+			const auto first_index = indices.size();
+			indices.resize(first_index + count);
+			auto index = indices.data() + first_index;
+			if (validity.CannotHaveNull()) {
+				for (idx_t i = 0; i < count; i++) {
+					*index++ = state.dictionary.template Insert<true>(data_ptr[i]);
+				}
+			} else {
+				for (idx_t i = 0; i < count; i++) {
+					if (validity.RowIsValid(i)) {
+						*index++ = state.dictionary.template Insert<true>(data_ptr[i]);
+					}
+				}
+			}
+			indices.resize(NumericCast<idx_t>(index - indices.data()));
+			return;
+		}
+
 		idx_t vector_index = 0;
 
 		const bool check_parent_empty = parent && !parent->is_empty.empty();
@@ -207,8 +246,6 @@ public:
 
 		const idx_t vcount =
 		    check_parent_empty ? parent->definition_levels.size() - state.definition_levels.size() : count;
-
-		const auto &validity = FlatVector::Validity(vector);
 
 		if (!check_parent_empty && validity.CannotHaveNull()) {
 			// Fast path
@@ -236,6 +273,7 @@ public:
 		auto &state = state_p.Cast<StandardColumnWriterState<SRC, TGT, OP>>();
 		if (state.dictionary.GetSize() == 0 || state.dictionary.IsFull()) {
 			state.dictionary.Reset();
+			state.dictionary_indices = vector<uint32_t>();
 			if (writer.GetParquetVersion() == ParquetVersion::V1) {
 				// Can't do the cool stuff for V1
 				state.encoding = duckdb_parquet::Encoding::PLAIN;
@@ -369,7 +407,9 @@ private:
 				if (STATS_PER_OCCURRENCE) {
 					OP::template HandleStats<SRC, TGT>(stats, OP::template Operation<SRC, TGT>(src_value));
 				}
-				const auto value_index = page_state.dictionary.GetIndex(src_value);
+				const auto value_index = page_state.dictionary_indices ? *page_state.dictionary_indices++
+				                                                       : page_state.dictionary.GetIndex(src_value);
+				D_ASSERT(value_index == page_state.dictionary.GetIndex(src_value));
 				page_state.dict_encoder.WriteValue(temp_writer, value_index);
 			}
 			break;

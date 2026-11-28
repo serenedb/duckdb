@@ -29,6 +29,20 @@ select json_keys('{"duck": {"key1": 42}, "goose": {"key1": 42, "key2": 43}}', ['
 ----
 [[key1], [key1, key2]]
 
+query T
+select json_keys('{"duck": {"key1": 42}, "goose": {"key1": 42, "key2": 43}}', p) from (values (1, '$.duck'), (2, '$.goose'), (3, '$.swan')) t(i, p) order by i
+----
+[key1]
+[key1, key2]
+NULL
+
+query T
+select json_keys(j, p) from (values (1, '{"duck": {"key1": 42}}', '$.duck'), (2, '{"goose": {"key2": 43}}', '$.goose'), (3, '{"swan": 1}', '$.duck')) t(i, j, p) order by i
+----
+[key1]
+[key2]
+NULL
+
 query TT
 select typeof(json_keys('{"duck": {"key1": 42}, "goose": {"key1": 42, "key2": 43}}', '$.*')),
        json_keys('{"duck": {"key1": 42}, "goose": {"key1": 42, "key2": 43}}', '$.*')

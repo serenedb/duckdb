@@ -51,8 +51,9 @@ static ClientContext &RequireClientContext(QueryContext context) {
 }
 
 AsyncFileWriter::AsyncFileWriter(QueryContext context_p, FileSystem &fs_p, const string &path_p,
-                                 const FileOpenFlags &open_flags)
-    : context(context_p), client_context(RequireClientContext(context_p)), fs(fs_p), path(path_p) {
+                                 const FileOpenFlags &open_flags, bool local_in_place_p)
+    : context(context_p), client_context(RequireClientContext(context_p)), fs(fs_p), path(path_p),
+      local_in_place(local_in_place_p) {
 	handle = fs.OpenFile(path, open_flags | FileLockType::WRITE_LOCK);
 
 	try {
@@ -312,7 +313,7 @@ FileWriteMode AsyncFileWriter::GetWriteMode() {
 }
 
 bool AsyncFileWriter::WritesMayBlock() {
-	return handle->WritesMayBlock();
+	return !(local_in_place && IsLocalFile()) && handle->WritesMayBlock();
 }
 
 bool AsyncFileWriter::IsLocalFile() {

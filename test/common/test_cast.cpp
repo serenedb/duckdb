@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/types.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/vector.hpp"
 
@@ -329,4 +330,21 @@ TEST_CASE("Test casting to double", "[cast]") {
 	    "1 . 2", "1. 2",    "1.2 e20",
 	    "+"};
 	TestStringCastDouble<double>(working_values, expected_values, broken_values);
+}
+
+TEST_CASE("UUID text parses from a C string, and strictly only with its dashes in place", "[cast]") {
+	const string valid = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+	hugeint_t expected;
+	REQUIRE(BaseUUID::FromString(std::string_view(valid), expected, true));
+	hugeint_t from_c_string;
+	REQUIRE(BaseUUID::FromCString(valid.c_str(), valid.size(), from_c_string));
+	REQUIRE(from_c_string == expected);
+	for (const string moved : {"a0eebc99-9c0-b4ef8-bb6d-6bb9bd380a11", "a0eebc99-9c0b-4ef-8bb6d-6bb9bd380a11",
+	                           "a0eebc99-9c0b-4ef8-bb6-d6bb9bd380a11"}) {
+		hugeint_t lenient;
+		REQUIRE(BaseUUID::FromString(std::string_view(moved), lenient, false));
+		REQUIRE(lenient == expected);
+		hugeint_t strict;
+		REQUIRE(!BaseUUID::FromString(std::string_view(moved), strict, true));
+	}
 }

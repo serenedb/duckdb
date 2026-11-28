@@ -3,7 +3,6 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
-#include "duckdb/common/serializer/async_file_writer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/serializer/write_stream.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -12,6 +11,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_schema_discovery.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
+#include "duckdb/formats/copy_file_writer.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/function/function_binder.hpp"
@@ -242,21 +242,10 @@ public:
 	CSVWriterState writer_local_state;
 };
 
-static unique_ptr<AsyncFileWriter> OpenCSVFileWriter(ClientContext &context, const string &file_path,
-                                                     FileCompressionType compression) {
-	auto &fs = FileSystem::GetFileSystem(context);
-	auto flags = FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW | std::move(compression);
-	if (!fs.FileExists(file_path) && !fs.IsPipe(file_path)) {
-		flags |= FileFlags::FILE_FLAGS_EXCLUSIVE_CREATE;
-	}
-	return make_uniq<AsyncFileWriter>(QueryContext(context), fs, file_path, flags);
-}
-
 struct GlobalWriteCSVData : public GlobalFunctionData {
 	GlobalWriteCSVData(CSVReaderOptions &options, ClientContext &context, const string &file_path,
-	                   FileCompressionType compression_p)
-	    : file_writer(OpenCSVFileWriter(context, file_path, std::move(compression_p))), writer(options, *file_writer),
-	      compression(file_writer->GetFileCompressionType()) {
+	                   const FileCompressionType &compression)
+	    : file(context, file_path, compression, CSVWriterOptions(options).newline), writer(options, file) {
 	}
 
 	CSVWriter &GetWriter() {
@@ -264,10 +253,7 @@ struct GlobalWriteCSVData : public GlobalFunctionData {
 	}
 
 	idx_t FileSize() {
-		if (compression == FileCompressionType::UNCOMPRESSED) {
-			return writer.BytesWritten();
-		}
-		return writer.FileSize();
+		return file.FileSize();
 	}
 
 	unique_ptr<CSVWriterState> GetLocalState(ClientContext &context, const idx_t flush_size) {
@@ -295,13 +281,12 @@ struct GlobalWriteCSVData : public GlobalFunctionData {
 	}
 
 	void Close() {
-		file_writer->Close();
+		file.Close();
 	}
 
 private:
-	unique_ptr<AsyncFileWriter> file_writer;
+	CopyFileWriter file;
 	CSVWriter writer;
-	FileCompressionType compression;
 	mutex local_state_lock;
 	vector<unique_ptr<CSVWriterState>> local_states;
 };
@@ -376,18 +361,6 @@ void WriteCSVFinalize(ClientContext &context, FunctionData &bind_data, GlobalFun
 }
 
 //===--------------------------------------------------------------------===//
-// Execution Mode
-//===--------------------------------------------------------------------===//
-CopyFunctionExecutionMode WriteCSVExecutionMode(bool preserve_insertion_order, bool supports_batch_index) {
-	if (!preserve_insertion_order) {
-		return CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
-	}
-	if (supports_batch_index) {
-		return CopyFunctionExecutionMode::BATCH_COPY_TO_FILE;
-	}
-	return CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
-}
-//===--------------------------------------------------------------------===//
 // Prepare Batch
 //===--------------------------------------------------------------------===//
 struct WriteCSVBatchData : public PreparedBatchData {
@@ -425,6 +398,7 @@ unique_ptr<PreparedBatchData> WriteCSVPrepareBatch(ClientContext &context, Funct
 	for (auto &chunk : collection->Chunks()) {
 		WriteCSVChunkInternal(global_state.GetWriter(), *batch->writer_local_state, cast_chunk, chunk, executor);
 	}
+	global_state.GetWriter().Compress(*batch->writer_local_state);
 	return std::move(batch);
 }
 
@@ -456,7 +430,7 @@ void CSVCopyFunction::RegisterFunction(BuiltinFunctions &set) {
 	info.copy_to_sink = WriteCSVSink;
 	info.copy_to_combine = WriteCSVCombine;
 	info.copy_to_finalize = WriteCSVFinalize;
-	info.execution_mode = WriteCSVExecutionMode;
+	info.execution_mode = CopyFunction::ParallelUnlessOrdered;
 
 	info.prepare_batch = WriteCSVPrepareBatch;
 	info.flush_batch = WriteCSVFlushBatch;

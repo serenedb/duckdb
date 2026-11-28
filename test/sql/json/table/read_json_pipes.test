@@ -1,0 +1,41 @@
+# name: test/sql/json/table/read_json_pipes.test
+# description: read_json reads a character device as a pipe: what detection read is replayed to the scan, and a record past maximum_object_size is refused while sampling, while scanning and while streaming
+# group: [table]
+
+require json
+
+require notwindows
+
+statement ok
+SET threads = 1;
+
+query I
+SELECT count(*) FROM read_json('/dev/null');
+----
+0
+
+statement error
+SELECT * FROM read_json('/dev/zero');
+----
+"maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>33554432 bytes).
+
+statement ok
+SET threads = 2;
+
+query I
+SELECT count(*) FROM read_ndjson('/dev/null', columns := {a: 'INTEGER', b: 'INTEGER'});
+----
+0
+
+statement error
+SELECT * FROM read_ndjson('/dev/zero', columns := {a: 'INTEGER', b: 'INTEGER'});
+----
+"maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>25165824 bytes).
+
+statement ok
+SET threads = 8;
+
+statement error
+SELECT * FROM read_ndjson('/dev/zero', columns := {a: 'INTEGER', b: 'INTEGER'});
+----
+"maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>25165824 bytes).

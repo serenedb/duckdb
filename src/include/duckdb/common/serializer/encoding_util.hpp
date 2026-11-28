@@ -38,28 +38,45 @@ struct EncodingUtil {
 		return offset;
 	}
 
-	// Decode unsigned integer, returns the number of bytes read
 	template <class T>
-	static idx_t DecodeUnsignedLEB128(const_data_ptr_t source, T &result) {
-		constexpr idx_t max_shift = sizeof(T) * 8;
+	static idx_t TryDecodeUnsignedLEB128(const_data_ptr_t source, idx_t available, T &result) {
 		static_assert(std::is_integral<T>::value, "Must be integral");
 		static_assert(std::is_unsigned<T>::value, "Must be unsigned");
 		static_assert(sizeof(T) <= sizeof(uint64_t), "Must be uint64_t or smaller");
 
 		result = 0;
-		idx_t shift = 0;
-		idx_t offset = 0;
-		uint8_t byte;
-		do {
-			byte = source[offset++];
-			if (shift >= max_shift) {
-				throw IOException("Failed to decode LEB128 integer: data may be corrupt");
+		const idx_t limit = available < MaxLEB128Size<T>() ? available : MaxLEB128Size<T>();
+		for (idx_t offset = 0; offset < limit; offset++) {
+			const uint8_t byte = source[offset];
+			result |= static_cast<T>(byte & 0x7F) << (7 * offset);
+			if (!(byte & 0x80)) {
+				return offset + 1;
 			}
-			result |= static_cast<T>(byte & 0x7F) << shift;
-			shift += 7;
-		} while (byte & 0x80);
+		}
+		return 0;
+	}
 
-		return offset;
+	// Decode unsigned integer, returns the number of bytes read
+	template <class T>
+	static idx_t DecodeUnsignedLEB128(const_data_ptr_t source, T &result) {
+		const auto size = TryDecodeUnsignedLEB128(source, MaxLEB128Size<T>(), result);
+		if (size == 0) {
+			throw IOException("Failed to decode LEB128 integer: data may be corrupt");
+		}
+		return size;
+	}
+
+	template <class T>
+	static typename std::make_signed<T>::type ZigZagDecode(T value) {
+		static_assert(std::is_unsigned<T>::value, "Must be unsigned");
+		return static_cast<typename std::make_signed<T>::type>((value >> 1) ^ (~(value & 1) + 1));
+	}
+
+	template <class T>
+	static typename std::make_unsigned<T>::type ZigZagEncode(T value) {
+		static_assert(std::is_signed<T>::value, "Must be signed");
+		using unsigned_type = typename std::make_unsigned<T>::type;
+		return (static_cast<unsigned_type>(value) << 1) ^ static_cast<unsigned_type>(value >> (sizeof(T) * 8 - 1));
 	}
 
 	// Encode signed integer, returns the number of bytes written

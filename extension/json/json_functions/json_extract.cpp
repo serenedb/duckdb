@@ -2,23 +2,43 @@
 
 namespace duckdb {
 
-static inline optional<string_t> ExtractFromVal(yyjson_val *val, yyjson_alc *alc, Vector &) {
-	return JSONCommon::WriteVal<yyjson_val>(val, alc);
+static inline optional<string_t> ExtractFromVal(const JSONNode *val, JSONFunctionLocalState &lstate, Vector &result) {
+	return JSONCommon::WriteVal(*val, lstate.writer, result);
 }
 
-static inline optional<string_t> ExtractStringFromVal(yyjson_val *val, yyjson_alc *alc, Vector &) {
-	switch (yyjson_get_tag(val)) {
-	case YYJSON_TYPE_NULL | YYJSON_SUBTYPE_NONE:
+static inline optional<string_t> ExtractStringFromVal(const JSONNode *val, JSONFunctionLocalState &lstate,
+                                                      Vector &result) {
+	switch (val->type) {
+	case JSONValueType::JSON_NULL:
 		return {};
-	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NOESC:
-	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
-		return string_t(unsafe_yyjson_get_str(val), unsafe_yyjson_get_len(val));
+	case JSONValueType::STRING:
+		return StringVector::AddString(result, val->GetString());
 	default:
-		return JSONCommon::WriteVal<yyjson_val>(val, alc);
+		return JSONCommon::WriteVal(*val, lstate.writer, result);
 	}
 }
 
 static void ExtractFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	const auto &info = func_expr.BindInfo()->Cast<JSONReadFunctionData>();
+	if (info.constant && info.writable) {
+		auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
+		JSONParseError error;
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](string_t input) -> optional<string_t> {
+			    bool found;
+			    if (!lstate.parser.WritePath(input.GetData(), input.GetSize(), info.steps, lstate.writer, found,
+			                                 error)) {
+				    JSONCommon::ThrowParseError(input.GetData(), input.GetSize(), error);
+			    }
+			    if (!found) {
+				    return nullopt;
+			    }
+			    auto text = lstate.writer.View();
+			    return StringVector::AddString(result, text.data(), text.size());
+		    });
+		return;
+	}
 	JSONExecutors::BinaryExecute<string_t>(args, state, result, ExtractFromVal);
 }
 

@@ -1,0 +1,67 @@
+# name: test/sql/copy/parquet/parquet_mapped_file.test
+# description: A local Parquet file of 2 MiB or more is scanned in place, compressed or not: its rows read as from a copy, and its reads are logged
+# group: [parquet]
+
+require parquet
+
+require noforcestorage
+
+statement ok
+SET logging_storage = 'memory';
+
+foreach codec uncompressed snappy
+
+statement ok
+COPY (SELECT i, i % 7 AS k, md5(i::VARCHAR) AS s FROM range(300000) t(i))
+TO '__TEST_DIR__/mapped_${codec}.parquet' (FORMAT parquet, COMPRESSION ${codec}, ROW_GROUP_SIZE 100000);
+
+query I
+SELECT size >= 2097152 FROM read_blob('__TEST_DIR__/mapped_${codec}.parquet');
+----
+true
+
+query III
+SELECT count(*), sum(i), count(DISTINCT s) FROM read_parquet('__TEST_DIR__/mapped_${codec}.parquet');
+----
+300000	44999850000	300000
+
+query II
+SELECT count(*), sum(i) FROM read_parquet('__TEST_DIR__/mapped_${codec}.parquet') WHERE k = 3;
+----
+42857	6428507143
+
+query I
+SELECT count(*) FROM (
+  FROM read_parquet('__TEST_DIR__/mapped_${codec}.parquet')
+  EXCEPT ALL
+  SELECT i, i % 7 AS k, md5(i::VARCHAR) AS s FROM range(300000) t(i));
+----
+0
+
+endloop
+
+statement ok
+CALL enable_logging('FileSystem');
+
+statement ok
+SELECT sum(i) FROM read_parquet('__TEST_DIR__/mapped_uncompressed.parquet');
+
+query I
+SELECT sum(bytes) > 2000000 FROM duckdb_logs_parsed('FileSystem')
+WHERE op = 'READ' AND path LIKE '%mapped_uncompressed.parquet%';
+----
+true
+
+statement ok
+CALL disable_logging();
+
+statement ok
+SET cache_local_files = true;
+
+query II
+SELECT count(*), sum(i) FROM read_parquet('__TEST_DIR__/mapped_uncompressed.parquet');
+----
+300000	44999850000
+
+statement ok
+RESET cache_local_files;

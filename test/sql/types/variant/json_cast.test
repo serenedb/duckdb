@@ -208,3 +208,25 @@ select {'var': a::JSON}::VARIANT from base;
 {'var': NULL}
 {'var': {'a': NULL, 'b': [1, 2, true, hello]}}
 {'var': true}
+
+statement ok
+CREATE TABLE union_json(u UNION(j JSON, i INTEGER));
+
+statement ok
+INSERT INTO union_json VALUES (union_value(j := '{"b": [1, 2, "x"], "a": {"c": true}}'::JSON)), (union_value(i := 42));
+
+query I
+SELECT u::VARIANT FROM union_json;
+----
+{'a': {'c': true}, 'b': [1, 2, x]}
+42
+
+query I
+SELECT union_value(j := '[1, null, 2]'::JSON)::VARIANT;
+----
+[1, NULL, 2]
+
+query I
+SELECT union_value(j := '{"a": null, "b": 1}'::JSON)::VARIANT;
+----
+{'a': NULL, 'b': 1}

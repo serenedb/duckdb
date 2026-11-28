@@ -9,10 +9,10 @@ has a new line' from range (1000000);
 statement ok
 COPY T TO '{TEST_DIR}/test_null_padding_quoted_new_line.csv' (FORMAT CSV , FORCE_QUOTE *);
 
-statement error
+query I
 select count(*) FROM read_csv('{TEST_DIR}/test_null_padding_quoted_new_line.csv', null_padding = true)
 ----
-The parallel scanner does not support null_padding in conjunction with quoted new lines. Please disable the parallel csv reader with parallel=false
+1000000
 
 query I
 select count(*) FROM read_csv('{TEST_DIR}/test_null_padding_quoted_new_line.csv')

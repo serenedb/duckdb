@@ -3,6 +3,7 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/common/stack_depth.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "json_executors.hpp"
 #include "json_geojson.hpp"
 #include "json_scan.hpp"
@@ -37,12 +38,6 @@ JSONStructureNode::JSONStructureNode() : count(0), null_count(0) {
 
 JSONStructureNode::JSONStructureNode(const char *key_ptr, const size_t key_len) : JSONStructureNode() {
 	key = make_uniq<string>(key_ptr, key_len);
-}
-
-JSONStructureNode::JSONStructureNode(yyjson_val *key_p, yyjson_val *val_p, const bool ignore_errors,
-                                     const bool detect_geojson)
-    : JSONStructureNode(unsafe_yyjson_get_str(key_p), unsafe_yyjson_get_len(key_p)) {
-	JSONStructure::ExtractStructure(val_p, *this, ignore_errors, detect_geojson);
 }
 
 static void SwapJSONStructureNode(JSONStructureNode &a, JSONStructureNode &b) noexcept {
@@ -154,7 +149,7 @@ void JSONStructureNode::InitializeCandidateTypes(const idx_t max_depth, const bo
 	}
 }
 
-void JSONStructureNode::RefineCandidateTypes(yyjson_val *vals[], const idx_t val_count, Vector &string_vector,
+void JSONStructureNode::RefineCandidateTypes(const JSONNode *vals[], const idx_t val_count, Vector &string_vector,
                                              ArenaAllocator &allocator, MutableDateFormatMap &date_format_map,
                                              const bool user_specified_timestamp_format) {
 	if (descriptions.size() != 1) {
@@ -180,7 +175,7 @@ void JSONStructureNode::RefineCandidateTypes(yyjson_val *vals[], const idx_t val
 	}
 }
 
-void JSONStructureNode::RefineCandidateTypesArray(yyjson_val *vals[], const idx_t val_count, Vector &string_vector,
+void JSONStructureNode::RefineCandidateTypesArray(const JSONNode *vals[], const idx_t val_count, Vector &string_vector,
                                                   ArenaAllocator &allocator, MutableDateFormatMap &date_format_map,
                                                   const bool user_specified_timestamp_format) {
 	D_ASSERT(descriptions.size() == 1 && descriptions[0].type == LogicalTypeId::LIST);
@@ -190,22 +185,20 @@ void JSONStructureNode::RefineCandidateTypesArray(yyjson_val *vals[], const idx_
 
 	idx_t total_list_size = 0;
 	for (idx_t i = 0; i < val_count; i++) {
-		if (vals[i] && !unsafe_yyjson_is_null(vals[i])) {
-			D_ASSERT(yyjson_is_arr(vals[i]));
-			total_list_size += unsafe_yyjson_get_len(vals[i]);
+		if (vals[i] && vals[i]->type != JSONValueType::JSON_NULL) {
+			D_ASSERT(vals[i]->type == JSONValueType::ARRAY);
+			total_list_size += vals[i]->size;
 		}
 	}
 
 	idx_t offset = 0;
-	auto child_vals =
-	    reinterpret_cast<yyjson_val **>(allocator.AllocateAligned(total_list_size * sizeof(yyjson_val *)));
+	auto child_vals = reinterpret_cast<const JSONNode **>(
+	    allocator.AllocateAligned(MaxValue<idx_t>(total_list_size, 1) * sizeof(const JSONNode *)));
 
-	size_t idx, max;
-	yyjson_val *child_val;
 	for (idx_t i = 0; i < val_count; i++) {
-		if (vals[i] && !unsafe_yyjson_is_null(vals[i])) {
-			yyjson_arr_foreach(vals[i], idx, max, child_val) {
-				child_vals[offset++] = child_val;
+		if (vals[i] && vals[i]->type != JSONValueType::JSON_NULL) {
+			for (auto &child_val : vals[i]->Elements()) {
+				child_vals[offset++] = &child_val;
 			}
 		}
 	}
@@ -213,39 +206,36 @@ void JSONStructureNode::RefineCandidateTypesArray(yyjson_val *vals[], const idx_
 	                           user_specified_timestamp_format);
 }
 
-void JSONStructureNode::RefineCandidateTypesObject(yyjson_val *vals[], const idx_t val_count, Vector &string_vector,
+void JSONStructureNode::RefineCandidateTypesObject(const JSONNode *vals[], const idx_t val_count, Vector &string_vector,
                                                    ArenaAllocator &allocator, MutableDateFormatMap &date_format_map,
                                                    const bool user_specified_timestamp_format) {
 	D_ASSERT(descriptions.size() == 1 && descriptions[0].type == LogicalTypeId::STRUCT);
 	auto &desc = descriptions[0];
 
 	const idx_t child_count = desc.children.size();
-	vector<yyjson_val **> child_vals;
+	vector<const JSONNode **> child_vals;
 	child_vals.reserve(child_count);
 	for (idx_t child_idx = 0; child_idx < child_count; child_idx++) {
-		child_vals.emplace_back(
-		    reinterpret_cast<yyjson_val **>(allocator.AllocateAligned(val_count * sizeof(yyjson_val *))));
+		child_vals.emplace_back(reinterpret_cast<const JSONNode **>(
+		    allocator.AllocateAligned(MaxValue<idx_t>(val_count, 1) * sizeof(const JSONNode *))));
 	}
 
-	const auto found_keys = reinterpret_cast<bool *>(allocator.AllocateAligned(sizeof(bool) * child_count));
+	const auto found_keys =
+	    reinterpret_cast<bool *>(allocator.AllocateAligned(sizeof(bool) * MaxValue<idx_t>(child_count, 1)));
 
-	const auto &key_map = desc.key_map;
-	size_t idx, max;
-	yyjson_val *child_key, *child_val;
 	for (idx_t i = 0; i < val_count; i++) {
-		if (vals[i] && !unsafe_yyjson_is_null(vals[i])) {
+		if (vals[i] && vals[i]->type != JSONValueType::JSON_NULL) {
 			idx_t found_key_count = 0;
 			memset(found_keys, false, child_count);
 
-			D_ASSERT(yyjson_is_obj(vals[i]));
-			yyjson_obj_foreach(vals[i], idx, max, child_key, child_val) {
-				D_ASSERT(yyjson_is_str(child_key));
-				const auto key_ptr = unsafe_yyjson_get_str(child_key);
-				const auto key_len = unsafe_yyjson_get_len(child_key);
-				auto it = key_map.find({key_ptr, key_len});
-				D_ASSERT(it != key_map.end());
-				const auto child_idx = it->second;
-				child_vals[child_idx][i] = child_val;
+			D_ASSERT(vals[i]->type == JSONValueType::OBJECT);
+			idx_t next = 0;
+			for (auto &child_key : vals[i]->Keys()) {
+				const auto found = desc.FindChild(child_key.str, child_key.size, next);
+				D_ASSERT(found.IsValid());
+				const auto child_idx = found.GetIndex();
+				next = child_idx + 1;
+				child_vals[child_idx][i] = &child_key + 1;
 				found_key_count += !found_keys[child_idx];
 				found_keys[child_idx] = true;
 			}
@@ -271,7 +261,7 @@ void JSONStructureNode::RefineCandidateTypesObject(yyjson_val *vals[], const idx
 	}
 }
 
-void JSONStructureNode::RefineCandidateTypesString(yyjson_val *vals[], const idx_t val_count, Vector &string_vector,
+void JSONStructureNode::RefineCandidateTypesString(const JSONNode *vals[], const idx_t val_count, Vector &string_vector,
                                                    MutableDateFormatMap &date_format_map,
                                                    const bool user_specified_timestamp_format) {
 	D_ASSERT(descriptions.size() == 1 && descriptions[0].type == LogicalTypeId::VARCHAR);
@@ -359,6 +349,27 @@ static void UpdateTimestampOffsetState(JSONStructureDescription &description, co
 	}
 }
 
+static bool StringsParse(const LogicalType &type, Vector &string_vector, Vector &result_vector, const idx_t count) {
+	if (!HasValueParser(type)) {
+		string error_message;
+		return VectorOperations::DefaultTryCast(string_vector, result_vector, count, &error_message, true);
+	}
+	static const StrpTimeFormat NO_FORMAT;
+	const auto strings = FlatVector::GetData<string_t>(string_vector);
+	const auto &validity = FlatVector::Validity(string_vector);
+	for (idx_t i = 0; i < count; i++) {
+		if (!validity.RowIsValid(i)) {
+			continue;
+		}
+		const auto &value = strings[i];
+		const ValueParseContext context {&NO_FORMAT, &NO_FORMAT, value.GetData() + value.GetSize(), '.', true};
+		if (!ValueParses(type, value.GetData(), value.GetSize(), context)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void JSONStructureNode::EliminateCandidateTypes(const idx_t vec_count, Vector &string_vector,
                                                 MutableDateFormatMap &date_format_map,
                                                 const bool user_specified_timestamp_format) {
@@ -405,13 +416,10 @@ void JSONStructureNode::EliminateCandidateTypes(const idx_t vec_count, Vector &s
 			} else {
 				candidate_types.pop_back();
 			}
+		} else if (!StringsParse(type, string_vector, result_vector, vec_count)) {
+			candidate_types.pop_back();
 		} else {
-			string error_message;
-			if (!VectorOperations::DefaultTryCast(string_vector, result_vector, vec_count, &error_message, true)) {
-				candidate_types.pop_back();
-			} else {
-				return;
-			}
+			return;
 		}
 	}
 }
@@ -504,162 +512,138 @@ JSONStructureNode &JSONStructureDescription::GetOrCreateChild() {
 }
 
 JSONStructureNode &JSONStructureDescription::GetOrCreateChild(const char *key_ptr, const size_t key_size) {
-	// Check if there is already a child with the same key
-	const JSONKey temp_key {key_ptr, key_size};
-	const auto it = key_map.find(temp_key);
-	if (it != key_map.end()) {
-		return children[it->second]; // Found it
-	}
+	return children[GetOrCreateChildIndex(key_ptr, key_size, children.size())];
+}
 
-	// Didn't find, create a new child
+optional_idx JSONStructureDescription::FindChild(const char *key_ptr, const size_t key_size, const idx_t hint) const {
+	if (hint < children.size()) {
+		const auto &key = *children[hint].key;
+		if (key.size() == key_size && memcmp(key.data(), key_ptr, key_size) == 0) {
+			return hint;
+		}
+	}
+	const auto it = key_map.find(JSONKey {key_ptr, key_size});
+	if (it == key_map.end()) {
+		return optional_idx();
+	}
+	return it->second;
+}
+
+idx_t JSONStructureDescription::GetOrCreateChildIndex(const char *key_ptr, const size_t key_size, const idx_t hint) {
+	const auto found = FindChild(key_ptr, key_size, hint);
+	if (found.IsValid()) {
+		return found.GetIndex();
+	}
 	children.emplace_back(key_ptr, key_size);
 	const auto &persistent_key_string = *children.back().key;
-	JSONKey new_key {persistent_key_string.c_str(), persistent_key_string.length()};
-	key_map.emplace(new_key, children.size() - 1);
-	return children.back();
+	key_map.emplace(JSONKey {persistent_key_string.c_str(), persistent_key_string.length()}, children.size() - 1);
+	return children.size() - 1;
 }
 
-JSONStructureNode &JSONStructureDescription::GetOrCreateChild(yyjson_val *key, yyjson_val *val,
-                                                              const bool ignore_errors, const bool detect_geojson) {
-	D_ASSERT(yyjson_is_str(key));
-	auto &child = GetOrCreateChild(unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
-	JSONStructure::ExtractStructure(val, child, ignore_errors, detect_geojson);
-	return child;
-}
-
-static void ExtractStructureArray(yyjson_val *arr, JSONStructureNode &node, const bool ignore_errors,
-                                  const bool detect_geojson) {
-	D_ASSERT(yyjson_is_arr(arr));
+static void ExtractStructureArray(const JSONNode &arr, JSONStructureNode &node, const bool detect_geojson) {
+	D_ASSERT(arr.type == JSONValueType::ARRAY);
 	auto &description = node.GetOrCreateDescription(LogicalTypeId::LIST);
 	auto &child = description.GetOrCreateChild();
 
-	size_t idx, max;
-	yyjson_val *val;
-	yyjson_arr_foreach(arr, idx, max, val) {
-		JSONStructure::ExtractStructure(val, child, ignore_errors, detect_geojson);
+	for (auto &val : arr.Elements()) {
+		JSONStructure::ExtractStructure(val, child, detect_geojson);
 	}
 }
 
-static void ExtractStructureObject(yyjson_val *obj, JSONStructureNode &node, const bool ignore_errors,
-                                   const bool detect_geojson) {
-	D_ASSERT(yyjson_is_obj(obj));
+static void ExtractStructureObject(const JSONNode &obj, JSONStructureNode &node, const bool detect_geojson) {
+	D_ASSERT(obj.type == JSONValueType::OBJECT);
 	auto &description = node.GetOrCreateDescription(LogicalTypeId::STRUCT);
-
-	// Keep track of keys so we can detect duplicates
-	unordered_set<string> obj_keys;
-	case_insensitive_set_t ci_obj_keys;
-
-	size_t idx, max;
-	yyjson_val *key, *val;
-	yyjson_obj_foreach(obj, idx, max, key, val) {
-		const string obj_key(unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
-		auto insert_result = obj_keys.insert(obj_key);
-		if (!ignore_errors && !insert_result.second) { // Exact match
-			JSONCommon::ThrowValFormatError("Duplicate key \"" + obj_key + "\" in object %s", obj);
-		}
-		auto ci_insert_result = ci_obj_keys.insert(obj_key);
-		if (!ignore_errors && !ci_insert_result.second) { // Case-insensitive match
-			JSONCommon::ThrowValFormatError("Duplicate key (different case) \"" + obj_key + "\" and \"" +
-			                                    *ci_insert_result.first + "\" in object %s",
-			                                obj);
-		}
-		description.GetOrCreateChild(key, val, ignore_errors, detect_geojson);
+	idx_t next = 0;
+	for (auto &key : obj.Keys()) {
+		D_ASSERT(key.type == JSONValueType::STRING);
+		const auto child = description.GetOrCreateChildIndex(key.str, key.size, next);
+		next = child + 1;
+		JSONStructure::ExtractStructure(*(&key + 1), description.children[child], detect_geojson);
 	}
 }
 
-static void ExtractStructureVal(yyjson_val *val, JSONStructureNode &node) {
-	D_ASSERT(!yyjson_is_arr(val) && !yyjson_is_obj(val));
+static void ExtractStructureVal(const JSONNode &val, JSONStructureNode &node) {
+	D_ASSERT(!val.IsContainer());
 	const auto val_type = JSONCommon::ValTypeToLogicalTypeId(val);
 	auto &desc = node.GetOrCreateDescription(val_type);
 	if (val_type == LogicalTypeId::UBIGINT &&
-	    unsafe_yyjson_get_uint(val) > static_cast<uint64_t>(NumericLimits<int64_t>::Maximum())) {
+	    val.unsigned_integer > static_cast<uint64_t>(NumericLimits<int64_t>::Maximum())) {
 		desc.has_large_ubigint = true;
 	}
 }
 
-void JSONStructure::ExtractStructure(yyjson_val *val, JSONStructureNode &node, const bool ignore_errors,
-                                     const bool detect_geojson) {
+void JSONStructure::ExtractStructure(const JSONNode &val, JSONStructureNode &node, const bool detect_geojson) {
 	StackDepth::Check();
 	node.count++;
-	const auto tag = yyjson_get_tag(val);
-	if (tag == (YYJSON_TYPE_NULL | YYJSON_SUBTYPE_NONE)) {
+	if (val.type == JSONValueType::JSON_NULL) {
 		node.null_count++;
 	}
 
-	switch (tag) {
-	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
-		return ExtractStructureArray(val, node, ignore_errors, detect_geojson);
-	case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE:
+	switch (val.type) {
+	case JSONValueType::ARRAY:
+		return ExtractStructureArray(val, node, detect_geojson);
+	case JSONValueType::OBJECT:
 		// A GeoJSON geometry is a leaf: it becomes GEOMETRY rather than a struct of type/coordinates. Detecting it
 		// here (rather than on the finished tree) means geometries of different kinds still merge into one type.
-		if (detect_geojson && JSONGeometry::IsGeoJSONGeometry(val)) {
+		if (detect_geojson && JSONGeometry::IsGeoJSONGeometry(&val)) {
 			node.GetOrCreateDescription(LogicalTypeId::GEOMETRY);
 			return;
 		}
-		return ExtractStructureObject(val, node, ignore_errors, detect_geojson);
+		return ExtractStructureObject(val, node, detect_geojson);
 	default:
 		return ExtractStructureVal(val, node);
 	}
 }
 
-JSONStructureNode ExtractStructureInternal(yyjson_val *val, const bool ignore_errors) {
+JSONStructureNode ExtractStructureInternal(const JSONNode &val) {
 	JSONStructureNode node;
-	JSONStructure::ExtractStructure(val, node, ignore_errors, false);
+	JSONStructure::ExtractStructure(val, node, false);
 	return node;
 }
 
-//! Forward declaration for recursion
-static yyjson_mut_val *ConvertStructure(const JSONStructureNode &node, yyjson_mut_doc *doc);
-
-static yyjson_mut_val *ConvertStructureArray(const JSONStructureNode &node, yyjson_mut_doc *doc) {
-	D_ASSERT(node.descriptions.size() == 1 && node.descriptions[0].type == LogicalTypeId::LIST);
-	const auto &desc = node.descriptions[0];
-	D_ASSERT(desc.children.size() == 1);
-
-	const auto arr = yyjson_mut_arr(doc);
-	yyjson_mut_arr_append(arr, ConvertStructure(desc.children[0], doc));
-	return arr;
-}
-
-static yyjson_mut_val *ConvertStructureObject(const JSONStructureNode &node, yyjson_mut_doc *doc) {
-	D_ASSERT(node.descriptions.size() == 1 && node.descriptions[0].type == LogicalTypeId::STRUCT);
-	auto &desc = node.descriptions[0];
-	if (desc.children.empty()) {
-		// Empty struct - let's do JSON instead
-		return yyjson_mut_str(doc, LogicalType::JSON_TYPE_NAME);
-	}
-
-	const auto obj = yyjson_mut_obj(doc);
-	for (auto &child : desc.children) {
-		D_ASSERT(child.key);
-		yyjson_mut_obj_add(obj, yyjson_mut_strn(doc, child.key->c_str(), child.key->length()),
-		                   ConvertStructure(child, doc));
-	}
-	return obj;
-}
-
-static yyjson_mut_val *ConvertStructure(const JSONStructureNode &node, yyjson_mut_doc *doc) {
+static void WriteStructure(const JSONStructureNode &node, JSONStringWriter &writer) {
 	if (node.descriptions.empty()) {
-		return yyjson_mut_str(doc, JSONCommon::TYPE_STRING_NULL);
+		writer.String(JSONCommon::TYPE_STRING_NULL);
+		return;
 	}
 	if (node.descriptions.size() != 1) { // Inconsistent types, so we resort to JSON
-		return yyjson_mut_str(doc, LogicalType::JSON_TYPE_NAME);
+		writer.String(LogicalType::JSON_TYPE_NAME);
+		return;
 	}
 	auto &desc = node.descriptions[0];
 	D_ASSERT(desc.type != LogicalTypeId::INVALID);
 	switch (desc.type) {
 	case LogicalTypeId::LIST:
-		return ConvertStructureArray(node, doc);
+		D_ASSERT(desc.children.size() == 1);
+		writer.StartArray();
+		WriteStructure(desc.children[0], writer);
+		writer.EndArray();
+		return;
 	case LogicalTypeId::STRUCT:
-		return ConvertStructureObject(node, doc);
+		if (desc.children.empty()) {
+			// Empty struct - let's do JSON instead
+			writer.String(LogicalType::JSON_TYPE_NAME);
+			return;
+		}
+		writer.StartObject();
+		for (auto &child : desc.children) {
+			D_ASSERT(child.key);
+			writer.Key(*child.key);
+			WriteStructure(child, writer);
+		}
+		writer.EndObject();
+		return;
 	default:
-		return yyjson_mut_str(doc, EnumUtil::ToChars(desc.type));
+		writer.String(EnumUtil::ToChars(desc.type));
+		return;
 	}
 }
 
-static optional<string_t> JSONStructureFunction(yyjson_val *val, yyjson_alc *alc, Vector &) {
-	return JSONCommon::WriteVal<yyjson_mut_val>(
-	    ConvertStructure(ExtractStructureInternal(val, true), yyjson_mut_doc_new(alc)), alc);
+static optional<string_t> JSONStructureFunction(const JSONNode *val, JSONFunctionLocalState &lstate, Vector &result) {
+	auto &writer = lstate.writer;
+	writer.Clear();
+	WriteStructure(ExtractStructureInternal(*val), writer);
+	return StringVector::AddString(result, writer.View().data(), writer.View().size());
 }
 
 static void StructureFunction(DataChunk &args, ExpressionState &state, Vector &result) {

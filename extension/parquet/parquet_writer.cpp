@@ -1,7 +1,9 @@
 #include "parquet_writer.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include "parquet_crypto.hpp"
@@ -15,6 +17,7 @@
 #include "duckdb/common/serializer/write_stream.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/common/type_visitor.hpp"
@@ -726,9 +729,6 @@ void ParquetWriter::PrepareRowGroup(ColumnDataCollection &raw_buffer, PreparedRo
 	}
 	auto &buffer = buffer_ref.get();
 
-	// We write 8 columns at a time so that iterating over ColumnDataCollection is more efficient
-	static constexpr idx_t COLUMNS_PER_PASS = 8;
-
 	// We want these to be buffer-managed
 	D_ASSERT(buffer.GetAllocatorType() == ColumnDataAllocatorType::BUFFER_MANAGER_ALLOCATOR);
 
@@ -744,62 +744,49 @@ void ParquetWriter::PrepareRowGroup(ColumnDataCollection &raw_buffer, PreparedRo
 	}
 
 	auto &states = result.states;
-	// iterate over each of the columns of the chunk collection and write them
 	D_ASSERT(buffer.ColumnCount() == column_writers.size());
-	for (idx_t col_idx = 0; col_idx < buffer.ColumnCount(); col_idx += COLUMNS_PER_PASS) {
-		const auto next = MinValue<idx_t>(buffer.ColumnCount() - col_idx, COLUMNS_PER_PASS);
-		vector<column_t> column_ids;
-		vector<reference<ColumnWriter>> col_writers;
-		vector<unique_ptr<ColumnWriterState>> write_states;
-		for (idx_t i = 0; i < next; i++) {
-			column_ids.emplace_back(col_idx + i);
-			col_writers.emplace_back(*column_writers[column_ids.back()]);
-			write_states.emplace_back(col_writers.back().get().InitializeWriteState(row_group));
-		}
-
-		for (auto &chunk : buffer.Chunks(column_ids)) {
-			for (idx_t i = 0; i < next; i++) {
-				if (col_writers[i].get().HasAnalyze()) {
-					col_writers[i].get().Analyze(*write_states[i], nullptr, chunk.data[i], chunk.size());
-				}
-			}
-		}
-
-		for (idx_t i = 0; i < next; i++) {
-			if (col_writers[i].get().HasAnalyze()) {
-				col_writers[i].get().FinalizeAnalyze(*write_states[i]);
-			}
-		}
-
-		// Reserving these once at the start really pays off
-		for (auto &write_state : write_states) {
-			write_state->definition_levels.reserve(buffer.Count());
-		}
-
-		for (auto &chunk : buffer.Chunks({column_ids})) {
-			for (idx_t i = 0; i < next; i++) {
-				col_writers[i].get().Prepare(*write_states[i], nullptr, chunk.data[i], chunk.size(), true);
-			}
-		}
-
-		for (idx_t i = 0; i < next; i++) {
-			col_writers[i].get().BeginWrite(*write_states[i]);
-		}
-
-		for (auto &chunk : buffer.Chunks({column_ids})) {
-			for (idx_t i = 0; i < next; i++) {
-				col_writers[i].get().Write(*write_states[i], chunk.data[i], chunk.size());
-			}
-		}
-
-		for (idx_t i = 0; i < next; i++) {
-			col_writers[i].get().PrepareWrite(*write_states[i]);
-		}
-
-		for (auto &write_state : write_states) {
-			states.push_back(std::move(write_state));
-		}
+	for (idx_t col_idx = 0; col_idx < buffer.ColumnCount(); col_idx++) {
+		states.push_back(column_writers[col_idx]->InitializeWriteState(row_group));
 	}
+	const auto write_column = [&](idx_t col_idx) {
+		auto &col_writer = *column_writers[col_idx];
+		auto &write_state = *states[col_idx];
+		const vector<column_t> column_ids {col_idx};
+		if (col_writer.HasAnalyze()) {
+			for (auto &chunk : buffer.Chunks(column_ids)) {
+				col_writer.Analyze(write_state, nullptr, chunk.data[0], chunk.size());
+			}
+			col_writer.FinalizeAnalyze(write_state);
+		}
+		write_state.definition_levels.reserve(buffer.Count());
+		for (auto &chunk : buffer.Chunks(column_ids)) {
+			col_writer.Prepare(write_state, nullptr, chunk.data[0], chunk.size(), true);
+		}
+		col_writer.BeginWrite(write_state);
+		for (auto &chunk : buffer.Chunks(column_ids)) {
+			col_writer.Write(write_state, chunk.data[0], chunk.size());
+		}
+		col_writer.PrepareWrite(write_state);
+	};
+	vector<idx_t> order(buffer.ColumnCount());
+	std::iota(order.begin(), order.end(), idx_t(0));
+	const auto codec = GetCodec();
+	if (codec == CompressionCodec::GZIP || codec == CompressionCodec::ZSTD || codec == CompressionCodec::BROTLI) {
+		const auto width = [&](idx_t col_idx) {
+			const auto physical = buffer.Types()[col_idx].InternalType();
+			return TypeIsConstantSize(physical) ? GetTypeIdSize(physical) : NumericLimits<idx_t>::Maximum();
+		};
+		std::stable_sort(order.begin(), order.end(), [&](idx_t a, idx_t b) { return width(a) > width(b); });
+	}
+	TaskExecutor executor(context);
+	for (idx_t i = 1; i < order.size(); i++) {
+		executor.ScheduleTask([&write_column, col_idx = order[i]]() { write_column(col_idx); }, "ParquetColumnTask");
+	}
+	TaskExecutor::JoinGuard join(executor);
+	if (!order.empty()) {
+		write_column(order[0]);
+	}
+	executor.WorkOnTasks();
 }
 
 // Validation code adapted from Impala

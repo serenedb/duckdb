@@ -263,6 +263,7 @@ public:
 	// File offset will not be changed.
 	DUCKDB_API void Read(void *buffer, idx_t nr_bytes, idx_t location);
 	DUCKDB_API void Read(QueryContext context, void *buffer, idx_t nr_bytes, idx_t location);
+	DUCKDB_API void ReadInPlace(QueryContext context, idx_t nr_bytes, idx_t location);
 	DUCKDB_API void Write(QueryContext context, void *buffer, idx_t nr_bytes, idx_t location);
 	DUCKDB_API void Seek(idx_t location);
 	DUCKDB_API void Reset();
@@ -282,7 +283,7 @@ public:
 	DUCKDB_API virtual bool CanSeek();
 	DUCKDB_API FileWriteMode GetWriteMode();
 	DUCKDB_API bool WritesMayBlock();
-	DUCKDB_API bool IsPipe();
+	DUCKDB_API virtual bool IsPipe();
 	DUCKDB_API bool OnDiskFile();
 	//! Try to obtain a network throughput estimate (Local files return false).
 	DUCKDB_API bool TryGetNetworkThroughput(NetworkThroughputEstimate &result);
@@ -364,6 +365,7 @@ public:
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().
 	DUCKDB_API virtual void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location);
+	DUCKDB_API virtual void ReadInPlace(FileHandle &handle, idx_t nr_bytes, idx_t location);
 	//! Reads the consecutive bytes at [location] into [targets] in order, as one read, skipping the bytes of a target
 	//! without data. Fails if they could not all be read.
 	DUCKDB_API virtual void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location);
@@ -552,6 +554,8 @@ public:
 
 	DUCKDB_API virtual unique_ptr<FileHandle> OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle,
 	                                                             bool write);
+	DUCKDB_API virtual optional_ptr<CompressedFileSystem>
+	GetCompressedFileSystem(const FileCompressionType &compression, const string &path);
 
 	//! Create a LocalFileSystem.
 	DUCKDB_API static unique_ptr<FileSystem> CreateLocal();

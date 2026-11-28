@@ -4,10 +4,8 @@
 namespace duckdb {
 
 CSVSniffer::CSVSniffer(CSVReaderOptions &options_p, const MultiFileOptions &file_options,
-                       shared_ptr<CSVBufferManager> buffer_manager_p, CSVStateMachineCache &state_machine_cache_p,
-                       bool default_null_to_varchar_p)
-    : state_machine_cache(state_machine_cache_p), options(options_p), file_options(file_options),
-      buffer_manager(std::move(buffer_manager_p)), lines_sniffed(0),
+                       shared_ptr<CSVBufferManager> buffer_manager_p, bool default_null_to_varchar_p)
+    : options(options_p), file_options(file_options), buffer_manager(std::move(buffer_manager_p)), lines_sniffed(0),
       default_null_to_varchar(default_null_to_varchar_p) {
 	// Initialize Format Candidates
 	for (const auto &format_template : format_template_candidates) {
@@ -88,9 +86,8 @@ AdaptiveSnifferResult CSVSniffer::MinimalSniff() {
 	buffer_manager->sniffing = true;
 	constexpr idx_t result_size = STANDARD_VECTOR_SIZE;
 
-	auto state_machine =
-	    make_shared_ptr<CSVStateMachine>(options, options.dialect_options.state_machine_options, state_machine_cache);
-	ColumnCountScanner count_scanner(buffer_manager, state_machine, error_handler, result_size);
+	auto state_machine = make_shared_ptr<CSVStateMachine>(options, options.dialect_options.state_machine_options);
+	CsvColumnCounter count_scanner(buffer_manager, state_machine, error_handler, result_size);
 	auto &sniffed_column_counts = count_scanner.ParseChunk();
 	if (sniffed_column_counts.result_position == 0) {
 		// The file is an empty file, we just return
@@ -126,7 +123,7 @@ AdaptiveSnifferResult CSVSniffer::MinimalSniff() {
 		const auto vector_data = FlatVector::GetData<string_t>(cur_vector);
 		auto &validity = FlatVector::ValidityMutable(cur_vector);
 		HeaderValue val;
-		if (validity.RowIsValid(0)) {
+		if (data_chunk.size() != 0 && validity.RowIsValid(0)) {
 			val = HeaderValue(vector_data[0]);
 		}
 		potential_header.emplace_back(val);
@@ -173,12 +170,15 @@ SnifferResult CSVSniffer::AdaptiveSniff(const CSVSchema &file_schema) {
 
 SnifferResult CSVSniffer::SniffCSV(const bool force_match) {
 	buffer_manager->sniffing = true;
+	const auto reset_unpinned_compressed = [&]() {
+		if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED &&
+		    buffer_manager->AnyBufferUnpinned()) {
+			buffer_manager->ResetBufferManager();
+		}
+	};
 	// 1. Dialect Detection
 	DetectDialect();
-	if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED &&
-	    buffer_manager->AnyBlockUnloaded()) {
-		buffer_manager->ResetBufferManager();
-	}
+	reset_unpinned_compressed();
 	// 2. Type Detection
 	DetectTypes();
 	// 3. Type Refinement
@@ -188,12 +188,7 @@ SnifferResult CSVSniffer::SniffCSV(const bool force_match) {
 	// 5. Type Replacement
 	ReplaceTypes();
 
-	// We reset the buffer for compressed files
-	// This is done because we can't easily seek on compressed files, if a buffer goes out of scope we must read from
-	// the start
-	if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED) {
-		buffer_manager->ResetBufferManager();
-	}
+	reset_unpinned_compressed();
 	buffer_manager->sniffing = false;
 	if (best_candidate->error_handler->AnyErrors() && !options.ignore_errors.GetValue() &&
 	    best_candidate->state_machine->dialect_options.state_machine_options.strict_mode.GetValue()) {

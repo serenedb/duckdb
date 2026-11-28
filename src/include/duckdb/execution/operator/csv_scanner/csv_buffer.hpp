@@ -22,7 +22,11 @@ public:
 	CSVBufferHandle(BufferHandle handle_p, idx_t actual_size_p, idx_t requested_size_p, const bool is_final_buffer_p,
 	                idx_t buffer_index_p)
 	    : handle(std::move(handle_p)), actual_size(actual_size_p), requested_size(requested_size_p),
-	      is_last_buffer(is_final_buffer_p), buffer_idx(buffer_index_p) {};
+	      is_last_buffer(is_final_buffer_p), buffer_idx(buffer_index_p), data(const_char_ptr_cast(handle.Ptr())) {};
+	CSVBufferHandle(shared_ptr<void> keep_p, const char *data_p, idx_t actual_size_p, idx_t requested_size_p,
+	                const bool is_final_buffer_p, idx_t buffer_index_p)
+	    : actual_size(actual_size_p), requested_size(requested_size_p), is_last_buffer(is_final_buffer_p),
+	      buffer_idx(buffer_index_p), keep(std::move(keep_p)), data(data_p) {};
 	CSVBufferHandle() : actual_size(0), requested_size(0), is_last_buffer(false), buffer_idx(0) {};
 	~CSVBufferHandle() {
 	}
@@ -33,8 +37,12 @@ public:
 	const bool is_last_buffer;
 	const idx_t buffer_idx;
 	inline const char *Ptr() const {
-		return const_char_ptr_cast(handle.Ptr());
+		return data;
 	}
+
+private:
+	shared_ptr<void> keep;
+	const char *data = nullptr;
 };
 
 //! CSV Buffers are parts of a decompressed CSV File.
@@ -49,34 +57,41 @@ public:
 
 	//! Constructor for `Next()` Buffers
 	CSVBuffer(CSVFileHandle &file_handle, ClientContext &context, idx_t buffer_size, idx_t global_csv_current_position,
-	          idx_t buffer_idx);
+	          idx_t buffer_idx, shared_ptr<CSVBuffer> recycled);
 
 	//! Constructor for random-access buffers with known byte ranges
 	CSVBuffer(ClientContext &context, idx_t requested_size, idx_t actual_size, idx_t global_csv_start, idx_t buffer_idx,
 	          bool last_buffer);
 
 	//! Creates a new buffer with the next part of the CSV File
-	shared_ptr<CSVBuffer> Next(CSVFileHandle &file_handle, idx_t buffer_size, bool &has_seeked) const;
+	shared_ptr<CSVBuffer> Next(CSVFileHandle &file_handle, idx_t buffer_size, bool &has_seeked,
+	                           shared_ptr<CSVBuffer> recycled) const;
 
 	//! Allocates the buffer and fills it sequentially from the file handle's current position
-	void Load(CSVFileHandle &file_handle);
+	void Load(CSVFileHandle &file_handle, shared_ptr<CSVBuffer> recycled);
+	bool Reusable() const {
+		return handle.IsValid() && block && block->GetMemory().GetReaders() == 1;
+	}
 
 	//! Allocates the buffer and fills it with a random-access read of its known byte range
-	void LoadRandomAccess(CSVFileHandle &file_handle);
+	void LoadRandomAccess(CSVFileHandle &file_handle, bool parallel);
 
 	//! Gets the buffer actual size
 	idx_t GetBufferSize() const;
+	idx_t GlobalEnd() const {
+		return global_csv_start + actual_buffer_size;
+	}
 
 	//! If this buffer is the last buffer of the CSV File
 	bool IsCSVFileLastBuffer() const;
 
-	//! Allocates internal buffer, sets 'block' and 'handle' variables.
-	void AllocateBuffer(idx_t buffer_size);
+	BufferHandle AllocateBuffer(idx_t buffer_size);
+	void Adopt(BufferHandle loaded);
 
 	void Reload(CSVFileHandle &file_handle);
 	//! Wrapper for the Pin Function, if it can seek, it means that the buffer might have been destroyed, hence we must
 	//! Scan it from the disk file again.
-	shared_ptr<CSVBufferHandle> Pin(CSVFileHandle &file_handle, bool &has_seeked);
+	shared_ptr<CSVBufferHandle> Pin(CSVFileHandle &file_handle, bool &has_seeked, bool parallel = false);
 	//! Pins the buffer only if it is in memory and no load is in flight; never performs I/O and never blocks
 	bool TryPin(shared_ptr<CSVBufferHandle> &pinned);
 	//! Wrapper for unpin
@@ -84,8 +99,8 @@ public:
 	const char *Ptr() const {
 		return const_char_ptr_cast(handle.Ptr());
 	}
-	bool IsUnloaded() const {
-		return block->GetMemory().IsUnloaded();
+	bool Pinned() const {
+		return handle.IsValid();
 	}
 	//! Whether the underlying block is loaded in memory
 	bool IsInMemory() const {

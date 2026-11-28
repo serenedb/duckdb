@@ -59,15 +59,20 @@ public:
 	[[gnu::always_inline]] FilePin(BufferHandle handle_p, data_ptr_t data_p, idx_t size_p)
 	    : handle(std::move(handle_p)), data(data_p), size(size_p) {
 	}
+	FilePin(shared_ptr<void> owner_p, const_data_ptr_t data_p, idx_t size_p) : FilePin(data_p, size_p) {
+		owner = std::move(owner_p);
+	}
 	[[gnu::always_inline]] FilePin(FilePin &&other) noexcept
-	    : handle(std::move(other.handle)), data(other.data), size(other.size) {
+	    : handle(std::move(other.handle)), owner(std::move(other.owner)), data(other.data), size(other.size) {
 		other.data = nullptr;
 		other.size = 0;
 	}
 	[[gnu::always_inline]] FilePin &operator=(FilePin &&other) noexcept {
 		if (this != &other) {
 			BufferHandle released = std::move(handle);
+			auto released_owner = std::move(owner);
 			handle = std::move(other.handle);
+			owner = std::move(other.owner);
 			data = other.data;
 			size = other.size;
 			other.data = nullptr;
@@ -80,7 +85,7 @@ public:
 
 	//! Whether the pin holds a block or a buffer, which the bytes need to stay valid
 	bool IsValid() const {
-		return handle.IsValid();
+		return handle.IsValid() || owner;
 	}
 	const_data_ptr_t Ptr() const {
 		return data;
@@ -94,10 +99,13 @@ public:
 	}
 	//! Another pin of the [size] bytes at [offset] of the pinned bytes
 	FilePin Share(idx_t offset, idx_t size_p) {
+		D_ASSERT(offset <= size && size_p <= size - offset);
+		if (owner) {
+			return FilePin(owner, data + offset, size_p);
+		}
 		if (!handle.IsValid()) {
 			return {};
 		}
-		D_ASSERT(offset <= size && size_p <= size - offset);
 		return FilePin(handle.Share(), data + offset, size_p);
 	}
 	//! Narrows this pin to the [size] bytes at [offset] of its bytes
@@ -108,12 +116,14 @@ public:
 	}
 	void Reset() {
 		BufferHandle released = std::move(handle);
+		auto released_owner = std::move(owner);
 		data = nullptr;
 		size = 0;
 	}
 
 private:
 	BufferHandle handle;
+	shared_ptr<void> owner;
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
 };

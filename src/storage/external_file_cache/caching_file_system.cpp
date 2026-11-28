@@ -3,6 +3,8 @@
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/enums/cache_validation_mode.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/formats/row_input.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
@@ -11,6 +13,8 @@
 namespace duckdb {
 
 namespace {
+
+constexpr idx_t MAPPED_READ_MIN_BYTES = idx_t(1) << 20;
 
 FileBufferHandleGroup OnePin(FilePin pin) {
 	vector<FilePin> pins;
@@ -185,9 +189,27 @@ FileBufferHandleGroup CachingFileHandle::ReadInOrder(const idx_t nr_bytes, const
 	return Read(nr_bytes, location, true);
 }
 
+void CachingFileHandle::MapLocalFile() {
+	auto client = context.GetClientContext();
+	if (!client || CacheAllowed() || !OnDiskFile()) {
+		return;
+	}
+	mapping = shared_ptr<MemoryMappedFile>(MapForReading(*client, path.path, true, GetFileSize(), 0));
+}
+
+FileBufferHandleGroup CachingFileHandle::ReadMapped(idx_t nr_bytes, idx_t location) {
+	const auto data = mapping->ReadInPlace(*GetFileHandle(), context, location, nr_bytes);
+	vector<FilePin> pins;
+	pins.emplace_back(make_shared_ptr<MappedRange>(mapping, location, location + nr_bytes), data, nr_bytes);
+	return FileBufferHandleGroup(std::move(pins));
+}
+
 FileBufferHandleGroup CachingFileHandle::Read(const idx_t nr_bytes, const idx_t location, const bool in_order) {
 	if (nr_bytes == 0) {
 		return FileBufferHandleGroup();
+	}
+	if (mapping && nr_bytes >= MAPPED_READ_MIN_BYTES) {
+		return ReadMapped(nr_bytes, location);
 	}
 	auto file = GetInputFile();
 	if (!file) {

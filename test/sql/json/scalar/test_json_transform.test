@@ -600,3 +600,76 @@ query T
 select to_json(json_transform_strict('{"a\u0000b":1}', '{"a\u0000b":"INTEGER"}'))
 ----
 {"a\u0000b":1}
+
+query T
+SELECT json_transform('{"a": 18446744073709551616}', '{"a": "VARCHAR"}')
+----
+{'a': 18446744073709551616}
+
+statement error
+SELECT json_transform(j, '{"a": "INTEGER"}') FROM (VALUES ('{"a": 1}'), ('{"a": ')) t(j)
+----
+<REGEX>:.*Malformed JSON at byte.*
+
+query T
+SELECT from_json('{"a":1}', '"INTEGER[2]"')
+----
+NULL
+
+statement error
+SELECT from_json_strict(j, '"INTEGER[2]"') FROM (VALUES ('{}'::JSON), ('[1,2]'::JSON)) values_(j)
+----
+<REGEX>:.*Invalid Input Error.*Expected ARRAY, but got OBJECT.*
+
+statement error
+SELECT from_json_strict('["x", 1]', '"INTEGER[2]"')
+----
+<REGEX>:.*Invalid Input Error.*Failed to cast value to numerical.*
+
+query T
+SELECT from_json('[1]', '"MAP(VARCHAR, INTEGER)"')
+----
+NULL
+
+statement error
+SELECT from_json_strict(j, '"MAP(VARCHAR, INTEGER)"') FROM (VALUES ('[1]'::JSON), ('2'::JSON), ('{"a":1}'::JSON)) values_(j)
+----
+<REGEX>:.*Invalid Input Error.*Expected OBJECT, but got ARRAY.*
+
+statement error
+SELECT j::TUPLE(INTEGER, VARCHAR) FROM (VALUES ('{"a":1}'::JSON), ('2'::JSON)) t(j)
+----
+<REGEX>:.*Expected ARRAY, but got OBJECT.*
+
+query TT
+SELECT 'null'::JSON::TUPLE(INTEGER, VARCHAR), TRY_CAST('{"a":1}'::JSON AS TUPLE(INTEGER, VARCHAR))
+----
+NULL	NULL
+
+query T
+SELECT from_json(j, '"TUPLE(INTEGER, VARCHAR)"') FROM (VALUES ('[1,"a"]'::JSON), ('{"a":1}'::JSON)) t(j)
+----
+(1, a)
+NULL
+
+statement error
+SELECT '[1, "x"]'::JSON::TUPLE(INTEGER, INTEGER)
+----
+<REGEX>:.*Failed to cast value to numerical.*
+
+statement error
+SELECT '{"a": "x"}'::JSON::UNION(a INTEGER, b VARCHAR)
+----
+<REGEX>:.*Failed to cast value to numerical.*
+
+query T
+SELECT ST_AsText(json_transform(j, '{"g": "GEOMETRY"}')['g']) FROM (VALUES ('{}'), ('{"g": {"type": "Point", "coordinates": [1, 2]}}'), ('{"g": 1}')) t(j)
+----
+NULL
+POINT (1 2)
+NULL
+
+statement error
+SELECT json_transform_strict(j, '{"g": "GEOMETRY"}') FROM (VALUES ('{"g": {"type": "Point", "coordinates": [1, 2]}}'), ('{"g": 1}')) t(j)
+----
+<REGEX>:.*Unable to cast '1' to GEOMETRY.*

@@ -1,0 +1,25 @@
+# name: test/sql/copy/csv/read_csv_row_memory_limit.test
+# description: a local file is read in place through its mapping, so a row larger than memory_limit takes none of it; the window that holds a row of an unmapped input counts against the limit (test_row_ranges.cpp)
+# group: [csv]
+
+statement ok
+SET threads = 1;
+
+statement ok
+COPY (SELECT CASE WHEN i = 1000 THEN repeat('x', 20000000) ELSE 'y' || i END AS s FROM range(2000000) t(i)) TO '{TEMP_DIR}/big_row.csv' (FORMAT csv, HEADER false);
+
+statement ok
+SET memory_limit='10MiB';
+
+query I
+SELECT max(length(s)) FROM read_csv('{TEMP_DIR}/big_row.csv', columns = {'s': 'VARCHAR'}, header = false, auto_detect = false, new_line = '\n', max_line_size = 32000000, buffer_size = 32000000);
+----
+20000000
+
+statement ok
+RESET memory_limit;
+
+query I
+SELECT max(length(s)) FROM read_csv('{TEMP_DIR}/big_row.csv', columns = {'s': 'VARCHAR'}, header = false, auto_detect = false, new_line = '\n', max_line_size = 32000000, buffer_size = 32000000);
+----
+20000000

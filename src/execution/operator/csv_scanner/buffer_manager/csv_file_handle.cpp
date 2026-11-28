@@ -4,13 +4,15 @@
 #include "duckdb/common/compressed_file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
+#include "duckdb/formats/copy_options.hpp"
 
 namespace duckdb {
 
 CSVFileHandle::CSVFileHandle(ClientContext &context_p, unique_ptr<FileHandle> file_handle_p, const OpenFileInfo &file_p,
                              const CSVReaderOptions &options)
     : compression_type(options.compression), context(context_p), file_handle(std::move(file_handle_p)),
-      encoder(context_p, options.encoding, options.buffer_size_option.GetValue()), file(file_p) {
+      encoder(context_p, options.encoding, options.buffer_size_option.GetValue()), file(file_p),
+      postgres_errors(options.copy_rules != nullptr) {
 	can_seek = file_handle->CanSeek();
 	on_disk_file = file_handle->OnDiskFile();
 	file_size = file_handle->GetFileSize();
@@ -19,9 +21,9 @@ CSVFileHandle::CSVFileHandle(ClientContext &context_p, unique_ptr<FileHandle> fi
 }
 
 unique_ptr<FileHandle> CSVFileHandle::OpenFileHandle(FileSystem &fs, Allocator &allocator, const OpenFileInfo &file,
-                                                     FileCompressionType compression) {
+                                                     FileCompressionType compression, CachingMode caching_mode) {
 	FileOpenFlags flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS | std::move(compression);
-	flags.SetCachingMode(CachingMode::CACHE_REMOTE_ONLY);
+	flags.SetCachingMode(caching_mode);
 	auto file_handle = fs.OpenFile(file, flags);
 	if (file_handle->CanSeek()) {
 		file_handle->Reset();
@@ -30,10 +32,10 @@ unique_ptr<FileHandle> CSVFileHandle::OpenFileHandle(FileSystem &fs, Allocator &
 }
 
 unique_ptr<CSVFileHandle> CSVFileHandle::OpenFile(ClientContext &context, const OpenFileInfo &file,
-                                                  const CSVReaderOptions &options) {
+                                                  const CSVReaderOptions &options, CachingMode caching_mode) {
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto &allocator = BufferAllocator::Get(context);
-	auto file_handle = OpenFileHandle(fs, allocator, file, options.compression);
+	auto file_handle = OpenFileHandle(fs, allocator, file, options.compression, caching_mode);
 	return make_uniq<CSVFileHandle>(context, std::move(file_handle), file, options);
 }
 
@@ -87,8 +89,7 @@ idx_t CSVFileHandle::Read(void *buffer, idx_t nr_bytes) {
 	// We avoid reading past the original size of the file for uncompressed files in utf-8 encoding. This avoids reading
 	// the data that is written after opening the file. This can be useful, for example when reading a duckdb log file
 	// in csv format while logging is enabled
-	if (file_handle->GetFileCompressionType() == FileCompressionType::UNCOMPRESSED && file_handle->CanSeek() &&
-	    encoder.encoding_name == "utf-8") {
+	if (HasKnownBufferRanges()) {
 		nr_bytes = MinValue<idx_t>(nr_bytes, file_size - file_handle->SeekPosition());
 	}
 
@@ -97,8 +98,20 @@ idx_t CSVFileHandle::Read(void *buffer, idx_t nr_bytes) {
 	idx_t bytes_read = 0;
 	if (encoder.encoding_name == "utf-8") {
 		bytes_read = static_cast<idx_t>(file_handle->Read(context, buffer, nr_bytes));
-	} else {
+	} else if (!postgres_errors) {
 		bytes_read = encoder.Encode(*file_handle, static_cast<char *>(buffer), nr_bytes);
+	} else {
+		try {
+			bytes_read = encoder.Encode(*file_handle, static_cast<char *>(buffer), nr_bytes);
+		} catch (const InvalidInputException &ex) {
+			const ErrorData error(ex);
+			const auto reason = error.ExtraInfo().find("encoding_error");
+			if (reason == error.ExtraInfo().end()) {
+				throw;
+			}
+			ThrowCopyError("22021", "invalid byte sequence for encoding \"" + CopyEncodingTitle(encoder.encoding_name) +
+			                            "\": " + reason->second);
+		}
 	}
 	if (!finished) {
 		finished = bytes_read == 0;
@@ -111,6 +124,10 @@ void CSVFileHandle::ReadAt(void *buffer, idx_t nr_bytes, idx_t position) {
 	D_ASSERT(HasKnownBufferRanges());
 	D_ASSERT(position + nr_bytes <= file_size);
 	file_handle->Read(context, buffer, nr_bytes, position);
+}
+
+void CSVFileHandle::ReadInPlace(idx_t nr_bytes, idx_t position) const {
+	file_handle->ReadInPlace(context, nr_bytes, position);
 }
 
 string CSVFileHandle::ReadLine() {

@@ -1,6 +1,7 @@
 #include "duckdb/function/cast/vector_cast_helpers.hpp"
 #include "duckdb/common/stack.hpp"
 #include "duckdb/common/typedefs.hpp"
+#include "duckdb/function/cast/cast_function_set.hpp"
 
 namespace {
 
@@ -19,6 +20,10 @@ public:
 } // namespace
 
 namespace duckdb {
+
+bool VectorCastHelpers::WritesOwnText(BindCastInput &input, const LogicalType &type) {
+	return type.IsNested() && type.HasAlias() && input.function_set.HasExactRegisteredCast(type, LogicalType::VARCHAR);
+}
 
 // ------- Helper functions for splitting string nested types  -------
 static bool IsNull(const char *buf, idx_t pos, idx_t end_pos) {

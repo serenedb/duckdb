@@ -1070,7 +1070,6 @@ if(NOT EXTENSION_CONFIG_BUILD)
   include_directories(third_party/fastpforlib)
   include_directories(third_party/skiplist)
   include_directories(third_party/ska_sort)
-  include_directories(third_party/miniz)
   include_directories(third_party/utf8proc/include)
   include_directories(third_party/concurrentqueue)
   include_directories(third_party/pcg)
@@ -1079,7 +1078,6 @@ if(NOT EXTENSION_CONFIG_BUILD)
   include_directories(third_party/mbedtls/include)
   include_directories(third_party/jaro_winkler)
   include_directories(third_party/vergesort)
-  include_directories(third_party/yyjson/include)
 endif()
 
 # todo only regenerate ub file if one of the input files changed hack alert
@@ -1192,6 +1190,10 @@ link_libraries(
   re2::re2
   zstd::zstd
   ZLIB::ZLIB
+  snappy
+  lz4_static
+  brotlienc
+  brotlidec
   ada::ada
   absl::strings
   absl::crc32c
@@ -1305,11 +1307,9 @@ if(PREBUILT_BINARY)
     duckdb_fsst
     duckdb_hyperloglog
     duckdb_mbedtls
-    duckdb_miniz
     duckdb_re2
     duckdb_skiplistlib
     duckdb_utf8proc
-    duckdb_yyjson
     duckdb_zstd)
     if(NOT TARGET ${DUCKDB_PREBUILT_LINK_LIBRARY})
       add_library(${DUCKDB_PREBUILT_LINK_LIBRARY} INTERFACE IMPORTED GLOBAL)
@@ -1337,7 +1337,6 @@ if(NOT EXTENSION_CONFIG_BUILD)
     add_third_party(mbedtls)
     add_third_party(skiplist)
     add_third_party(utf8proc)
-    add_third_party(yyjson)
   endif()
   if(NOT DUCKDB_EXPLICIT_PLATFORM)
     set(VERSION_SOURCES tools/utils/test_platform.cpp)

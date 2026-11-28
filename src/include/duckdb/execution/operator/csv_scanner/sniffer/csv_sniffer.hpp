@@ -10,8 +10,8 @@
 
 #include "duckdb/execution/operator/csv_scanner/csv_state_machine.hpp"
 #include "duckdb/common/vector.hpp"
-#include "duckdb/execution/operator/csv_scanner/column_count_scanner.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_schema.hpp"
+#include "duckdb/formats/csv_sniff.hpp"
 #include "duckdb/execution/operator/csv_scanner/header_value.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/sniff_result.hpp"
 
@@ -20,7 +20,9 @@ struct DateTimestampSniffing {
 	bool initialized = false;
 	bool had_match = false;
 	vector<string> format;
-	idx_t initial_size;
+	string generated_separator;
+	vector<string> generated;
+	vector<const StrpTimeFormat *> generated_formats;
 };
 
 struct QuoteEscapeCombination {
@@ -74,8 +76,7 @@ struct HasType {
 class CSVSniffer {
 public:
 	explicit CSVSniffer(CSVReaderOptions &options_p, const MultiFileOptions &file_options,
-	                    shared_ptr<CSVBufferManager> buffer_manager_p, CSVStateMachineCache &state_machine_cache,
-	                    bool default_null_to_varchar = true);
+	                    shared_ptr<CSVBufferManager> buffer_manager_p, bool default_null_to_varchar = true);
 
 	//! Main method that sniffs the CSV file, returns the types, names and options as a result
 	//! CSV Sniffing consists of five steps:
@@ -96,8 +97,7 @@ public:
 	//! Function that sniffs up to STANDARD_VECTOR_SIZE rows to detect a header and data types
 	AdaptiveSnifferResult MinimalSniff();
 
-	static NewLineIdentifier DetectNewLineDelimiter(CSVBufferManager &buffer_manager, CSVReaderOptions &options,
-	                                                CSVStateMachineCache &state_machine_cache);
+	static NewLineIdentifier DetectNewLineDelimiter(CSVBufferManager &buffer_manager, const CSVReaderOptions &options);
 
 	//! If a string_t value can be cast to a type
 	static bool CanYouCastIt(ClientContext &context, const string_t value, const LogicalType &type,
@@ -113,14 +113,12 @@ private:
 	//! If all our candidates failed due to lines being bigger than the max line size.
 	bool all_fail_max_line_size = true;
 	CSVError line_error;
-	//! CSV State Machine Cache
-	CSVStateMachineCache &state_machine_cache;
 	//! Highest number of columns found
 	idx_t max_columns_found = 0;
 	idx_t max_columns_found_error = 0;
 	bool best_candidate_is_strict = false;
 	//! Current Candidates being considered
-	vector<unique_ptr<ColumnCountScanner>> candidates;
+	vector<unique_ptr<CsvColumnCounter>> candidates;
 	//! Reference to original CSV Options, it will be modified as a result of the sniffer.
 	CSVReaderOptions &options;
 	//! The multi-file reader options
@@ -143,17 +141,17 @@ private:
 	void DetectDialect();
 	//! Functions called in the main DetectDialect(); function
 	//! 1. Generates the search space candidates for the state machines
-	void GenerateStateMachineSearchSpace(vector<unique_ptr<ColumnCountScanner>> &column_count_scanners,
+	void GenerateStateMachineSearchSpace(vector<unique_ptr<CsvColumnCounter>> &column_count_scanners,
 	                                     const DialectCandidates &dialect_candidates);
 
 	//! 2. Analyzes if a dialect candidate is a good candidate to be considered, if so, it adds it to the candidates
-	void AnalyzeDialectCandidate(unique_ptr<ColumnCountScanner>, CandidateStats &stats,
-	                             vector<unique_ptr<ColumnCountScanner>> &successful_candidates);
+	void AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter>, CandidateStats &stats,
+	                             vector<unique_ptr<CsvColumnCounter>> &successful_candidates);
 	//! 3. Refine Candidates over remaining chunks
-	void RefineCandidates();
+	void RefineCandidates(CsvCandidateBytes &bytes);
 
 	//! Checks if candidate still produces good values for the next chunk
-	bool RefineCandidateNextChunk(ColumnCountScanner &candidate) const;
+	bool RefineCandidateNextChunk(CsvColumnCounter &candidate) const;
 
 	//! ------------------------------------------------------//
 	//! ------------------- Type Detection ------------------ //
@@ -163,14 +161,14 @@ private:
 	void DetectTypes();
 	//! Change the date format for the type to the string
 	//! Try to cast a string value to the specified sql type
-	static void SetDateFormat(CSVStateMachine &candidate, const string &format_specifier,
-	                          const LogicalTypeId &sql_type);
+	void SetDateFormat(CSVStateMachine &candidate, const string &format_specifier, const LogicalTypeId &sql_type);
+	const StrpTimeFormat &ParsedDateFormat(const string &format_specifier);
+	void GenerateDateFormats(DateTimestampSniffing &format_candidate, const string &separator, LogicalTypeId sql_type);
 
 	//! Function that initialized the necessary variables used for date and timestamp detection
-	void InitializeDateAndTimeStampDetection(CSVStateMachine &candidate, const string &separator,
-	                                         const LogicalType &sql_type);
+	void InitializeDateAndTimeStampDetection(const string &separator, const LogicalType &sql_type);
 	//! Sets user defined date and time formats (if any)
-	void SetUserDefinedDateTimeFormat(CSVStateMachine &candidate) const;
+	void SetUserDefinedDateTimeFormat(CSVStateMachine &candidate);
 	//! Functions that performs detection for date and timestamp formats
 	void DetectDateAndTimeStampFormats(CSVStateMachine &candidate, const LogicalType &sql_type, const string &separator,
 	                                   const string_t &dummy_val);
@@ -188,11 +186,11 @@ private:
 	};
 	unordered_map<idx_t, vector<LogicalType>> best_sql_types_candidates_per_column_idx;
 	map<LogicalTypeId, vector<string>> best_format_candidates;
-	unique_ptr<StringValueScanner> best_candidate;
+	unique_ptr<CsvSniffScanner> best_candidate;
 	vector<HeaderValue> best_header_row;
 	//! Variable used for sniffing date and timestamp
 	map<LogicalTypeId, DateTimestampSniffing> format_candidates;
-	map<LogicalTypeId, DateTimestampSniffing> original_format_candidates;
+	unordered_map<string, StrpTimeFormat> parsed_date_formats;
 
 	//! ------------------------------------------------------//
 	//! ------------------ Type Refinement ------------------ //

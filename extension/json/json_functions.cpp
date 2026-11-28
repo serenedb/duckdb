@@ -2,11 +2,13 @@
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "json_functions.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
+#include "duckdb/function/cast/vector_cast_helpers.hpp"
 #include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -51,6 +53,23 @@ JSONReadFunctionData::JSONReadFunctionData(bool constant, string path_p, idx_t l
 		// The path was validated in CheckPath, parse it once so execution can skip tokenizing it per row
 		elements = JSONCommon::ParsePathElements(ptr, len, false);
 		use_elements = true;
+		use_steps = JSONCommon::PathSteps(elements, steps);
+		writable = elements.empty() || use_steps;
+	} else if (constant && len != 0 && path[0] == '$' && path_type == JSONPathType::WILDCARD) {
+		JSONPathIterator iterator(ptr, len, false);
+		JSONPathElement element;
+		const char *rest = iterator.Position();
+		while (iterator.Next(element)) {
+			if (element.type != JSONPathElementType::KEY && element.type != JSONPathElementType::INDEX) {
+				break;
+			}
+			elements.push_back(std::move(element));
+			rest = iterator.Position();
+		}
+		use_wildcard_steps = !elements.empty() && JSONCommon::PathSteps(elements, steps);
+		if (use_wildcard_steps) {
+			wildcard_rest = "$" + string(rest, ptr + len - rest);
+		}
 	}
 }
 
@@ -102,6 +121,11 @@ JSONReadManyFunctionData::JSONReadManyFunctionData(vector<string> paths_p, vecto
 			use_elements.push_back(false);
 		}
 	}
+	steps.resize(paths.size());
+	use_steps = !paths.empty();
+	for (idx_t i = 0; i < paths.size(); i++) {
+		use_steps = use_steps && use_elements[i] && JSONCommon::PathSteps(elements[i], steps[i]);
+	}
 }
 
 unique_ptr<FunctionData> JSONReadManyFunctionData::Copy() const {
@@ -131,12 +155,21 @@ unique_ptr<FunctionData> JSONReadManyFunctionData::Bind(BindScalarFunctionInput 
 	return make_uniq<JSONReadManyFunctionData>(std::move(paths), std::move(lens));
 }
 
-JSONFunctionLocalState::JSONFunctionLocalState(Allocator &allocator)
-    : json_allocator(make_shared_ptr<JSONAllocator>(allocator)) {
+JSONFunctionLocalState::JSONFunctionLocalState(Allocator &allocator, JSONReadFlags read_flags)
+    : arena(allocator), parser(read_flags, allocator), second_parser(read_flags, allocator),
+      writer(JSONCommon::WRITE_FLAG) {
+}
+
+static JSONReadFlags ClientReadFlags(ClientContext &context) {
+	Value strict;
+	if (context.TryGetCurrentSetting("json_strict_paths", strict) && !strict.IsNull() && strict.GetValue<bool>()) {
+		return JSONCommon::READ_FLAG | JSONReadFlags::VALIDATE_PATHS;
+	}
+	return JSONCommon::READ_FLAG;
 }
 
 JSONFunctionLocalState::JSONFunctionLocalState(ClientContext &context)
-    : JSONFunctionLocalState(BufferAllocator::Get(context)) {
+    : JSONFunctionLocalState(BufferAllocator::Get(context), ClientReadFlags(context)) {
 }
 
 unique_ptr<FunctionLocalState> JSONFunctionLocalState::Init(ExpressionState &state, const BoundFunctionExpression &expr,
@@ -151,7 +184,7 @@ unique_ptr<FunctionLocalState> JSONFunctionLocalState::InitCastLocalState(CastLo
 
 JSONFunctionLocalState &JSONFunctionLocalState::ResetAndGet(ExpressionState &state) {
 	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
+	lstate.arena.Reset();
 	return lstate;
 }
 
@@ -256,18 +289,14 @@ unique_ptr<TableRef> JSONFunctions::ReadJSONReplacement(ClientContext &context, 
 
 static bool CastVarcharToJSON(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
 
 	bool success = true;
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t input) -> optional<string_t> {
-		auto data = input.GetDataWriteable();
+		auto data = input.GetData();
 		const auto length = input.GetSize();
 
-		yyjson_read_err error;
-		auto doc = JSONCommon::ReadDocumentUnsafe(data, length, JSONCommon::READ_FLAG, alc, &error);
-
-		if (!doc) {
+		JSONParseError error;
+		if (!lstate.parser.IsValid(data, length, error)) {
 			if (success) {
 				HandleCastError::AssignError(JSONCommon::FormatParseError(data, length, error), parameters);
 				success = false;
@@ -337,24 +366,68 @@ static bool CastJSONListToVarchar(Vector &source, Vector &result, idx_t count, C
 	return true;
 }
 
+static bool StartsArrayLiteral(const string_t &input) {
+	const auto data = input.GetData();
+	const auto size = input.GetSize();
+	idx_t pos = 0;
+	while (pos < size && StringUtil::CharacterIsSpace(data[pos])) {
+		pos++;
+	}
+	return pos < size && data[pos] == '{';
+}
+
+static optional<list_entry_t> CastArrayLiteralToJSONList(const string_t &input, Vector &result,
+                                                         JSONFunctionLocalState &lstate, CastParameters &parameters,
+                                                         bool &success) {
+	const auto current_size = ListVector::GetListSize(result);
+	ListVector::Reserve(result, current_size + VectorStringToList::CountPartsList(input, parameters));
+	auto &child = ListVector::GetChildMutable(result);
+	const auto elements = FlatVector::GetDataMutable<string_t>(child);
+	idx_t end = current_size;
+	string error_message;
+	if (!VectorStringToList::SplitStringList(input, elements, end, child, parameters)) {
+		error_message = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+		                                   input.GetString(), result.GetType().ToString());
+	}
+	for (idx_t i = current_size; error_message.empty() && i < end; i++) {
+		JSONParseError error;
+		if (!FlatVector::IsNull(child, i) &&
+		    !lstate.parser.IsValid(elements[i].GetData(), elements[i].GetSize(), error)) {
+			error_message = JSONCommon::FormatParseError(elements[i].GetData(), elements[i].GetSize(), error);
+		}
+	}
+	if (!error_message.empty()) {
+		for (idx_t i = current_size; i < end; i++) {
+			FlatVector::SetNull(child, i, false);
+		}
+		if (success) {
+			HandleCastError::AssignError(error_message, parameters);
+			success = false;
+		}
+		return nullopt;
+	}
+	ListVector::SetListSize(result, end);
+	return list_entry_t {current_size, end - current_size};
+}
+
 static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
 
 	bool success = true;
 	UnaryExecutor::Execute<string_t, list_entry_t>(
 	    source, result, count, [&](const string_t &input) -> optional<list_entry_t> {
+		    if (StartsArrayLiteral(input)) {
+			    return CastArrayLiteralToJSONList(input, result, lstate, parameters, success);
+		    }
 		    // Figure out if the cast can succeed
-		    yyjson_read_err error;
-		    const auto doc = JSONCommon::ReadDocumentUnsafe(input.GetDataWriteable(), input.GetSize(),
-		                                                    JSONCommon::READ_FLAG, alc, &error);
-		    if (!doc || !unsafe_yyjson_is_arr(doc->root)) {
+		    JSONParseError error;
+		    const auto doc = JSONCommon::ReadDocumentUnsafe(lstate.parser, input, error);
+		    if (!doc || doc->type != JSONValueType::ARRAY) {
 			    if (success) {
 				    if (!doc) {
 					    HandleCastError::AssignError(
-					        JSONCommon::FormatParseError(input.GetDataWriteable(), input.GetSize(), error), parameters);
-				    } else if (!unsafe_yyjson_is_arr(doc->root)) {
+					        JSONCommon::FormatParseError(input.GetData(), input.GetSize(), error), parameters);
+				    } else {
 					    auto truncated_input =
 					        input.GetSize() > 50 ? string(input.GetData(), 47) + "..." : input.GetString();
 					    HandleCastError::AssignError(
@@ -367,7 +440,7 @@ static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, C
 		    }
 
 		    auto current_size = ListVector::GetListSize(result);
-		    const auto arr_len = unsafe_yyjson_get_len(doc->root);
+		    const idx_t arr_len = doc->size;
 		    const auto new_size = current_size + arr_len;
 
 		    // Grow list if needed
@@ -376,11 +449,11 @@ static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, C
 		    }
 
 		    // Populate list
-		    const auto result_jsons = FlatVector::GetDataMutable<string_t>(ListVector::GetChildMutable(result));
-		    size_t arr_idx, max;
-		    yyjson_val *val;
-		    yyjson_arr_foreach(doc->root, arr_idx, max, val) {
-			    result_jsons[current_size + arr_idx] = JSONCommon::WriteVal(val, alc);
+		    auto &child = ListVector::GetChildMutable(result);
+		    const auto result_jsons = FlatVector::GetDataMutable<string_t>(child);
+		    idx_t arr_idx = 0;
+		    for (auto &val : doc->Elements()) {
+			    result_jsons[current_size + arr_idx++] = JSONCommon::WriteVal(val, lstate.writer, child);
 		    }
 
 		    // Update size
@@ -389,7 +462,6 @@ static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, C
 		    return list_entry_t {current_size, arr_len};
 	    });
 
-	JSONAllocator::AddBuffer(ListVector::GetChildMutable(result), alc);
 	return success;
 }
 

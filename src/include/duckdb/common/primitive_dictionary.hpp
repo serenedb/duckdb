@@ -40,6 +40,7 @@ template <class SRC, class TGT = SRC, class OP = PrimitiveCastOperator>
 class PrimitiveDictionary {
 private:
 	static constexpr idx_t LOAD_FACTOR = 2;
+	static constexpr idx_t INITIAL_CAPACITY = 1024;
 
 	static constexpr uint32_t INVALID_INDEX = static_cast<uint32_t>(-1);
 	struct primitive_dictionary_entry_t {
@@ -58,12 +59,13 @@ public:
 	//! It is used to dictionary-encode data in, e.g., Parquet files
 	PrimitiveDictionary(Allocator &allocator_p, idx_t maximum_size_p, idx_t maximum_target_capacity_p)
 	    : allocator(allocator_p), maximum_size(maximum_size_p), size(0),
-	      capacity(NextPowerOfTwo(maximum_size * LOAD_FACTOR)), capacity_mask(capacity - 1),
+	      maximum_capacity(NextPowerOfTwo(maximum_size * LOAD_FACTOR)),
+	      capacity(MinValue(maximum_capacity, INITIAL_CAPACITY)), capacity_mask(capacity - 1),
 	      maximum_target_capacity(maximum_target_capacity_p),
 	      allocated_dictionary(allocator.Allocate(capacity * sizeof(primitive_dictionary_entry_t))),
 	      allocated_target(allocator.Allocate(std::is_same<TGT, string_t>::value
 	                                              ? MinValue(INITIAL_TARGET_CAPACITY, maximum_target_capacity)
-	                                              : capacity * sizeof(TGT))),
+	                                              : maximum_capacity * sizeof(TGT))),
 	      target_stream(allocated_target.get(), allocated_target.GetSize()),
 	      dictionary(reinterpret_cast<primitive_dictionary_entry_t *>(allocated_dictionary.get())), full(false) {
 		Clear();
@@ -72,19 +74,24 @@ public:
 public:
 	//! Insert value into dictionary (if not full)
 	template <bool ADD_TO_TARGET = false>
-	void Insert(SRC value) {
+	uint32_t Insert(SRC value) {
 		if (full) {
-			return;
+			return INVALID_INDEX;
 		}
-		auto &entry = Lookup(value);
-		if (entry.IsEmpty()) {
+		auto *entry = &Lookup(value);
+		if (entry->IsEmpty()) {
 			if (size + 1 > maximum_size || (ADD_TO_TARGET && !AddToTarget(value))) {
 				full = true;
-				return;
+				return INVALID_INDEX;
 			}
-			entry.value = value;
-			entry.index = size++;
+			if ((size + 1) * LOAD_FACTOR > capacity) {
+				Grow();
+				entry = &Lookup(value);
+			}
+			entry->value = value;
+			entry->index = size++;
 		}
+		return entry->index;
 	}
 
 	//! Get dictionary index of an already inserted value
@@ -167,6 +174,32 @@ public:
 	}
 
 private:
+	void Grow() {
+		const idx_t grown_capacity = capacity * 2;
+		D_ASSERT(grown_capacity <= maximum_capacity);
+		auto grown = allocator.Allocate(grown_capacity * sizeof(primitive_dictionary_entry_t));
+		auto grown_dictionary = reinterpret_cast<primitive_dictionary_entry_t *>(grown.get());
+		for (idx_t i = 0; i < grown_capacity; i++) {
+			grown_dictionary[i].index = INVALID_INDEX;
+		}
+		const idx_t grown_mask = grown_capacity - 1;
+		for (idx_t i = 0; i < capacity; i++) {
+			const auto &entry = dictionary[i];
+			if (entry.IsEmpty()) {
+				continue;
+			}
+			auto offset = Hash(entry.value) & grown_mask;
+			while (!grown_dictionary[offset].IsEmpty()) {
+				++offset &= grown_mask;
+			}
+			grown_dictionary[offset] = entry;
+		}
+		allocated_dictionary = std::move(grown);
+		dictionary = grown_dictionary;
+		capacity = grown_capacity;
+		capacity_mask = grown_mask;
+	}
+
 	//! Write a value to the target data (if source is not string)
 	template <typename S = SRC, typename std::enable_if<!std::is_same<S, string_t>::value, int>::type = 0>
 	bool AddToTarget(const SRC &src_value) {
@@ -237,8 +270,9 @@ private:
 	uint32_t size;
 
 	//! Dictionary capacity (power of two) and corresponding mask
-	const idx_t capacity;
-	const idx_t capacity_mask;
+	const idx_t maximum_capacity;
+	idx_t capacity;
+	idx_t capacity_mask;
 
 	//! Capacity of target encoded data
 	const idx_t maximum_target_capacity;
@@ -250,7 +284,7 @@ private:
 	MemoryStream target_stream;
 
 	//! Pointers to allocated regions for convenience
-	primitive_dictionary_entry_t *const dictionary;
+	primitive_dictionary_entry_t *dictionary;
 
 	//! More values inserted than possible
 	bool full;

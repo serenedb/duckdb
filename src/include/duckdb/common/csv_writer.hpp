@@ -12,10 +12,13 @@
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/query_context.hpp"
+#include "duckdb/formats/csv_encoder.hpp"
 
 namespace duckdb {
-class AsyncFileWriter;
+class CompressedPiece;
+class CopyFileWriter;
 class MemoryStream;
+class PieceCompressor;
 
 enum class CSVNewLineMode {
 	//! Newlines are written before writing out a new csv line. Ensures we don't write an empty line at the end of
@@ -34,8 +37,7 @@ struct CSVWriterOptions {
 	string newline = "\n";
 	//! The size of the CSV file (in bytes) that we buffer before we flush it to disk
 	idx_t flush_size = 4096ULL * 8ULL;
-	//! For each byte whether the CSV file requires quotes when containing the byte
-	vector<bool> requires_quotes;
+	CsvSpecials specials;
 	//! How to write newlines
 	CSVNewLineMode newline_writing_mode = CSVNewLineMode::WRITE_BEFORE;
 };
@@ -56,14 +58,16 @@ struct CSVWriterState {
 	bool written_anything = false;
 
 	bool require_manual_flush = false;
+	CsvEncodeScratch scratch;
+	unique_ptr<PieceCompressor> compressor;
+	unique_ptr<CompressedPiece> piece;
 };
 
 class CSVWriter {
 public:
 	//! Create a CSVWriter that writes to a (non-owned) WriteStream
 	CSVWriter(WriteStream &stream, vector<Identifier> name_list, bool shared = true);
-	//! Create a CSVWriter with the full set of options that writes to a (non-owned) AsyncFileWriter
-	CSVWriter(CSVReaderOptions &options, AsyncFileWriter &file_writer, bool shared = true);
+	CSVWriter(CSVReaderOptions &options, CopyFileWriter &copy_file, bool shared = true);
 
 	//! Create a CSVWriter that writes to a file
 	CSVWriter(CSVReaderOptions &options, FileSystem &fs, const string &file_path, FileCompressionType compression,
@@ -86,6 +90,7 @@ public:
 
 	//! Flushes all data in the local write state
 	void Flush(CSVWriterState &local_state);
+	void Compress(CSVWriterState &local_state);
 	//! (Non-shared only) variant of Flush
 	void Flush();
 
@@ -126,11 +131,10 @@ protected:
 
 	//! (optional) The owned file writer of this CSVWriter
 	unique_ptr<BufferedFileWriter> file_writer;
-	//! (optional) The non-owned async file writer of this CSVWriter
-	optional_ptr<AsyncFileWriter> async_file_writer;
+	optional_ptr<CopyFileWriter> copy_file;
 
 	//! The WriteStream to write the CSV data to
-	WriteStream &write_stream;
+	optional_ptr<WriteStream> write_stream;
 
 	idx_t bytes_written = 0;
 
@@ -141,17 +145,7 @@ protected:
 
 	unique_ptr<CSVWriterState> global_write_state;
 
-	static void WriteQuoteOrEscape(WriteStream &writer, char quote_or_escape);
-	static string AddEscapes(char to_be_escaped, char escape, const string &val);
-	static bool RequiresQuotes(const char *str, idx_t len, const string &null_str, const vector<bool> &requires_quotes);
-	static void WriteQuotedString(WriteStream &writer, const char *str, idx_t len, bool force_quote,
-	                              const string &null_str, const vector<bool> &requires_quotes, char quote, char escape);
-	static void WriteQuotedString(WriteStream &writer, const char *str, idx_t len, idx_t col_idx,
-	                              CSVReaderOptions &options, CSVWriterOptions &writer_options);
-
-	static void WriteChunk(DataChunk &input, MemoryStream &writer, CSVReaderOptions &options, bool &written_anything,
-	                       CSVWriterOptions &writer_options);
-	static void WriteHeader(MemoryStream &stream, CSVReaderOptions &options, CSVWriterOptions &writer_options);
+	CsvEncoding Encoding() const;
 };
 
 } // namespace duckdb

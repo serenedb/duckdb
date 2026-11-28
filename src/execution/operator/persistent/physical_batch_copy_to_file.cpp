@@ -84,10 +84,6 @@ struct FixedPreparedBatchData {
 
 class FixedBatchCopyGlobalState : public GlobalSinkState {
 public:
-	// heuristic - we need at least 4MB of cache space per column per thread we launch
-	static constexpr const idx_t MINIMUM_MEMORY_PER_COLUMN_PER_THREAD = 4ULL * 1024ULL * 1024ULL;
-
-public:
 	explicit FixedBatchCopyGlobalState(ClientContext &context_p, idx_t minimum_memory_per_thread)
 	    : output_lifecycle(context_p), memory_manager(context_p, minimum_memory_per_thread), initialized(false),
 	      rows_copied(0), scheduled_batch_index(0), flushed_batch_index(0), any_flushing(false), any_finished(false),
@@ -160,10 +156,7 @@ public:
 	}
 
 	idx_t MaxThreads(idx_t source_max_threads) override {
-		// try to request 4MB per column per thread
-		memory_manager.SetMemorySize(source_max_threads * minimum_memory_per_thread);
-		// cap the concurrent threads working on this task based on the amount of available memory
-		return MinValue<idx_t>(source_max_threads, memory_manager.AvailableMemory() / minimum_memory_per_thread + 1);
+		return memory_manager.MaxThreads(source_max_threads, minimum_memory_per_thread);
 	}
 };
 
@@ -708,7 +701,7 @@ unique_ptr<LocalSinkState> PhysicalBatchCopyToFile::GetLocalSinkState(ExecutionC
 unique_ptr<GlobalSinkState> PhysicalBatchCopyToFile::GetGlobalSinkState(ClientContext &context) const {
 	// request memory based on the minimum amount of memory per column
 	auto minimum_memory_per_thread =
-	    FixedBatchCopyGlobalState::MINIMUM_MEMORY_PER_COLUMN_PER_THREAD * children[0].get().GetTypes().size();
+	    BatchMemoryManager::MINIMUM_MEMORY_PER_COLUMN_PER_THREAD * children[0].get().GetTypes().size();
 	auto result = make_uniq<FixedBatchCopyGlobalState>(context, minimum_memory_per_thread);
 	result->output_gate = context.GetCopyOutputGate(file_path);
 	if (write_empty_file) {

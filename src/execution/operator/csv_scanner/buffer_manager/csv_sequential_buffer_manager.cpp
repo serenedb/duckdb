@@ -13,49 +13,129 @@ CSVSequentialBufferManager::CSVSequentialBufferManager(ClientContext &context_p,
 
 void CSVSequentialBufferManager::Initialize() {
 	if (cached_buffers.empty()) {
-		cached_buffers.emplace_back(make_shared_ptr<CSVBuffer>(context, buffer_size, *file_handle, global_csv_pos));
-		last_buffer = cached_buffers.front();
+		last_buffer = nullptr;
 	}
-}
-
-bool CSVSequentialBufferManager::ReadNextAndCacheIt() {
-	D_ASSERT(last_buffer);
-	for (idx_t i = 0; i < 2; i++) {
-		if (!last_buffer->IsCSVFileLastBuffer()) {
-			auto maybe_last_buffer = last_buffer->Next(*file_handle, buffer_size, has_seeked);
-			if (!maybe_last_buffer) {
-				last_buffer->last_buffer = true;
-				return false;
-			}
-			last_buffer = std::move(maybe_last_buffer);
-			cached_buffers.emplace_back(last_buffer);
-			return true;
-		}
-	}
-	return false;
 }
 
 shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t pos) {
-	lock_guard<mutex> parallel_lock(main_mutex);
-	if (pos == 0 && done && cached_buffers.empty()) {
-		if (is_pipe) {
-			throw InvalidInputException("Recursive CTEs are not allowed when using piped csv files");
+	{
+		lock_guard<mutex> parallel_lock(main_mutex);
+		if (pos < cached_buffers.size() && cached_buffers[pos]) {
+			shared_ptr<CSVBufferHandle> pinned;
+			if (cached_buffers[pos]->TryPin(pinned)) {
+				UnpinPrevious(pos);
+				return pinned;
+			}
 		}
-		// This is a recursive CTE, we have to reset out whole buffer
-		done = false;
-		file_handle->Reset();
-		Initialize();
 	}
-	while (pos >= cached_buffers.size()) {
+	lock_guard<mutex> read_guard(read_lock);
+	while (true) {
+		shared_ptr<CSVBuffer> previous;
+		shared_ptr<CSVBuffer> recycled;
+		{
+			lock_guard<mutex> parallel_lock(main_mutex);
+			if (pos == 0 && done && cached_buffers.empty()) {
+				if (is_pipe) {
+					throw InvalidInputException("Recursive CTEs are not allowed when using piped csv files");
+				}
+				done = false;
+				file_handle->Reset();
+				Initialize();
+			}
+			if (pos < cached_buffers.size()) {
+				UnpinPrevious(pos);
+				return cached_buffers[pos]->Pin(*file_handle, has_seeked);
+			}
+			if (done) {
+				return nullptr;
+			}
+			previous = last_buffer;
+			if (previous && !previous->IsCSVFileLastBuffer()) {
+				recycled = std::move(spare);
+			}
+		}
+		shared_ptr<CSVBuffer> next;
+		if (!previous) {
+			next = make_shared_ptr<CSVBuffer>(context, buffer_size, *file_handle, global_csv_pos);
+		} else if (!previous->IsCSVFileLastBuffer()) {
+			next = previous->Next(*file_handle, buffer_size, has_seeked, std::move(recycled));
+		}
+		lock_guard<mutex> parallel_lock(main_mutex);
+		if (next) {
+			last_buffer = next;
+			cached_buffers.emplace_back(std::move(next));
+			if (cached_buffers.size() == 2 && reset_when_possible.erase(0)) {
+				ResetFrom(0);
+			}
+		} else {
+			previous->last_buffer = true;
+			MarkDone(*previous);
+		}
+	}
+}
+
+idx_t CSVSequentialBufferManager::ReadInOrder(char *data, idx_t count, idx_t offset) {
+	idx_t read = 0;
+	while (read < count) {
+		const idx_t position = offset + read;
+		shared_ptr<CSVBufferHandle> pinned;
+		{
+			lock_guard<mutex> parallel_lock(main_mutex);
+			const idx_t index = position / buffer_size;
+			if (index >= cached_buffers.size() || !cached_buffers[index]) {
+				break;
+			}
+			pinned = cached_buffers[index]->Pin(*file_handle, has_seeked);
+		}
+		const idx_t within = position % buffer_size;
+		if (within >= pinned->actual_size) {
+			break;
+		}
+		const idx_t piece = MinValue(count - read, pinned->actual_size - within);
+		memcpy(data + read, pinned->Ptr() + within, piece);
+		read += piece;
+	}
+	if (read == count) {
+		return read;
+	}
+	lock_guard<mutex> read_guard(read_lock);
+	{
+		lock_guard<mutex> parallel_lock(main_mutex);
+		if (last_buffer && last_buffer->IsCSVFileLastBuffer()) {
+			MarkDone(*last_buffer);
+		}
 		if (done) {
-			return nullptr;
+			return read;
 		}
-		if (!ReadNextAndCacheIt()) {
-			done = true;
+		if (!direct_position.IsValid()) {
+			direct_position = last_buffer ? last_buffer->GlobalEnd() : global_csv_pos;
 		}
 	}
-	UnpinPrevious(pos);
-	return cached_buffers[pos]->Pin(*file_handle, has_seeked);
+	D_ASSERT(offset + read == direct_position.GetIndex());
+	idx_t position = direct_position.GetIndex();
+	while (read < count) {
+		const idx_t got = file_handle->Read(data + read, count - read);
+		if (got == 0) {
+			lock_guard<mutex> parallel_lock(main_mutex);
+			done = true;
+			known_end = position;
+			break;
+		}
+		read += got;
+		position += got;
+	}
+	direct_position = position;
+	return read;
+}
+
+void CSVSequentialBufferManager::MarkDone(const CSVBuffer &last) {
+	done = true;
+	known_end = last.GlobalEnd();
+}
+
+optional_idx CSVSequentialBufferManager::KnownEnd() {
+	lock_guard<mutex> parallel_lock(main_mutex);
+	return known_end;
 }
 
 void CSVSequentialBufferManager::UnpinPrevious(const idx_t pos) {
@@ -81,7 +161,7 @@ CSVBufferResidency CSVSequentialBufferManager::GetBufferResidency(const idx_t po
 		return CSVBufferResidency::IN_MEMORY;
 	}
 	if (!cached_buffers.empty() && cached_buffers.back() && cached_buffers.back()->last_buffer) {
-		done = true;
+		MarkDone(*cached_buffers.back());
 	}
 	if (done) {
 		return CSVBufferResidency::END_OF_FILE;
@@ -97,13 +177,7 @@ void CSVSequentialBufferManager::ResetBuffer(const idx_t buffer_idx) {
 	}
 	D_ASSERT(cached_buffers[buffer_idx]);
 	if (buffer_idx == 0 && cached_buffers.size() > 1) {
-		cached_buffers[buffer_idx].reset();
-		idx_t cur_buffer = buffer_idx + 1;
-		while (reset_when_possible.find(cur_buffer) != reset_when_possible.end()) {
-			cached_buffers[cur_buffer].reset();
-			reset_when_possible.erase(cur_buffer);
-			cur_buffer++;
-		}
+		ResetFrom(0);
 		return;
 	}
 	// We only reset if previous one was also already reset
@@ -117,13 +191,21 @@ void CSVSequentialBufferManager::ResetBuffer(const idx_t buffer_idx) {
 		reset_when_possible.clear();
 		return;
 	}
-	cached_buffers[buffer_idx].reset();
-	idx_t cur_buffer = buffer_idx + 1;
-	while (reset_when_possible.find(cur_buffer) != reset_when_possible.end()) {
-		cached_buffers[cur_buffer].reset();
-		reset_when_possible.erase(cur_buffer);
-		cur_buffer++;
+	ResetFrom(buffer_idx);
+}
+
+void CSVSequentialBufferManager::ResetFrom(idx_t buffer_idx) {
+	Recycle(cached_buffers[buffer_idx]);
+	for (idx_t cur_buffer = buffer_idx + 1; reset_when_possible.erase(cur_buffer); cur_buffer++) {
+		Recycle(cached_buffers[cur_buffer]);
 	}
+}
+
+void CSVSequentialBufferManager::Recycle(shared_ptr<CSVBuffer> &buffer) {
+	if (!spare && buffer.use_count() == 1 && buffer->Reusable()) {
+		spare = std::move(buffer);
+	}
+	buffer.reset();
 }
 
 bool CSVSequentialBufferManager::Done() const {
@@ -138,6 +220,7 @@ void CSVSequentialBufferManager::ResetBufferManager() {
 		file_handle->Reset();
 		last_buffer = nullptr;
 		done = false;
+		known_end = optional_idx();
 		global_csv_pos = 0;
 		Initialize();
 	}

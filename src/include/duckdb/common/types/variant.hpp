@@ -14,14 +14,8 @@
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/storage/storage_info.hpp"
 
-namespace duckdb_yyjson {
-struct yyjson_mut_doc;
-struct yyjson_mut_val;
-} // namespace duckdb_yyjson
-
 namespace duckdb {
 class Vector;
-class VariantNode;
 struct ValidityMask;
 struct UnifiedVariantVector;
 struct RecursiveUnifiedVectorFormat;
@@ -204,14 +198,6 @@ private:
 	const string_t *blob_data = nullptr;
 
 	const ValidityMask &keys_index_validity;
-};
-
-struct VariantCasts {
-	static duckdb_yyjson::yyjson_mut_val *ConvertVariantToJSON(duckdb_yyjson::yyjson_mut_doc *doc,
-	                                                           const UnifiedVariantVectorData &source, idx_t row,
-	                                                           uint32_t values_idx);
-	static duckdb_yyjson::yyjson_mut_val *ConvertVariantToJSON(duckdb_yyjson::yyjson_mut_doc *doc,
-	                                                           const VariantNode &source, bool sort_object_keys = true);
 };
 
 } // namespace duckdb

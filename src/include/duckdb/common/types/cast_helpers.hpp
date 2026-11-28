@@ -142,26 +142,23 @@ struct DecimalToString {
 			value = static_cast<SIGNED>(-value);
 			*dst = '-';
 		}
+		auto digits = UnsafeNumericCast<UNSIGNED>(value);
 		if (scale == 0) {
-			NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(value), end);
+			NumericHelper::FormatUnsigned<UNSIGNED>(digits, end);
 			return;
 		}
-		// we write two numbers:
-		// the numbers BEFORE the decimal (major)
-		// and the numbers AFTER the decimal (minor)
-		auto minor =
-		    UnsafeNumericCast<UNSIGNED>(value) % UnsafeNumericCast<UNSIGNED>(NumericHelper::POWERS_OF_TEN[scale]);
-		auto major =
-		    UnsafeNumericCast<UNSIGNED>(value) / UnsafeNumericCast<UNSIGNED>(NumericHelper::POWERS_OF_TEN[scale]);
-		// write the number after the decimal
-		dst = NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(minor), end);
-		// (optionally) pad with zeros and add the decimal point
-		while (dst > (end - scale)) {
-			*--dst = '0';
+		idx_t fraction = scale;
+		for (; fraction >= 2; fraction -= 2) {
+			end -= 2;
+			memcpy(end, fmt::detail::digits2(NumericCast<size_t>(digits % 100)), 2);
+			digits /= 100;
 		}
-		*--dst = '.';
-		// PG-compatible: always write the integer part (at least "0").
-		dst = NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(major), dst);
+		if (fraction) {
+			*--end = NumericCast<char>('0' + digits % 10);
+			digits /= 10;
+		}
+		*--end = '.';
+		NumericHelper::FormatUnsigned<UNSIGNED>(digits, end);
 	}
 
 	template <class SIGNED>
@@ -249,6 +246,9 @@ struct DateToStringCast {
 	static void Format(char *data, int32_t date[], idx_t year_length, bool add_bc) {
 		Format(data, date[0], date[1], date[2], year_length, add_bc);
 	}
+
+	static constexpr idx_t MAX_LENGTH = 19;
+	DUCKDB_API static idx_t Write(date_t date, char *data);
 };
 
 struct TimeToStringCast {
@@ -327,9 +327,21 @@ struct TimeToStringCast {
 	static void Format(char *data, idx_t length, int32_t time[], char micro_buffer[]) {
 		Format(data, length, time[0], time[1], time[2], time[3], micro_buffer);
 	}
+
+	static constexpr idx_t MAX_LENGTH = 15 + 6;
+	DUCKDB_API static idx_t Write(dtime_t time, char *data);
+	DUCKDB_API static idx_t Write(dtime_ns_t time, char *data);
+};
+
+struct TimestampToStringCast {
+	static constexpr idx_t MAX_LENGTH = DateToStringCast::MAX_LENGTH + 1 + TimeToStringCast::MAX_LENGTH + 3;
+	DUCKDB_API static idx_t Write(timestamp_t timestamp, char *data);
+	DUCKDB_API static idx_t Write(timestamp_ns_t timestamp, char *data);
 };
 
 struct IntervalToStringCast {
+	static constexpr idx_t MAX_LENGTH = 70;
+
 	static void FormatSignedNumber(int64_t value, char buffer[], idx_t &length) {
 		int sign = -(value < 0);
 		auto unsigned_value = NumericCast<uint64_t>((value ^ sign) - sign);

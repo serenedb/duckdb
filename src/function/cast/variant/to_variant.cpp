@@ -116,13 +116,14 @@ struct VariantCastData : BoundCastData {
 };
 
 struct VariantLocalData : FunctionLocalState {
-	VariantLocalData(const LogicalType &shredded_type, Allocator &allocator) : allocator(allocator) {
+	VariantLocalData(const LogicalType &shredded_type, Allocator &allocator)
+	    : json_parser(JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS |
+	                      JSONReadFlags::BIGNUM_AS_RAW,
+	                  allocator) {
 		Initialize(shredded_type, STANDARD_VECTOR_SIZE);
 	}
 
-	//! Allocator for temporary conversion memory (e.g. JSON parsing), backed by the buffer allocator when possible
-	//! so the memory is tracked
-	Allocator &allocator;
+	JSONTreeParser json_parser;
 
 	void Initialize(const LogicalType &shredded_type, idx_t new_capacity) {
 		capacity = new_capacity;
@@ -235,7 +236,7 @@ static bool CastToVARIANT(Vector &source, Vector &result, idx_t count, CastParam
 
 	{
 		VariantVectorData variant_data(result);
-		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec, local_data.allocator);
+		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec, local_data.json_parser);
 		if (!GatherOffsetsAndSizes(source_data, result_data, count)) {
 			return false;
 		}
@@ -247,7 +248,7 @@ static bool CastToVARIANT(Vector &source, Vector &result, idx_t count, CastParam
 
 	{
 		VariantVectorData variant_data(result);
-		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec, local_data.allocator);
+		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec, local_data.json_parser);
 		if (!WriteVariantResultData(source_data, result_data, count)) {
 			return false;
 		}

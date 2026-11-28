@@ -1,0 +1,56 @@
+# name: test/sql/copy/csv/test_csv_rendering.test
+# description: read_csv and read_json take the rendering of their values: DuckDB's by default, and PostgreSQL's only where the host provides its input functions
+# group: [csv]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES ('[1, 2]', 'true', '2024-01-02'), ('[3]', 'false', '2024-03-04')) t(l, b, d)) TO '{TEMP_DIR}/rendering.csv' (HEADER false);
+
+query III
+SELECT * FROM read_csv('{TEMP_DIR}/rendering.csv', columns = {'l': 'INTEGER[]', 'b': 'BOOLEAN', 'd': 'DATE'}, rendering = 'duckdb')
+----
+[1, 2]	true	2024-01-02
+[3]	false	2024-03-04
+
+query III
+SELECT * FROM read_csv('{TEMP_DIR}/rendering.csv', columns = {'l': 'INTEGER[]', 'b': 'BOOLEAN', 'd': 'DATE'}, rendering = 'DuckDB')
+----
+[1, 2]	true	2024-01-02
+[3]	false	2024-03-04
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/rendering.csv', columns = {'l': 'INTEGER[]', 'b': 'BOOLEAN', 'd': 'DATE'}, rendering = 'postgres')
+----
+The postgres rendering needs PostgreSQL's input functions, which this database does not provide
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/rendering.csv', rendering = 'sql')
+----
+rendering must be 'duckdb' or 'postgres', got 'sql'
+
+statement ok
+COPY (SELECT '2024-01-02' AS d) TO '{TEMP_DIR}/rendering.json' (FORMAT json);
+
+query I
+SELECT d FROM read_json('{TEMP_DIR}/rendering.json', columns = {'d': 'DATE'}, rendering = 'duckdb')
+----
+2024-01-02
+
+statement error
+SELECT d FROM read_json('{TEMP_DIR}/rendering.json', columns = {'d': 'DATE'}, rendering = 'postgres')
+----
+The postgres rendering needs PostgreSQL's input functions, which this database does not provide
+
+statement error
+SELECT d FROM read_json('{TEMP_DIR}/rendering.json', columns = {'d': 'DATE'}, rendering = 'sql')
+----
+rendering must be 'duckdb' or 'postgres', got 'sql'
+
+statement ok
+COPY (SELECT 'a' AS s, ['x', 'y'] AS l) TO '{TEMP_DIR}/rendering_text.json' (FORMAT json);
+
+query II
+SELECT s, l FROM read_json('{TEMP_DIR}/rendering_text.json', columns = {'s': 'VARCHAR', 'l': 'VARCHAR[]'}, rendering = 'postgres')
+----
+a	[x, y]

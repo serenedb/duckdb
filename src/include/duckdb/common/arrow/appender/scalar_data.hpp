@@ -23,14 +23,6 @@ struct ArrowScalarConverter {
 	static TGT Operation(SRC input) {
 		return input;
 	}
-
-	static bool SkipNulls() {
-		return false;
-	}
-
-	template <class TGT>
-	static void SetNull(TGT &value) {
-	}
 };
 
 struct ArrowIntervalConverter {
@@ -42,28 +34,12 @@ struct ArrowIntervalConverter {
 		result.nanoseconds = input.micros * Interval::NANOS_PER_MICRO;
 		return result;
 	}
-
-	static bool SkipNulls() {
-		return true;
-	}
-
-	template <class TGT>
-	static void SetNull(TGT &value) {
-	}
 };
 
 struct ArrowTimeTzConverter {
 	template <class TGT, class SRC>
 	static TGT Operation(SRC input) {
 		return input.time().value;
-	}
-
-	static bool SkipNulls() {
-		return true;
-	}
-
-	template <class TGT>
-	static void SetNull(TGT &value) {
 	}
 };
 
@@ -76,14 +52,6 @@ struct ArrowUUIDBlobConverter {
 		auto lower =
 		    BSwapIfLE(static_cast<int64_t>(static_cast<uint64_t>(input.upper) ^ (static_cast<uint64_t>(1) << 63)));
 		return {static_cast<int64_t>(upper), static_cast<uint64_t>(lower)};
-	}
-
-	static bool SkipNulls() {
-		return true;
-	}
-
-	template <class TGT>
-	static void SetNull(TGT &value) {
 	}
 };
 
@@ -105,15 +73,21 @@ struct ArrowScalarBaseData {
 		auto data = UnifiedVectorFormat::GetData<SRC>(format);
 		auto result_data = main_buffer.GetData<TGT>();
 
-		for (idx_t i = from; i < to; i++) {
-			auto source_idx = format.sel->get_index(i);
-			auto result_idx = append_data.row_count + i - from;
-
-			if (OP::SkipNulls() && !format.validity.RowIsValid(source_idx)) {
-				OP::template SetNull<TGT>(result_data[result_idx]);
-				continue;
+		if (!format.validity.CanHaveNull()) {
+			for (idx_t i = from; i < to; i++) {
+				auto source_idx = format.sel->get_index(i);
+				result_data[append_data.row_count + i - from] = OP::template Operation<TGT, SRC>(data[source_idx]);
 			}
-			result_data[result_idx] = OP::template Operation<TGT, SRC>(data[source_idx]);
+		} else {
+			for (idx_t i = from; i < to; i++) {
+				auto source_idx = format.sel->get_index(i);
+				auto result_idx = append_data.row_count + i - from;
+				if (!format.validity.RowIsValid(source_idx)) {
+					result_data[result_idx] = TGT();
+					continue;
+				}
+				result_data[result_idx] = OP::template Operation<TGT, SRC>(data[source_idx]);
+			}
 		}
 		append_data.row_count += size;
 	}

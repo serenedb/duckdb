@@ -1,0 +1,37 @@
+# name: test/sql/copy/csv/read_csv_cast_columns.test
+# description: string columns decoded through a cast from their field text keep their values after the scan returns, across chunks and where a join holds a chunk
+# group: [csv]
+
+require json
+
+statement ok
+CREATE TABLE src AS SELECT i AS id, ('{"value": "number ' || i || ' of the json column"}')::JSON AS v, ['a', 'b'] AS a FROM range(20000) t(i);
+
+statement ok
+COPY (SELECT id, v::VARCHAR AS v, a::VARCHAR AS a FROM src) TO '{TEMP_DIR}/alias_columns.csv' (HEADER);
+
+query II
+SELECT count(*), sum(length(v)) FROM read_csv('{TEMP_DIR}/alias_columns.csv', columns = {'id': 'INTEGER', 'v': 'JSON', 'a': 'VARCHAR'}, header = true, auto_detect = false);
+----
+20000	868890
+
+query I
+SELECT count(*) FROM src o FULL JOIN read_csv('{TEMP_DIR}/alias_columns.csv', columns = {'id': 'INTEGER', 'v': 'JSON', 'a': 'VARCHAR'}, header = true, auto_detect = false) r ON r.id = o.id WHERE r.v::VARCHAR IS DISTINCT FROM o.v::VARCHAR;
+----
+0
+
+statement ok
+CREATE TABLE small (id INTEGER, v JSON);
+
+statement ok
+INSERT INTO small VALUES (1, '{"first": "a value longer than twelve bytes"}'), (2, '{"second": "a value longer than twelve bytes"}'), (3, NULL);
+
+statement ok
+COPY (SELECT id, v::VARCHAR AS v, 'x' AS a FROM small) TO '{TEMP_DIR}/alias_small.csv' (HEADER);
+
+query II
+SELECT coalesce(o.id, r.id) AS id, r.v::VARCHAR IS NOT DISTINCT FROM o.v::VARCHAR AS same FROM small o FULL JOIN read_csv('{TEMP_DIR}/alias_small.csv', columns = {'id': 'INTEGER', 'v': 'JSON', 'a': 'VARCHAR'}, header = true, auto_detect = false) r ON r.id = o.id ORDER BY 1;
+----
+1	true
+2	true
+3	true

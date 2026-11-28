@@ -8,6 +8,7 @@
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/formats/copy_options.hpp"
 #include "duckdb/function/table/read_csv.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
@@ -24,6 +25,8 @@
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/column_data_ref.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_column_data_get.hpp"
 #include "duckdb/planner/operator/logical_copy_to_file.hpp"
@@ -526,6 +529,32 @@ BoundStatement Binder::BindCopyTo(CopyStatement &stmt, const CopyFunction &funct
 	ValidateCopyToOptionCombinations(parsed_options, function, stmt.info->format);
 	auto resolved_options = ResolveCopyToOptions(context, stmt.info->file_path, std::move(parsed_options));
 
+	auto written_type = DBConfig::GetConfig(context).copy_to_written_type;
+	if (function.writes_typed_columns && written_type) {
+		auto bindings = select_node.plan->GetColumnBindings();
+		vector<unique_ptr<Expression>> select_list;
+		select_list.reserve(bindings.size());
+		bool changed = false;
+		for (idx_t i = 0; i < bindings.size(); i++) {
+			auto &type = select_node.types[i];
+			unique_ptr<Expression> expr = make_uniq<BoundColumnRefExpression>(select_node.names[i], type, bindings[i]);
+			auto target = written_type(type);
+			if (target != type) {
+				expr = BoundCastExpression::AddCastToType(context, std::move(expr), target, false);
+				expr->SetAlias(select_node.names[i]);
+				changed = true;
+			}
+			select_list.push_back(std::move(expr));
+		}
+		if (changed) {
+			auto projection = make_uniq<LogicalProjection>(GenerateTableIndex(), std::move(select_list));
+			projection->children.push_back(std::move(select_node.plan));
+			projection->ResolveOperatorTypes();
+			select_node.types = projection->types;
+			select_node.plan = std::move(projection);
+		}
+	}
+
 	// Allow the copy function to intercept the select list and types and push a new projection on top of the plan
 	if (function.copy_to_select) {
 		auto bindings = select_node.plan->GetColumnBindings();
@@ -669,26 +698,6 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	// lookup the table to copy into
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
-	const bool postgres_csv =
-	    stmt.info->format == "csv" && table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
-	if (postgres_csv) {
-		auto &options = stmt.info->options;
-		options.try_emplace("allow_quoted_nulls", vector<Value> {Value::BOOLEAN(false)});
-		if (!stmt.info->is_format_auto_detected && !options.contains("auto_detect")) {
-			bool delimiter_given = false;
-			for (auto &option : options) {
-				delimiter_given |= option.first.StartsWith("delim") || option.first.StartsWith("sep");
-			}
-			if (!delimiter_given) {
-				options.emplace("delimiter", vector<Value> {Value(",")});
-			}
-			auto quote = options.try_emplace("quote", vector<Value> {Value("\"")}).first->second;
-			options.try_emplace("escape", std::move(quote));
-			options.try_emplace("comment", vector<Value> {Value("")});
-			options.try_emplace("skip", vector<Value> {Value::BIGINT(0)});
-			options.try_emplace("header", vector<Value> {Value::BOOLEAN(false)});
-		}
-	}
 	IndexVector<idx_t, PhysicalIndex> column_index_map;
 	vector<LogicalIndex> named_column_map;
 	vector<LogicalType> expected_types;
@@ -844,31 +853,9 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			info.is_format_auto_detected = false;
 			continue;
 		}
-		// PG compat aliases: ON_ERROR 'ignore' -> ignore_errors true,
-		// REJECT_LIMIT N -> rejects_limit N.
-		if (option_name == "on_error") {
-			auto val = inputs.empty() ? "" : inputs[0].ToString();
-			if (StringUtil::CIEquals(val, "ignore")) {
-				info.options["ignore_errors"] = {Value::BOOLEAN(true)};
-			} else if (StringUtil::CIEquals(val, "stop")) {
-				// STOP is the default — do nothing.
-			} else {
-				throw ParserException("invalid value for parameter %s: \"%s\"", option_name, val);
-			}
-			continue;
-		}
-		if (option_name == "reject_limit") {
-			if (!inputs.empty()) {
-				auto limit = inputs[0].GetValue<int64_t>();
-				if (limit <= 0) {
-					throw ParserException("REJECT_LIMIT (%lld) must be greater than zero", limit);
-				}
-			}
-			info.options["rejects_limit"] = std::move(inputs);
-			continue;
-		}
 		info.options[option_name] = std::move(inputs);
 	}
+	NormalizeCopyErrorOptions(info.options);
 	// An expression source (e.g. getvariable()) only resolves to a path here, so the
 	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
 	// Re-derive from the resolved extension when the user didn't specify a format. Limit

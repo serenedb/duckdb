@@ -1,0 +1,51 @@
+# name: test/sql/copy/csv/test_sniff_value_parsers.test
+# description: the CSV and JSON sniffers accept a candidate type only for values the scan's own parsers read as that type
+# group: [csv]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES ('1.0'), ('2'), ('-7')) t(v)) TO '{TEMP_DIR}/fractional.csv' (HEADER false);
+
+foreach candidate TINYINT SMALLINT INTEGER BIGINT
+
+query I
+SELECT columns FROM sniff_csv('{TEMP_DIR}/fractional.csv', header = false, auto_type_candidates = ['{candidate}', 'VARCHAR']);
+----
+[{'name': column0, 'type': VARCHAR}]
+
+endloop
+
+statement ok
+COPY (SELECT * FROM (VALUES ('1'), ('2'), ('-7')) t(v)) TO '{TEMP_DIR}/integral.csv' (HEADER false);
+
+query IIII
+SELECT
+	(SELECT typeof(column0) FROM read_csv('{TEMP_DIR}/integral.csv', header = false, auto_type_candidates = ['TINYINT', 'VARCHAR']) LIMIT 1),
+	(SELECT typeof(column0) FROM read_csv('{TEMP_DIR}/integral.csv', header = false, auto_type_candidates = ['SMALLINT', 'VARCHAR']) LIMIT 1),
+	(SELECT typeof(column0) FROM read_csv('{TEMP_DIR}/integral.csv', header = false, auto_type_candidates = ['INTEGER', 'VARCHAR']) LIMIT 1),
+	(SELECT typeof(column0) FROM read_csv('{TEMP_DIR}/integral.csv', header = false, auto_type_candidates = ['BIGINT', 'VARCHAR']) LIMIT 1);
+----
+TINYINT	SMALLINT	INTEGER	BIGINT
+
+statement ok
+COPY (SELECT * FROM (VALUES ('007'), ('8'), ('0009')) t(v)) TO '{TEMP_DIR}/leading.csv' (HEADER false);
+
+query I
+SELECT columns FROM sniff_csv('{TEMP_DIR}/leading.csv', header = false);
+----
+[{'name': column0, 'type': VARCHAR}]
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"a": "007", "b": "12", "c": "2024-01-02", "d": "2024-01-02 03:04:05", "e": "1.5"}'), ('{"a": "8", "b": "-3", "c": "2023-12-31", "d": "2023-12-31 23:59:59", "e": "2"}')) t(v)) TO '{TEMP_DIR}/strings.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query IIIII
+SELECT typeof(a), typeof(b), typeof(c), typeof(d), typeof(e) FROM read_ndjson('{TEMP_DIR}/strings.ndjson', convert_strings_to_integers = true) LIMIT 1;
+----
+VARCHAR	BIGINT	DATE	TIMESTAMP	VARCHAR
+
+query IIIII
+SELECT a, b, c, d, e FROM read_ndjson('{TEMP_DIR}/strings.ndjson', convert_strings_to_integers = true) ORDER BY b;
+----
+8	-3	2023-12-31	2023-12-31 23:59:59	2
+007	12	2024-01-02	2024-01-02 03:04:05	1.5

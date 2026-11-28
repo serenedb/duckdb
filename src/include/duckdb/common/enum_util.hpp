@@ -162,9 +162,15 @@ enum class ConstraintType : uint8_t;
 
 enum class CoordinateReferenceSystemType : uint8_t;
 
+enum class CopyFieldKind : uint8_t;
+
+enum class CopyFormat : uint8_t;
+
 enum class CopyFunctionFlushBatchReason : uint8_t;
 
 enum class CopyFunctionReturnType : uint8_t;
+
+enum class CopyLogVerbosity : uint8_t;
 
 enum class CopyOverwriteMode : uint8_t;
 
@@ -329,6 +335,8 @@ enum class JoinOrderOperatorType : uint8_t;
 enum class JoinRefType : uint8_t;
 
 enum class JoinType : uint8_t;
+
+enum class JsonRangeOrigin : uint8_t;
 
 enum class KeywordCase : uint8_t;
 
@@ -536,6 +544,10 @@ enum class RowGroupAppendMode : uint8_t;
 
 enum class RowIdHandling : uint8_t;
 
+enum class RowQuoting : uint8_t;
+
+enum class RowReadResult : uint8_t;
+
 enum class SampleMethod : uint8_t;
 
 enum class SampleType : uint8_t;
@@ -669,6 +681,8 @@ enum class UndoFlags : uint32_t;
 enum class UnionInvalidReason : uint8_t;
 
 enum class VacuumIndexStrategy : uint8_t;
+
+enum class ValueRendering : uint8_t;
 
 enum class VariantChildLookupMode : uint8_t;
 
@@ -902,10 +916,19 @@ template<>
 const char* EnumUtil::ToChars<CoordinateReferenceSystemType>(CoordinateReferenceSystemType value);
 
 template<>
+const char* EnumUtil::ToChars<CopyFieldKind>(CopyFieldKind value);
+
+template<>
+const char* EnumUtil::ToChars<CopyFormat>(CopyFormat value);
+
+template<>
 const char* EnumUtil::ToChars<CopyFunctionFlushBatchReason>(CopyFunctionFlushBatchReason value);
 
 template<>
 const char* EnumUtil::ToChars<CopyFunctionReturnType>(CopyFunctionReturnType value);
+
+template<>
+const char* EnumUtil::ToChars<CopyLogVerbosity>(CopyLogVerbosity value);
 
 template<>
 const char* EnumUtil::ToChars<CopyOverwriteMode>(CopyOverwriteMode value);
@@ -1152,6 +1175,9 @@ const char* EnumUtil::ToChars<JoinRefType>(JoinRefType value);
 
 template<>
 const char* EnumUtil::ToChars<JoinType>(JoinType value);
+
+template<>
+const char* EnumUtil::ToChars<JsonRangeOrigin>(JsonRangeOrigin value);
 
 template<>
 const char* EnumUtil::ToChars<KeywordCase>(KeywordCase value);
@@ -1463,6 +1489,12 @@ template<>
 const char* EnumUtil::ToChars<RowIdHandling>(RowIdHandling value);
 
 template<>
+const char* EnumUtil::ToChars<RowQuoting>(RowQuoting value);
+
+template<>
+const char* EnumUtil::ToChars<RowReadResult>(RowReadResult value);
+
+template<>
 const char* EnumUtil::ToChars<SampleMethod>(SampleMethod value);
 
 template<>
@@ -1662,6 +1694,9 @@ const char* EnumUtil::ToChars<UnionInvalidReason>(UnionInvalidReason value);
 
 template<>
 const char* EnumUtil::ToChars<VacuumIndexStrategy>(VacuumIndexStrategy value);
+
+template<>
+const char* EnumUtil::ToChars<ValueRendering>(ValueRendering value);
 
 template<>
 const char* EnumUtil::ToChars<VariantChildLookupMode>(VariantChildLookupMode value);
@@ -1911,10 +1946,19 @@ template<>
 CoordinateReferenceSystemType EnumUtil::FromString<CoordinateReferenceSystemType>(std::string_view value);
 
 template<>
+CopyFieldKind EnumUtil::FromString<CopyFieldKind>(std::string_view value);
+
+template<>
+CopyFormat EnumUtil::FromString<CopyFormat>(std::string_view value);
+
+template<>
 CopyFunctionFlushBatchReason EnumUtil::FromString<CopyFunctionFlushBatchReason>(std::string_view value);
 
 template<>
 CopyFunctionReturnType EnumUtil::FromString<CopyFunctionReturnType>(std::string_view value);
+
+template<>
+CopyLogVerbosity EnumUtil::FromString<CopyLogVerbosity>(std::string_view value);
 
 template<>
 CopyOverwriteMode EnumUtil::FromString<CopyOverwriteMode>(std::string_view value);
@@ -2161,6 +2205,9 @@ JoinRefType EnumUtil::FromString<JoinRefType>(std::string_view value);
 
 template<>
 JoinType EnumUtil::FromString<JoinType>(std::string_view value);
+
+template<>
+JsonRangeOrigin EnumUtil::FromString<JsonRangeOrigin>(std::string_view value);
 
 template<>
 KeywordCase EnumUtil::FromString<KeywordCase>(std::string_view value);
@@ -2472,6 +2519,12 @@ template<>
 RowIdHandling EnumUtil::FromString<RowIdHandling>(std::string_view value);
 
 template<>
+RowQuoting EnumUtil::FromString<RowQuoting>(std::string_view value);
+
+template<>
+RowReadResult EnumUtil::FromString<RowReadResult>(std::string_view value);
+
+template<>
 SampleMethod EnumUtil::FromString<SampleMethod>(std::string_view value);
 
 template<>
@@ -2671,6 +2724,9 @@ UnionInvalidReason EnumUtil::FromString<UnionInvalidReason>(std::string_view val
 
 template<>
 VacuumIndexStrategy EnumUtil::FromString<VacuumIndexStrategy>(std::string_view value);
+
+template<>
+ValueRendering EnumUtil::FromString<ValueRendering>(std::string_view value);
 
 template<>
 VariantChildLookupMode EnumUtil::FromString<VariantChildLookupMode>(std::string_view value);

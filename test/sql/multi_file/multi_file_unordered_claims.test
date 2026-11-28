@@ -1,0 +1,61 @@
+# name: test/sql/multi_file/multi_file_unordered_claims.test
+# description: Without insertion order a thread scans the file it opened at once: every file is read once, with its own rows and file columns, in both orders, files with nothing to scan among them
+# group: [multi_file]
+
+require json
+
+require parquet
+
+statement ok
+SET threads = 8;
+
+loop f 0 64
+
+statement ok
+COPY (SELECT {f} * 100 + range AS i FROM range(100)) TO '{TEST_DIR}/claims_f{f}.csv' (HEADER);
+
+statement ok
+COPY (SELECT {f} * 100 + range AS i FROM range(100)) TO '{TEST_DIR}/claims_f{f}.json';
+
+endloop
+
+foreach order true false
+
+statement ok
+SET preserve_insertion_order = {order};
+
+query IIII
+SELECT count(*), sum(i), count(DISTINCT filename), count(*) FILTER (WHERE i // 100 != regexp_extract(filename, 'claims_f(\d+)\.csv', 1)::INT)
+FROM read_csv('{TEST_DIR}/claims_f*.csv', filename = true);
+----
+6400	20476800	64	0
+
+query IIII
+SELECT count(*), sum(i), count(DISTINCT filename), count(*) FILTER (WHERE i // 100 != regexp_extract(filename, 'claims_f(\d+)\.json', 1)::INT)
+FROM read_json('{TEST_DIR}/claims_f*.json', filename = true);
+----
+6400	20476800	64	0
+
+endloop
+
+loop f 0 16
+
+statement ok
+COPY (SELECT {f} * 100 + range AS i FROM range(100)) TO '{TEST_DIR}/claims_p{f}.parquet';
+
+statement ok
+COPY (SELECT 1::BIGINT AS i WHERE false) TO '{TEST_DIR}/claims_p{f}_empty.parquet';
+
+endloop
+
+foreach order true false
+
+statement ok
+SET preserve_insertion_order = {order};
+
+query III
+SELECT count(*), sum(i), count(DISTINCT filename) FROM read_parquet('{TEST_DIR}/claims_p*.parquet', filename = true);
+----
+1600	1279200	16
+
+endloop

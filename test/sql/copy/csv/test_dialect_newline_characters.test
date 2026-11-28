@@ -1,0 +1,49 @@
+# name: test/sql/copy/csv/test_dialect_newline_characters.test
+# description: A newline character cannot be the delimiter, quote, escape or comment of a CSV dialect
+# group: [csv]
+
+require json
+
+statement ok
+COPY (SELECT 1 AS a, 2 AS b) TO '{TEMP_DIR}/dialect_newline.csv';
+
+statement error
+FROM read_csv('{TEMP_DIR}/dialect_newline.csv', delim = E'\n');
+----
+The delimiter option cannot contain a newline character.
+
+statement error
+FROM read_csv('{TEMP_DIR}/dialect_newline.csv', delim = E'|\r');
+----
+The delimiter option cannot contain a newline character.
+
+statement error
+FROM read_csv('{TEMP_DIR}/dialect_newline.csv', quote = E'\r');
+----
+The quote option cannot be a newline character.
+
+statement error
+FROM read_csv('{TEMP_DIR}/dialect_newline.csv', escape = E'\n');
+----
+The escape option cannot be a newline character.
+
+statement error
+FROM read_csv('{TEMP_DIR}/dialect_newline.csv', comment = E'\n');
+----
+The comment option cannot be a newline character.
+
+statement ok
+CREATE TABLE dialect_newline (a INTEGER, b INTEGER);
+
+statement error
+COPY dialect_newline FROM '{TEMP_DIR}/dialect_newline.csv' (DELIMITER E'\n');
+----
+The delimiter option cannot contain a newline character.
+
+statement ok
+COPY (SELECT 1 AS a, 2 AS b) TO '{TEMP_DIR}/dialect_newline_out.json' (ARRAY TRUE);
+
+query II
+FROM read_csv('{TEMP_DIR}/dialect_newline.csv', delim = ',');
+----
+1	2

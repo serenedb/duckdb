@@ -10,20 +10,23 @@
 
 #include "duckdb/common/column_index.hpp"
 #include "duckdb/common/optional_ptr.hpp"
+#include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 #include "json_common.hpp"
 
 namespace duckdb {
 
 struct DateFormatMap;
-class JSONReader;
 
 //! Options for error handling while transforming JSON
 struct JSONTransformOptions {
 public:
 	JSONTransformOptions();
 	JSONTransformOptions(bool strict_cast, bool error_duplicate_key, bool error_missing_key, bool error_unknown_key);
+	JSONTransformOptions(const JSONTransformOptions &other);
+	JSONTransformOptions &operator=(const JSONTransformOptions &other);
 
 public:
 	//! Throws an error if the cast doesn't work (instead of NULL-ing it)
@@ -37,6 +40,7 @@ public:
 
 	//! Whether to delay the error when transforming (e.g., when non-strict casting or reading from file)
 	bool delay_error = false;
+	ValueRendering rendering = ValueRendering::NATIVE;
 	//! Date format used for parsing (can be NULL)
 	optional_ptr<const DateFormatMap> date_format_map = nullptr;
 	//! String to store errors in
@@ -67,14 +71,23 @@ struct TryParseTimeStamp {
 	}
 };
 
+struct JSONTransformScratch {
+	ArenaAllocator &arena;
+	JSONStringWriter &writer;
+};
+
 struct JSONTransform {
-	static bool Transform(yyjson_val *vals[], yyjson_alc *alc, Vector &result, const idx_t count,
+	static bool Transform(const JSONNode *vals[], JSONTransformScratch &scratch, Vector &result, const idx_t count,
 	                      JSONTransformOptions &options, optional_ptr<const ColumnIndex> column_index);
-	static bool TransformObject(yyjson_val *objects[], yyjson_alc *alc, const idx_t count, const vector<string> &names,
-	                            const vector<Vector *> &result_vectors, JSONTransformOptions &options,
-	                            optional_ptr<const vector<ColumnIndex>> column_indices, bool error_unknown_key);
-	static bool GetStringVector(yyjson_val *vals[], const idx_t count, const LogicalType &target, Vector &string_vector,
-	                            JSONTransformOptions &options);
+	static bool TransformObject(const JSONNode *objects[], JSONTransformScratch &scratch, const idx_t count,
+	                            const vector<string> &names, const vector<Vector *> &result_vectors,
+	                            JSONTransformOptions &options, optional_ptr<const vector<ColumnIndex>> column_indices,
+	                            bool error_unknown_key);
+	static bool GetStringVector(const JSONNode *vals[], const idx_t count, const LogicalType &target,
+	                            Vector &string_vector, JSONTransformOptions &options);
+	static bool TransformStrings(Vector &string_vector, Vector &result, const idx_t count,
+	                             JSONTransformOptions &options);
+	static bool ParsesFromString(const LogicalType &type);
 };
 
 } // namespace duckdb

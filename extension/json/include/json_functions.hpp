@@ -10,8 +10,8 @@
 
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/setting_info.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 #include "json_common.hpp"
-#include "yyjson_memory.hpp"
 
 namespace duckdb {
 
@@ -43,6 +43,11 @@ public:
 	//! Path elements parsed once at bind time (constant regular '$' paths only)
 	vector<JSONPathElement> elements;
 	bool use_elements = false;
+	vector<JSONPathStep> steps;
+	bool use_steps = false;
+	bool writable = false;
+	bool use_wildcard_steps = false;
+	string wildcard_rest;
 };
 
 struct JSONReadManyFunctionData : public FunctionData {
@@ -59,11 +64,13 @@ public:
 	//! Per-path elements parsed once at bind time (regular '$' paths only)
 	vector<vector<JSONPathElement>> elements;
 	vector<bool> use_elements;
+	vector<vector<JSONPathStep>> steps;
+	bool use_steps = false;
 };
 
 struct JSONFunctionLocalState : public FunctionLocalState {
 public:
-	explicit JSONFunctionLocalState(Allocator &allocator);
+	explicit JSONFunctionLocalState(Allocator &allocator, JSONReadFlags read_flags = JSONCommon::READ_FLAG);
 	explicit JSONFunctionLocalState(ClientContext &context);
 	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
 	                                           FunctionData *bind_data);
@@ -71,7 +78,10 @@ public:
 	static JSONFunctionLocalState &ResetAndGet(ExpressionState &state);
 
 public:
-	shared_ptr<JSONAllocator> json_allocator;
+	ArenaAllocator arena;
+	JSONTreeParser parser;
+	JSONTreeParser second_parser;
+	JSONStringWriter writer;
 };
 
 class JSONFunctions {

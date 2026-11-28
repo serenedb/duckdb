@@ -266,26 +266,29 @@ string Time::ToString(dtime_t time) {
 	return string(buffer.get(), length);
 }
 
-string Time::ToUTCOffset(int hour_offset, int minute_offset) {
+idx_t Time::WriteUTCOffset(int hour_offset, int minute_offset, char *data) {
 	dtime_t time((hour_offset * Interval::MINS_PER_HOUR + minute_offset) * Interval::MICROS_PER_MINUTE);
 
-	char buffer[1 + 2 + 1 + 2];
 	idx_t length = 0;
-	buffer[length++] = (time.value < 0 ? '-' : '+');
+	data[length++] = (time.value < 0 ? '-' : '+');
 	time.value = std::abs(time.value);
 
 	int32_t time_units[4];
 	Time::Convert(time, time_units[0], time_units[1], time_units[2], time_units[3]);
 
-	TimeToStringCast::FormatTwoDigits(buffer + length, time_units[0]);
+	TimeToStringCast::FormatTwoDigits(data + length, time_units[0]);
 	length += 2;
 	if (time_units[1]) {
-		buffer[length++] = ':';
-		TimeToStringCast::FormatTwoDigits(buffer + length, time_units[1]);
+		data[length++] = ':';
+		TimeToStringCast::FormatTwoDigits(data + length, time_units[1]);
 		length += 2;
 	}
+	return length;
+}
 
-	return string(buffer, length);
+string Time::ToUTCOffset(int hour_offset, int minute_offset) {
+	char buffer[UTC_OFFSET_MAX_LENGTH];
+	return string(buffer, WriteUTCOffset(hour_offset, minute_offset, buffer));
 }
 
 dtime_t Time::FromTime(int32_t hour, int32_t minute, int32_t second, int32_t microseconds) {

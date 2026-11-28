@@ -44,3 +44,63 @@ SELECT * FROM '{TEST_DIR}/compress_level.parquet'
 query I nosort clevel
 SELECT * FROM '{TEST_DIR}/compress_level2.parquet'
 ----
+
+statement error
+COPY integers TO '{TEST_DIR}/compress_level.parquet' (FORMAT 'parquet', CODEC SNAPPY, COMPRESSION_LEVEL 1);
+----
+only supported for the ZSTD, GZIP and BROTLI compression codecs
+
+statement error
+COPY integers TO '{TEST_DIR}/compress_level.parquet' (FORMAT 'parquet', CODEC GZIP, COMPRESSION_LEVEL 10);
+----
+level must be between 0 and 9
+
+statement error
+COPY integers TO '{TEST_DIR}/compress_level.parquet' (FORMAT 'parquet', COMPRESSION_LEVEL -1, CODEC BROTLI);
+----
+level must be between 0 and 11
+
+statement ok
+CREATE TABLE texts AS SELECT 'row ' || (i % 977) || ' of a compressible column ' || (i % 13) AS s FROM range(20000) t(i)
+
+foreach codec gzip brotli
+
+statement ok
+COPY texts TO '{TEST_DIR}/levels_low_{codec}.parquet' (FORMAT 'parquet', CODEC {codec}, COMPRESSION_LEVEL 1);
+
+statement ok
+COPY texts TO '{TEST_DIR}/levels_high_{codec}.parquet' (FORMAT 'parquet', COMPRESSION_LEVEL 9, CODEC {codec});
+
+statement ok
+COPY texts TO '{TEST_DIR}/levels_default_{codec}.parquet' (FORMAT 'parquet', CODEC {codec});
+
+query I
+SELECT (SELECT sum(total_compressed_size) FROM parquet_metadata('{TEST_DIR}/levels_low_{codec}.parquet')) >
+       (SELECT sum(total_compressed_size) FROM parquet_metadata('{TEST_DIR}/levels_high_{codec}.parquet'))
+----
+true
+
+query I
+SELECT count(*) FROM (FROM '{TEST_DIR}/levels_low_{codec}.parquet' EXCEPT ALL FROM texts)
+UNION ALL SELECT count(*) FROM (FROM '{TEST_DIR}/levels_high_{codec}.parquet' EXCEPT ALL FROM texts)
+UNION ALL SELECT count(*) FROM (FROM '{TEST_DIR}/levels_default_{codec}.parquet' EXCEPT ALL FROM texts)
+----
+0
+0
+0
+
+endloop
+
+statement ok
+COPY texts TO '{TEST_DIR}/levels_gzip_6.parquet' (FORMAT 'parquet', CODEC gzip, COMPRESSION_LEVEL 6);
+
+statement ok
+COPY texts TO '{TEST_DIR}/levels_brotli_11.parquet' (FORMAT 'parquet', CODEC brotli, COMPRESSION_LEVEL 11);
+
+query II
+SELECT (SELECT sum(total_compressed_size) FROM parquet_metadata('{TEST_DIR}/levels_default_gzip.parquet')) =
+       (SELECT sum(total_compressed_size) FROM parquet_metadata('{TEST_DIR}/levels_gzip_6.parquet')),
+       (SELECT sum(total_compressed_size) FROM parquet_metadata('{TEST_DIR}/levels_default_brotli.parquet')) =
+       (SELECT sum(total_compressed_size) FROM parquet_metadata('{TEST_DIR}/levels_brotli_11.parquet'))
+----
+true	true

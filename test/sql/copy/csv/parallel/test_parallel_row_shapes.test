@@ -1,0 +1,97 @@
+# name: test/sql/copy/csv/parallel/test_parallel_row_shapes.test
+# description: Comment lines, multi-byte delimiters and short rows padded with NULL read the same over many small ranges
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+COPY (SELECT CASE WHEN i % 7 = 3 THEN '#note ' || i || ',x' ELSE i || ',' || (i * 3) || ',v' || i END FROM range(2000) t(i)) TO '{TEMP_DIR}/row_shapes_comments.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+COPY (SELECT CASE WHEN i % 7 = 3 THEN '#note ' || i || '||x' ELSE i || '||' || (i * 3) || '||v' || i END FROM range(2000) t(i)) TO '{TEMP_DIR}/row_shapes_pipes.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+COPY (SELECT CASE WHEN i % 3 = 0 THEN i::VARCHAR WHEN i % 3 = 1 THEN i || ',' || (i * 3) WHEN i % 5 = 4 THEN i || ',' || (i * 3) || ',' ELSE i || ',' || (i * 3) || ',v' || i END FROM range(2000) t(i)) TO '{TEMP_DIR}/row_shapes_ragged.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+foreach buffer_size 64 100 333 100000
+
+foreach parallel true false
+
+query I
+SELECT count(*) FROM (
+	(SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_comments.csv', comment = '#', delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+	 EXCEPT ALL SELECT i, i * 3, 'v' || i FROM range(2000) t(i) WHERE i % 7 <> 3)
+	UNION ALL
+	(SELECT i, i * 3, 'v' || i FROM range(2000) t(i) WHERE i % 7 <> 3
+	 EXCEPT ALL SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_comments.csv', comment = '#', delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/row_shapes_comments.csv', comment = '#', delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+----
+1714
+
+query I
+SELECT count(*) FROM (
+	(SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_pipes.csv', comment = '#', delim = '||', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+	 EXCEPT ALL SELECT i, i * 3, 'v' || i FROM range(2000) t(i) WHERE i % 7 <> 3)
+	UNION ALL
+	(SELECT i, i * 3, 'v' || i FROM range(2000) t(i) WHERE i % 7 <> 3
+	 EXCEPT ALL SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_pipes.csv', comment = '#', delim = '||', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/row_shapes_pipes.csv', comment = '#', delim = '||', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+----
+1714
+
+query I
+SELECT count(*) FROM (
+	(SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+	 EXCEPT ALL SELECT i, CASE WHEN i % 3 <> 0 THEN i * 3 END, CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i END FROM range(2000) t(i))
+	UNION ALL
+	(SELECT i, CASE WHEN i % 3 <> 0 THEN i * 3 END, CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i END FROM range(2000) t(i)
+	 EXCEPT ALL SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query II
+SELECT count(*), count(c) FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+----
+2000	533
+
+query I
+SELECT count(*) FROM (
+	(SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, force_not_null = ['c'], delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+	 EXCEPT ALL SELECT i, CASE WHEN i % 3 <> 0 THEN i * 3 END, CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i ELSE '' END FROM range(2000) t(i))
+	UNION ALL
+	(SELECT i, CASE WHEN i % 3 <> 0 THEN i * 3 END, CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i ELSE '' END FROM range(2000) t(i)
+	 EXCEPT ALL SELECT a, b, c FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, force_not_null = ['c'], delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(SELECT c, a FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, force_not_null = ['c'], delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+	 EXCEPT ALL SELECT CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i ELSE '' END, i FROM range(2000) t(i))
+	UNION ALL
+	(SELECT CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i ELSE '' END, i FROM range(2000) t(i)
+	 EXCEPT ALL SELECT c, a FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, force_not_null = ['c'], delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+endloop
+
+endloop
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = 100)
+----
+Expected Number of Columns: 3 Found: 1

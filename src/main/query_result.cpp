@@ -370,7 +370,8 @@ void QueryResult::CompleteInternal(ClientContextLock &lock) {
 	buffer->Decide(ResultLifetime::RETAINED);
 	QueryResultState state;
 	while (!IsTerminal(state = context->ExecuteTaskInternal(lock, *this))) {
-		if (state == QueryResultState::BLOCKED || state == QueryResultState::READY) {
+		if (state == QueryResultState::BLOCKED || state == QueryResultState::READY ||
+		    state == QueryResultState::NO_TASKS_AVAILABLE) {
 			context->WaitForTask(lock, *this);
 		}
 	}

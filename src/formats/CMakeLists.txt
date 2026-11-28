@@ -1,0 +1,25 @@
+add_library_unity(
+  duckdb_formats
+  OBJECT
+  block_codecs.cpp
+  copy_encoding.cpp
+  copy_fields.cpp
+  copy_file_writer.cpp
+  copy_from.cpp
+  copy_options.cpp
+  csv_encoder.cpp
+  csv_grammar.cpp
+  csv_scan.cpp
+  csv_sniff.cpp
+  json_ranges.cpp
+  pushed_filters.cpp
+  range_lines.cpp
+  raw_predicates.cpp
+  row_input.cpp
+  row_lexer.cpp
+  row_ranges.cpp
+  value_codecs.cpp
+  value_parsers.cpp)
+set(ALL_OBJECT_FILES
+    ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_formats>
+    PARENT_SCOPE)

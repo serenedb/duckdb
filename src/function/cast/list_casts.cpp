@@ -129,11 +129,10 @@ static bool ListToVarcharCast(Vector &source, Vector &result, idx_t count, CastP
 
 	// now construct the actual varchar vector
 	auto &child_vec = ListVector::GetChild(source);
-	auto child_is_nested = child_vec.GetType().IsNested();
-	auto string_length_func = child_is_nested ? VectorCastHelpers::CalculateStringLength
-	                                          : VectorCastHelpers::CalculateEscapedStringLength<false>;
-	auto write_string_func =
-	    child_is_nested ? VectorCastHelpers::WriteString : VectorCastHelpers::WriteEscapedString<false>;
+	const auto &own_text = parameters.cast_data->Cast<ListBoundCastData>().own_text;
+	const auto child_text = VectorCastHelpers::ChildText(child_vec.GetType(), !own_text.empty() && own_text[0]);
+	auto string_length_func = child_text.length;
+	auto write_string_func = child_text.write;
 
 	auto values = varchar_list.Values<VectorListType<string_t>>();
 
@@ -336,11 +335,12 @@ BoundCastInfo DefaultCasts::ListCastSwitch(BindCastInput &input, const LogicalTy
 	case LogicalTypeId::LIST:
 		return BoundCastInfo(ListCast::ListToListCast, ListBoundCastData::BindListToListCast(input, source, target),
 		                     ListBoundCastData::InitListLocalState);
-	case LogicalTypeId::VARCHAR:
-		return BoundCastInfo(
-		    ListToVarcharCast,
-		    ListBoundCastData::BindListToListCast(input, source, LogicalType::LIST(LogicalType::VARCHAR)),
-		    ListBoundCastData::InitListLocalState);
+	case LogicalTypeId::VARCHAR: {
+		auto data = ListBoundCastData::BindListToListCast(input, source, LogicalType::LIST(LogicalType::VARCHAR));
+		data->Cast<ListBoundCastData>().own_text = {
+		    VectorCastHelpers::WritesOwnText(input, ListType::GetChildType(source))};
+		return BoundCastInfo(ListToVarcharCast, std::move(data), ListBoundCastData::InitListLocalState);
+	}
 	case LogicalTypeId::ARRAY:
 		return BoundCastInfo(ListToArrayCast, BindListToArrayCast(input, source, target),
 		                     ListBoundCastData::InitListLocalState);

@@ -168,6 +168,8 @@ QueryResultState BufferedData::ReplenishBuffer(ClientContextLock &context_lock, 
 		if (execution_result == QueryResultState::BLOCKED) {
 			UnblockSinks();
 			cc->WaitForTask(context_lock, result);
+		} else if (execution_result == QueryResultState::NO_TASKS_AVAILABLE) {
+			cc->WaitForTask(context_lock, result);
 		}
 	}
 	if (result.HasError()) {

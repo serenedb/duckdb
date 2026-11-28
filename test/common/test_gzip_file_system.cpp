@@ -4,9 +4,14 @@
 #include "duckdb/common/numeric_utils.hpp"
 #include "test_helpers.hpp"
 
+#include <zlib.h>
+
 using namespace duckdb;
 
 namespace {
+
+constexpr uint8_t GZIP_FLAG_EXTRA = 0x4;
+constexpr uint8_t GZIP_FLAG_NAME = 0x8;
 
 class ShortReadFileHandle : public FileHandle {
 public:
@@ -124,6 +129,33 @@ idx_t FindGZipHeaderEnd(const vector<data_t> &data, idx_t header_start) {
 	return position;
 }
 
+string GZipMember(string input, int level, bool flagged) {
+	z_stream stream;
+	memset(&stream, 0, sizeof(stream));
+	REQUIRE(deflateInit2(&stream, level, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY) == Z_OK);
+	char name[] = "member.csv";
+	char comment[] = "a comment";
+	gz_header header;
+	memset(&header, 0, sizeof(header));
+	header.text = 1;
+	header.hcrc = 1;
+	header.name = reinterpret_cast<Bytef *>(name);
+	header.comment = reinterpret_cast<Bytef *>(comment);
+	if (flagged) {
+		REQUIRE(deflateSetHeader(&stream, &header) == Z_OK);
+	}
+	string output(deflateBound(&stream, NumericCast<uLong>(input.size())) + 64, '\0');
+	stream.next_in = data_ptr_cast(&input[0]);
+	stream.avail_in = NumericCast<uInt>(input.size());
+	stream.next_out = data_ptr_cast(&output[0]);
+	stream.avail_out = NumericCast<uInt>(output.size());
+	const auto result = deflate(&stream, Z_FINISH);
+	output.resize(stream.total_out);
+	deflateEnd(&stream);
+	REQUIRE(result == Z_STREAM_END);
+	return output;
+}
+
 } // namespace
 
 TEST_CASE("GZIP reads tolerate short input reads", "[file_system][gzip]") {
@@ -195,7 +227,120 @@ TEST_CASE("GZIP rejects truncated member boundaries", "[file_system][gzip]") {
 	}
 }
 
+TEST_CASE("GZIP rejects a header whose extra field is cut short", "[file_system][gzip]") {
+	auto compressed_data = ReadGZipTestFile("bgzf.gz");
+	REQUIRE((compressed_data[3] & GZIP_FLAG_EXTRA) != 0);
+	auto header_end = FindGZipHeaderEnd(compressed_data, 0);
+	for (idx_t end : {idx_t(GZIP_HEADER_MINSIZE + 1), header_end - 1}) {
+		vector<data_t> truncated(compressed_data.begin(), compressed_data.begin() + end);
+		for (idx_t read_size : {idx_t(1), NumericCast<idx_t>(truncated.size())}) {
+			CAPTURE(end, read_size);
+			REQUIRE_THROWS_AS(ReadCompressedData(truncated, read_size), IOException);
+		}
+	}
+}
+
 TEST_CASE("GZIP string decompression rejects a header-only stream with FNAME", "[file_system][gzip]") {
 	const char header[] = {'\x1f', '\x8b', '\x08', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
 	REQUIRE_THROWS_AS(GZipFileSystem::UncompressGZIPString(header, sizeof(header)), IOException);
+}
+
+TEST_CASE("GZIP string decompression reads every member and checks its CRC32", "[file_system][gzip]") {
+	const string first = "first member\n";
+	const string second = "second member, stored as written\n";
+	auto data = GZipMember(first, Z_DEFAULT_COMPRESSION, true) + GZipMember(second, Z_NO_COMPRESSION, false);
+	REQUIRE((data[3] & 0x1F) == 0x1B);
+	REQUIRE(GZipFileSystem::UncompressGZIPString(data) == first + second);
+
+	auto at = data.find("as written");
+	REQUIRE(at != string::npos);
+	data[at] ^= 1;
+	REQUIRE_THROWS_WITH(GZipFileSystem::UncompressGZIPString(data), Catch::Contains("incorrect data check"));
+}
+
+TEST_CASE("GZIP reads of every size return the stream's bytes, into the reader's buffer or through the stream's own",
+          "[file_system][gzip]") {
+	string text;
+	for (idx_t i = 0; i < 400000; i++) {
+		text += to_string(i * 7919 % 100003) + (i % 7 == 0 ? "\n" : ",");
+	}
+	const auto half = text.size() / 2;
+	const auto data = GZipMember(text.substr(0, half), Z_DEFAULT_COMPRESSION, false) +
+	                  GZipMember(text.substr(half), Z_DEFAULT_COMPRESSION, false);
+	const vector<data_t> compressed(data.begin(), data.end());
+	ShortReadFileSystem file_system(compressed, compressed.size(), optional_idx());
+	auto child_handle = make_uniq<ShortReadFileHandle>(file_system, "sizes.gz");
+	GZipFileSystem gzip_file_system;
+	auto handle = gzip_file_system.OpenCompressedFile(QueryContext(), std::move(child_handle), false);
+	const idx_t sizes[] = {37, 70000, 1, 300000, 65536, 5, 65535};
+	vector<data_t> buffer(300000);
+	string result;
+	for (idx_t i = 0;; i++) {
+		const auto read_count = handle->Read(QueryContext(), buffer.data(), sizes[i % 7]);
+		if (read_count == 0) {
+			break;
+		}
+		result.append(char_ptr_cast(buffer.data()), NumericCast<idx_t>(read_count));
+	}
+	REQUIRE(result == text);
+}
+
+TEST_CASE("GZIP pieces written in any order form one member", "[file_system][gzip]") {
+	GZipFileSystem gzip_file_system;
+	auto compressor = gzip_file_system.CreatePieces()->CreateCompressor();
+
+	string long_input;
+	for (idx_t i = 0; i < 200000; i++) {
+		long_input += to_string(i * 7919 % 100003) + (i % 3 == 0 ? "\n" : ",");
+	}
+	const vector<string> inputs {"first piece\n", "", long_input, "last\n"};
+	vector<CompressedPiece> pieces(inputs.size());
+	for (idx_t i = 0; i < inputs.size(); i++) {
+		compressor->Compress(const_data_ptr_cast(inputs[i].data()), inputs[i].size(), pieces[i]);
+		REQUIRE(pieces[i].input_size == inputs[i].size());
+	}
+	CompressedPiece split;
+	const std::span<const data_t> halves[] = {
+	    {const_data_ptr_cast(long_input.data()), 1000},
+	    {const_data_ptr_cast(long_input.data()) + 1000, long_input.size() - 1000}};
+	compressor->Compress(halves, false, split);
+	REQUIRE(split.input_size == long_input.size());
+	REQUIRE(split.input_crc == pieces[2].input_crc);
+
+	for (bool last : {false, true}) {
+		CAPTURE(last);
+		auto frame = gzip_file_system.CreatePieces();
+		string file = frame->Head();
+		string expected;
+		for (auto index : {idx_t(2), idx_t(0), idx_t(3), idx_t(1)}) {
+			frame->Append(pieces[index]);
+			file.append(const_char_ptr_cast(pieces[index].data.get()), pieces[index].size);
+			expected += inputs[index];
+		}
+		CompressedPiece final_piece;
+		compressor->Compress(halves, last, final_piece);
+		frame->Append(final_piece);
+		file.append(const_char_ptr_cast(final_piece.data.get()), final_piece.size);
+		expected += long_input;
+		file += frame->Tail();
+
+		z_stream stream;
+		memset(&stream, 0, sizeof(stream));
+		REQUIRE(inflateInit2(&stream, 16 + MAX_WBITS) == Z_OK);
+		string output(expected.size() + 1, '\0');
+		stream.next_in = data_ptr_cast(&file[0]);
+		stream.avail_in = NumericCast<uInt>(file.size());
+		stream.next_out = data_ptr_cast(&output[0]);
+		stream.avail_out = NumericCast<uInt>(output.size());
+		const auto result = inflate(&stream, Z_FINISH);
+		const auto remaining = stream.avail_in;
+		output.resize(stream.total_out);
+		inflateEnd(&stream);
+		REQUIRE(result == Z_STREAM_END);
+		REQUIRE(remaining == 0);
+		REQUIRE(output == expected);
+
+		const vector<data_t> bytes(file.begin(), file.end());
+		REQUIRE(ReadCompressedData(bytes, bytes.size()) == expected);
+	}
 }

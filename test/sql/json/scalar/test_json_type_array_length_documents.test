@@ -1,0 +1,75 @@
+# name: test/sql/json/scalar/test_json_type_array_length_documents.test
+# description: json_type and json_array_length of a whole document answer as they do through the path $
+# group: [scalar]
+
+require json
+
+statement ok
+CREATE TABLE docs AS SELECT * FROM (VALUES
+	('  [1, [2, 3], {"a": [4, 5]}, "x,y]", "q\"],", null, true, -1.5e3]   '),
+	('[ ]'),
+	('[]'),
+	(' [ "a long string with , and ] and [ and { inside, longer than thirty two bytes" ] '),
+	('{"a": [1, 2, 3], "b": "c,d", "e": {"f": [], "g": "long enough to be over thirty two bytes"}}'),
+	('[1, 2, 3, "trailing comma padding padding padding", ]'),
+	('[NaN, Infinity, 1, "padding padding padding padding padding"]'),
+	('"a plain string longer than thirty two bytes, with [ and {"'),
+	('12345678901234567890123456789012345'),
+	('[[[], [[]]], [{}], {"k": [1, {"x": "]]]]"}]}, "\\\\", "\\\"", ",,,"]'),
+	('	[1,2]'),
+	('[ "padding padding padding padding padding" ]')
+) t(j);
+
+query II
+SELECT count(*), count(*) FILTER (WHERE json_array_length(j) = json_array_length(j, '$') AND json_type(j) = json_type(j, '$')) FROM docs
+----
+12	12
+
+query IT
+SELECT json_array_length(j), json_type(j) FROM docs
+----
+8	ARRAY
+0	ARRAY
+0	ARRAY
+1	ARRAY
+0	OBJECT
+4	ARRAY
+4	ARRAY
+0	VARCHAR
+0	DOUBLE
+6	ARRAY
+2	ARRAY
+1	ARRAY
+
+statement ok
+CREATE TABLE generated AS SELECT i, to_json(list_transform(range(i), lambda x: {'a': x, 's': 'v,]["' || x, 'l': range(x % 3)}))::VARCHAR AS j FROM range(0, 300) t(i)
+
+query I
+SELECT count(*) FROM generated WHERE json_array_length(j) <> i OR json_type(j) <> 'ARRAY'
+----
+0
+
+statement error
+SELECT json_type('[1, 2, "padding padding padding padding padding"')
+----
+Malformed JSON
+
+statement error
+SELECT json_array_length('[1, 2,, 3, "padding padding padding padding padding"]')
+----
+Malformed JSON
+
+statement error
+SELECT json_array_length('{"a": 1} {"b": 2, "padding": "padding padding padding"}')
+----
+Malformed JSON
+
+statement error
+SELECT json_type('  ')
+----
+Malformed JSON at byte 0 of input: input data is empty
+
+statement error
+SELECT json_array_length('')
+----
+Malformed JSON at byte 0 of input: input length is 0

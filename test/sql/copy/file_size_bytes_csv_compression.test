@@ -9,7 +9,7 @@ SET threads=1;
 statement ok
 COPY (SELECT repeat('x', 200) AS payload FROM range(100_000))
 TO '{TEST_DIR}/file_size_bytes_csv_gzip'
-(FORMAT CSV, COMPRESSION GZIP, FILE_SIZE_BYTES '1kb');
+(FORMAT CSV, COMPRESSION GZIP, FILE_SIZE_BYTES '64kb');
 
 query I
 SELECT count(*) FROM read_csv_auto('{TEST_DIR}/file_size_bytes_csv_gzip/*.csv.gz');

@@ -50,3 +50,95 @@ COPY (
 
 statement ok
 FROM read_csv('{TEST_DIR}/invalid_latin1.csv', encoding = 'latin-1')
+
+statement ok
+COPY (SELECT from_hex(repeat('6100e900ac203dd800de0a00', 20))) TO '{TEST_DIR}/utf16le_widths.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex(repeat('006100e920acd83dde00000a', 20))) TO '{TEST_DIR}/utf16be_widths.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex(repeat('61000000e9000000ac20000000f601000a000000', 20))) TO '{TEST_DIR}/utf32le_widths.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex(repeat('00000061000000e9000020ac0001f6000000000a', 20))) TO '{TEST_DIR}/utf32be_widths.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex(repeat('e9ffa1c0df0a', 20))) TO '{TEST_DIR}/latin1_widths.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex(repeat('6100e900ac203dd800de0a00', 5) || '00dc0a00')) TO '{TEST_DIR}/utf16le_lone_low.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex(repeat('006100e920acd83dde00000a', 5) || 'd83d0061000a')) TO '{TEST_DIR}/utf16be_unpaired_high.csv' (FORMAT BLOB)
+
+loop buffer_size 16 48
+
+query II
+SELECT count(*), count(*) FILTER (WHERE value = 'aé€😀') FROM read_csv('{TEST_DIR}/utf16le_widths.csv', encoding = 'utf-16le', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+20	20
+
+query II
+SELECT count(*), count(*) FILTER (WHERE value = 'aé€😀') FROM read_csv('{TEST_DIR}/utf16be_widths.csv', encoding = 'utf-16be', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+20	20
+
+query II
+SELECT count(*), count(*) FILTER (WHERE value = 'aé€😀') FROM read_csv('{TEST_DIR}/utf32le_widths.csv', encoding = 'utf-32le', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+20	20
+
+query II
+SELECT count(*), count(*) FILTER (WHERE value = 'aé€😀') FROM read_csv('{TEST_DIR}/utf32be_widths.csv', encoding = 'utf-32be', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+20	20
+
+query II
+SELECT count(*), count(*) FILTER (WHERE value = 'éÿ¡Àß') FROM read_csv('{TEST_DIR}/latin1_widths.csv', encoding = 'latin-1', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+20	20
+
+statement error
+FROM read_csv('{TEST_DIR}/utf16le_lone_low.csv', encoding = 'utf-16le', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+File is not utf-16 encoded
+
+statement error
+FROM read_csv('{TEST_DIR}/utf16be_unpaired_high.csv', encoding = 'utf-16be', buffer_size = {buffer_size}, header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+File is not utf-16 encoded
+
+endloop
+
+statement ok
+COPY (SELECT from_hex('ffff10000a000000')) TO '{TEST_DIR}/utf32le_last_code_point.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex('0010ffff0000000a')) TO '{TEST_DIR}/utf32be_last_code_point.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex('000011000a000000')) TO '{TEST_DIR}/utf32le_above_unicode.csv' (FORMAT BLOB)
+
+statement ok
+COPY (SELECT from_hex('001100000000000a')) TO '{TEST_DIR}/utf32be_above_unicode.csv' (FORMAT BLOB)
+
+query I
+SELECT unicode(value) FROM read_csv('{TEST_DIR}/utf32le_last_code_point.csv', encoding = 'utf-32le', header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+1114111
+
+query I
+SELECT unicode(value) FROM read_csv('{TEST_DIR}/utf32be_last_code_point.csv', encoding = 'utf-32be', header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+1114111
+
+statement error
+FROM read_csv('{TEST_DIR}/utf32le_above_unicode.csv', encoding = 'utf-32le', header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+File is not utf-32 encoded
+
+statement error
+FROM read_csv('{TEST_DIR}/utf32be_above_unicode.csv', encoding = 'utf-32be', header = false, quote = '', auto_detect = false, columns = {'value': 'varchar'}, delim = '')
+----
+File is not utf-32 encoded

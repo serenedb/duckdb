@@ -81,7 +81,7 @@ string_t StringCast::Operation(double input, StringHeap &heap) {
 
 template <>
 string_t StringCast::Operation(interval_t input, StringHeap &heap) {
-	char buffer[70] = {};
+	char buffer[IntervalToStringCast::MAX_LENGTH] = {};
 	idx_t length = IntervalToStringCast::Format(input, buffer);
 	return heap.AddString(buffer, length);
 }
@@ -91,29 +91,30 @@ duckdb::string_t StringCast::Operation(uhugeint_t input, StringHeap &heap) {
 	return UhugeintToStringCast::Format(input, heap);
 }
 
-template <>
-duckdb::string_t StringCast::Operation(date_t input, StringHeap &heap) {
+idx_t DateToStringCast::Write(date_t input, char *data) {
 	if (!input.IsFinite()) {
-		return heap.AddString(Date::ToInfinity(input));
+		const auto text = Date::ToInfinity(input);
+		memcpy(data, text.data(), text.size());
+		return text.size();
 	}
 	int32_t date[3];
 	Date::Convert(input, date[0], date[1], date[2]);
 
 	idx_t year_length;
 	bool add_bc;
-	idx_t length = DateToStringCast::Length(date, year_length, add_bc);
+	const auto length = Length(date, year_length, add_bc);
+	Format(data, date, year_length, add_bc);
+	return length;
+}
 
-	string_t result = heap.EmptyString(length);
-	auto data = result.GetDataWriteable();
-
-	DateToStringCast::Format(data, date, year_length, add_bc);
-
-	result.Finalize();
-	return result;
+template <>
+duckdb::string_t StringCast::Operation(date_t input, StringHeap &heap) {
+	char data[DateToStringCast::MAX_LENGTH];
+	return heap.AddString(data, DateToStringCast::Write(input, data));
 }
 
 template <typename T>
-duckdb::string_t StringAsTime(const T input, StringHeap &heap) {
+static idx_t WriteTime(const T input, char *data) {
 	int32_t picos = 0;
 	dtime_t micros(input.value);
 	if (micros.PRECISION < input.PRECISION) {
@@ -141,18 +142,27 @@ duckdb::string_t StringAsTime(const T input, StringHeap &heap) {
 		nano_length = 6;
 		nano_length -= NumericCast<idx_t>(TimeToStringCast::FormatMicros(picos, nano_buffer));
 	}
-	const idx_t length = time_length + nano_length;
-
-	string_t result = heap.EmptyString(length);
-	auto data = result.GetDataWriteable();
+	D_ASSERT(time_length + nano_length <= TimeToStringCast::MAX_LENGTH);
 
 	TimeToStringCast::Format(data, time_length, time, micro_buffer);
-	data += time_length;
-	memcpy(data, nano_buffer, nano_length);
-	D_ASSERT(data + nano_length <= result.GetDataWriteable() + length);
+	memcpy(data + time_length, nano_buffer, nano_length);
+	return time_length + nano_length;
+}
 
-	result.Finalize();
-	return result;
+template <typename T>
+duckdb::string_t StringAsTime(const T input, StringHeap &heap) {
+	auto &allocator = heap.GetAllocator();
+	const auto data = StringVector::AllocateShrinkableBuffer(allocator, TimeToStringCast::MAX_LENGTH);
+	const auto length = WriteTime(input, char_ptr_cast(data));
+	return StringVector::FinalizeShrinkableBuffer(allocator, data, TimeToStringCast::MAX_LENGTH, length);
+}
+
+idx_t TimeToStringCast::Write(dtime_t time, char *data) {
+	return WriteTime(time, data);
+}
+
+idx_t TimeToStringCast::Write(dtime_ns_t time, char *data) {
+	return WriteTime(time, data);
 }
 
 template <>
@@ -166,9 +176,11 @@ duckdb::string_t StringCast::Operation(dtime_ns_t input, StringHeap &heap) {
 }
 
 template <typename T>
-duckdb::string_t StringFromTimestamp(const T &input, StringHeap &heap) {
+static idx_t WriteTimestamp(const T &input, char *data) {
 	if (!input.IsFinite()) {
-		return heap.AddString(Date::ToInfinity(input));
+		const auto text = Date::ToInfinity(input);
+		memcpy(data, text.data(), text.size());
+		return text.size();
 	}
 
 	date_t date_entry;
@@ -207,9 +219,7 @@ duckdb::string_t StringFromTimestamp(const T &input, StringHeap &heap) {
 	}
 	const idx_t tz_length = T::TIMEZONED ? 3 : 0;
 	const idx_t length = date_length + 1 + time_length + nano_length + tz_length;
-
-	string_t result = heap.EmptyString(length);
-	auto data = result.GetDataWriteable();
+	D_ASSERT(length <= TimestampToStringCast::MAX_LENGTH);
 
 	DateToStringCast::Format(data, date, year_length, add_bc);
 	data += date_length;
@@ -217,7 +227,6 @@ duckdb::string_t StringFromTimestamp(const T &input, StringHeap &heap) {
 	TimeToStringCast::Format(data, time_length, time, micro_buffer);
 	data += time_length;
 	memcpy(data, nano_buffer, nano_length);
-	D_ASSERT(data + nano_length <= result.GetDataWriteable() + length);
 	data += nano_length;
 
 	if (T::TIMEZONED) {
@@ -225,9 +234,23 @@ duckdb::string_t StringFromTimestamp(const T &input, StringHeap &heap) {
 		*data++ = '0';
 		*data++ = '0';
 	}
+	return length;
+}
 
-	result.Finalize();
-	return result;
+template <typename T>
+duckdb::string_t StringFromTimestamp(const T &input, StringHeap &heap) {
+	auto &allocator = heap.GetAllocator();
+	const auto data = StringVector::AllocateShrinkableBuffer(allocator, TimestampToStringCast::MAX_LENGTH);
+	const auto length = WriteTimestamp(input, char_ptr_cast(data));
+	return StringVector::FinalizeShrinkableBuffer(allocator, data, TimestampToStringCast::MAX_LENGTH, length);
+}
+
+idx_t TimestampToStringCast::Write(timestamp_t timestamp, char *data) {
+	return WriteTimestamp(timestamp, data);
+}
+
+idx_t TimestampToStringCast::Write(timestamp_ns_t timestamp, char *data) {
+	return WriteTimestamp(timestamp, data);
 }
 
 template <>

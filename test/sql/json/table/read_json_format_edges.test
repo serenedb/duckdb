@@ -1,0 +1,47 @@
+# name: test/sql/json/table/read_json_format_edges.test
+# description: read_json detects an array of values written over several lines, reads a blank array file as empty, and refuses an unclosed array or a string cut after a backslash
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '['), (2, '1, 2,'), (3, '3'), (4, ']')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/scalars.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT * FROM read_json('{TEMP_DIR}/scalars.json');
+----
+1
+2
+3
+
+statement ok
+COPY (SELECT '[1, tru]' AS line) TO '{TEMP_DIR}/scalars_bad.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_json('{TEMP_DIR}/scalars_bad.json');
+----
+at byte 1 in record/value 2: invalid literal, expected 'true'
+
+statement ok
+COPY (SELECT encode('   ')) TO '{TEMP_DIR}/blank.json' (FORMAT BLOB);
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/blank.json', format := 'array', columns := {a: 'INTEGER'}, records := true);
+----
+0
+
+statement ok
+COPY (SELECT '[{"a": 1}' AS line) TO '{TEMP_DIR}/unclosed.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_json('{TEMP_DIR}/unclosed.json', format := 'array', columns := {a: 'INTEGER'}, records := true);
+----
+at byte 9 in record/value 2: unexpected character
+
+statement ok
+COPY (SELECT encode('{"a": "x\')) TO '{TEMP_DIR}/trailing_backslash.json' (FORMAT BLOB);
+
+statement error
+SELECT * FROM read_json('{TEMP_DIR}/trailing_backslash.json', format := 'unstructured', columns := {a: 'VARCHAR'}, records := true);
+----
+<REGEX>:.*Malformed JSON in file.*in record/value 1: unexpected end of data.*

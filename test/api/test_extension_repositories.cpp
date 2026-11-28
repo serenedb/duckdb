@@ -288,3 +288,39 @@ TEST_CASE("Test that a user repository does not block an unsigned load", "[api]"
 	// it fails on the stub binary, not on a user-provided-origin rule: the dev flow is not blocked
 	REQUIRE(!StringUtil::Contains(bare->GetError(), "installed from a user-provided repository"));
 }
+
+TEST_CASE("Test that a malformed extension repository file is reported", "[api]") {
+	auto repository_directory = TestCreatePath("extension_repositories_malformed");
+	auto fs = FileSystem::CreateLocal();
+	fs->CreateDirectoriesRecursive(repository_directory);
+	const auto repository_file_name = string("acme") + ExtensionRepositoryManager::FILE_EXTENSION;
+	auto repository_file = fs->JoinPath(repository_directory, repository_file_name);
+
+	DBConfig config;
+	config.SetOptionByName("extension_repository_directory", repository_directory);
+	DuckDB db(nullptr, &config);
+	Connection con(db);
+
+	const string valid_key = string("[\"") + TEST_PUBLIC_KEY + "\"]";
+	const vector<pair<string, string>> malformed {
+	    {"not json", "the file is not valid json"},
+	    {"[\"acme\"]", "expected a json object"},
+	    {R"({"url":"http://acme.com","public_keys":)" + valid_key + "}", "missing or invalid field 'name'"},
+	    {R"({"name":1,"url":"http://acme.com","public_keys":)" + valid_key + "}", "missing or invalid field 'name'"},
+	    {R"({"name":"acme","url":"http://acme.com"})", "missing or invalid field 'public_keys'"},
+	    {R"({"name":"acme","url":"http://acme.com","public_keys":"key"})", "missing or invalid field 'public_keys'"},
+	    {R"({"name":"acme","url":"http://acme.com","public_keys":[1]})", "'public_keys' must be a list of strings"},
+	    {R"({"name":"acme","url":"http://acme.com","public_keys":[]})", "'public_keys' cannot be empty"}};
+	for (auto &entry : malformed) {
+		auto contents = entry.first;
+		WriteExtensionFile(*fs, repository_file, contents.data(), contents.size());
+		auto result = con.Query("SELECT repository_name FROM duckdb_extension_repositories()");
+		REQUIRE(result->HasError());
+		REQUIRE(StringUtil::Contains(result->GetError(), repository_file_name));
+		REQUIRE(StringUtil::Contains(result->GetError(), entry.second));
+	}
+
+	auto contents = R"({"version":1,"name":"acme","url":"http://acme.com","public_keys":)" + valid_key + "}";
+	WriteExtensionFile(*fs, repository_file, contents.data(), contents.size());
+	REQUIRE(UserRepositoryCount(con) == 1);
+}

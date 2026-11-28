@@ -13,7 +13,7 @@ copy (select blob 'hello world' as a) to '{TEST_DIR}/conversion_error2.parquet';
 statement error
 SELECT * FROM read_parquet(['{TEST_DIR}/conversion_error1.parquet', '{TEST_DIR}/conversion_error2.parquet'])
 ----
-failed to cast column "a" from type BLOB to INTEGER
+failed to cast column "a" from type BLOB to INTEGER: Unimplemented type for cast (BLOB -> INTEGER)
 
 statement ok
 CREATE TABLE integers(i INT);

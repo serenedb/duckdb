@@ -1,0 +1,15 @@
+# name: test/sql/json/scalar/test_json_path_steps.test
+# description: Paths with an index from the end are read from the node tree, alone, after a wildcard and among other paths
+# group: [scalar]
+
+require json
+
+query I
+SELECT json_extract('[{"a": [1, 2]}, {"a": [3]}]', '$[#-1].a[*]')
+----
+[3]
+
+query I
+SELECT json_extract('{"a": 1, "b": [5, 6]}', ['$.a', '$.b[#-1]'])
+----
+[1, 6]

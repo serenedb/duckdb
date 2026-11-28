@@ -8,7 +8,7 @@ class JsonDeserializer final : public Deserializer {
 public:
 	using List = TypedList<JsonDeserializer>;
 
-	JsonDeserializer(yyjson_val *val, const yyjson_doc_ptr &doc) : doc(doc.get()) {
+	explicit JsonDeserializer(const JSONNode *val) {
 		deserialize_enum_from_string = true;
 		stack.emplace_back(val);
 	}
@@ -17,36 +17,32 @@ private:
 	friend class Deserializer;
 
 	struct StackFrame {
-		yyjson_val *val;
-		yyjson_arr_iter arr_iter;
-		explicit StackFrame(yyjson_val *val) : val(val) {
-			yyjson_arr_iter_init(val, &arr_iter);
+		const JSONNode *val;
+		const JSONNode *next_element;
+		idx_t remaining_elements;
+		explicit StackFrame(const JSONNode *val)
+		    : val(val), next_element(val->First()),
+		      remaining_elements(val->type == JSONValueType::ARRAY ? val->size : 0) {
 		}
 	};
 
-	yyjson_doc *doc;
 	const char *current_tag = nullptr;
 	vector<StackFrame> stack;
-
-	void DumpDoc();
-	void DumpCurrent();
-	void Dump(yyjson_mut_val *val);
-	void Dump(yyjson_val *val);
 
 	// Get the current json value
 	inline StackFrame &Current() {
 		return stack.back();
 	};
 
-	inline void Push(yyjson_val *val) {
+	inline void Push(const JSONNode *val) {
 		stack.emplace_back(val);
 	}
 	inline void Pop() {
 		stack.pop_back();
 	}
-	yyjson_val *GetNextValue();
+	const JSONNode *GetNextValue();
 
-	void ThrowTypeError(yyjson_val *val, const char *expected);
+	void ThrowTypeError(const JSONNode *val, const char *expected);
 
 	//===--------------------------------------------------------------------===//
 	// Nested Types Hooks

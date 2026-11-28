@@ -19,6 +19,8 @@
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/string_type.hpp"
+#include "duckdb/formats/raw_predicates.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "resizable_buffer.hpp"
 
 namespace duckdb {
@@ -65,6 +67,7 @@ public:
 	StringColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema);
 	idx_t fixed_width_string_length;
 	const StringColumnType string_column_type;
+	bool ascii_page = false;
 
 public:
 	static bool IsValid(const char *str_data, uint32_t str_len, bool is_varchar);
@@ -84,6 +87,7 @@ protected:
 	void PlainSkip(ByteBuffer &plain_data, uint8_t *defines, idx_t num_values) override;
 	void PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values, Vector &result,
 	                 const SelectionVector &sel, idx_t count, idx_t result_offset) override;
+	void PlainPage(const ByteBuffer &values) override;
 
 	bool SupportsDirectFilter() const override {
 		return true;
@@ -91,9 +95,18 @@ protected:
 	bool SupportsDirectSelect() const override {
 		return true;
 	}
+	bool PlainFilters(const TableFilter &filter) override;
+	void PlainFilter(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values, Vector &result,
+	                 SelectionVector &sel, idx_t &approved_tuple_count) override;
 
 private:
+	void PlainFilterContains(ByteBuffer &values, uint8_t *defines, idx_t num_values, Vector &result,
+	                         SelectionVector &passed, idx_t &count);
+
 	mutable optional_ptr<Vector> current_plain_result;
+	optional_ptr<const TableFilter> raw_filter;
+	vector<RawPredicate> raw_predicates;
+	shared_ptr<RawContains> raw_contains;
 };
 
 struct StringParquetValueConversion {
@@ -104,7 +117,12 @@ struct StringParquetValueConversion {
 		    scr.fixed_width_string_length == 0 ? plain_data.read<uint32_t>() : scr.fixed_width_string_length;
 		plain_data.available(str_len);
 		auto plain_str = char_ptr_cast(plain_data.ptr);
-		auto ret_str = scr.VerifyString(plain_str, str_len);
+		string_t ret_str;
+		if (scr.ascii_page) {
+			MakeString(plain_str, str_len, plain_str + plain_data.len, ret_str);
+		} else {
+			ret_str = scr.VerifyString(plain_str, str_len);
+		}
 		plain_data.inc(str_len);
 		return ret_str;
 	}

@@ -1,0 +1,103 @@
+# name: test/sql/json/table/read_json_map_columns.test
+# description: read_json and from_json decode MAP values with VARCHAR keys and INTEGER values directly
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT i AS id,
+             CASE i % 4 WHEN 0 THEN NULL WHEN 1 THEN json('{}')
+                  WHEN 2 THEN json(printf('{"key_%d": %d, "a_much_longer_key_%d": %d}', i % 10, i, i % 10, -i))
+                  ELSE json(printf('{"k": %d, "k": %d, "escé\n": %d}', i, i + 1, i)) END AS m,
+             i % 1000 - 500 AS n
+      FROM range(10000) t(i)) TO '{TEST_DIR}/map_columns.ndjson' (FORMAT json);
+
+query IIIIIII
+SELECT count(*), count(m), sum(cardinality(m)), sum(m['key_' || (id % 10)::VARCHAR]),
+       sum(m['a_much_longer_key_' || (id % 10)::VARCHAR]), count(m['esc' || chr(233) || chr(10)]), sum(n)
+FROM read_json('{TEST_DIR}/map_columns.ndjson', columns={id: 'BIGINT', m: 'MAP(VARCHAR, INTEGER)', n: 'INTEGER'},
+               format='newline_delimited', records=true);
+----
+10000	7500	12500	12500000	-12500000	2500	-5000
+
+query II
+SELECT map_keys(m) = ['k', 'k', 'esc' || chr(233) || chr(10)], map_values(m) = [3, 4, 3]
+FROM read_json('{TEST_DIR}/map_columns.ndjson', columns={id: 'BIGINT', m: 'MAP(VARCHAR, INTEGER)'}, format='newline_delimited', records=true)
+WHERE id = 3;
+----
+true	true
+
+query IIII
+SELECT count(r.m), sum(cardinality(r.m)), sum(r.m['key_' || (r.id % 10)::VARCHAR]), count(r.m['esc' || chr(233) || chr(10)])
+FROM (SELECT from_json(json, '{"id": "BIGINT", "m": "MAP(VARCHAR, INTEGER)"}') AS r FROM read_json_objects('{TEST_DIR}/map_columns.ndjson'));
+----
+7500	12500	12500000	2500
+
+statement ok
+COPY (SELECT i AS id, json(CASE i % 6 WHEN 0 THEN '2147483647' WHEN 1 THEN '-2147483648' WHEN 2 THEN '1.5' WHEN 3 THEN '"12"' WHEN 4 THEN 'true' ELSE '-0' END) AS n FROM range(6) t(i)) TO '{TEST_DIR}/integers.ndjson' (FORMAT json);
+
+query II
+SELECT id, n FROM read_json('{TEST_DIR}/integers.ndjson', columns={id: 'BIGINT', n: 'INTEGER'}, format='newline_delimited', records=true) ORDER BY id;
+----
+0	2147483647
+1	-2147483648
+2	2
+3	12
+4	1
+5	0
+
+statement ok
+COPY (SELECT json('2147483648') AS n) TO '{TEST_DIR}/integer_overflow.ndjson' (FORMAT json);
+
+statement error
+SELECT n FROM read_json('{TEST_DIR}/integer_overflow.ndjson', columns={n: 'INTEGER'}, format='newline_delimited', records=true);
+----
+Failed to cast value to numerical: 2147483648
+
+statement ok
+COPY (SELECT json('-2147483649') AS n) TO '{TEST_DIR}/integer_underflow.ndjson' (FORMAT json);
+
+statement error
+SELECT n FROM read_json('{TEST_DIR}/integer_underflow.ndjson', columns={n: 'INTEGER'}, format='newline_delimited', records=true);
+----
+Failed to cast value to numerical: -2147483649
+
+statement error
+SELECT from_json('{"a": {"k": @}}', '{"a": "MAP(VARCHAR, INTEGER)"}');
+----
+Malformed JSON at byte 12 of input: unexpected character
+
+statement error
+SELECT from_json('{"a": {"k' || chr(92) || 'q": 1}}', '{"a": "MAP(VARCHAR, INTEGER)"}');
+----
+Malformed JSON at byte 9 of input: invalid escaped sequence in string
+
+query IIII
+SELECT from_json('{"a": {"k' || chr(92) || 'u0031": 1, "plain": 2}}', '{"a": "MAP(VARCHAR, INTEGER)"}')::VARCHAR,
+       from_json('{"a": {"1": 2}}', '{"a": "MAP(INTEGER, INTEGER)"}')::VARCHAR,
+       from_json('[{"1": 2}, 3, null]', '["MAP(INTEGER, INTEGER)"]')::VARCHAR,
+       from_json('{"a": {"k": 1}}', '{"a": "MAP(JSON, INTEGER)"}')::VARCHAR;
+----
+{'a': {k1=1, plain=2}}	{'a': {1=2}}	[{1=2}, NULL, NULL]	{'a': {'"k"'=1}}
+
+statement ok
+COPY (SELECT '{"s": {"x": tru}}' AS line) TO '{TEST_DIR}/struct_json_bad.ndjson' (FORMAT csv, HEADER false, QUOTE '');
+
+statement error
+SELECT s FROM read_json('{TEST_DIR}/struct_json_bad.ndjson', columns={s: 'STRUCT(x JSON)'}, format='newline_delimited', records=true);
+----
+Malformed JSON
+
+statement ok
+CREATE TABLE copied_nested (s STRUCT(b INTEGER), l INTEGER[], m MAP(VARCHAR, INTEGER));
+
+statement ok
+COPY (SELECT {'b': 1} AS s, [1, 2] AS l, MAP {'k': 3} AS m) TO '{TEST_DIR}/copied_nested.ndjson' (FORMAT json);
+
+statement ok
+COPY copied_nested FROM '{TEST_DIR}/copied_nested.ndjson' (FORMAT json);
+
+query III
+SELECT s.b, l::VARCHAR, m::VARCHAR FROM copied_nested;
+----
+1	[1, 2]	{k=3}

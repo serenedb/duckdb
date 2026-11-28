@@ -1,0 +1,68 @@
+# name: test/sql/json/scalar/test_json_path_errors.test
+# description: Path functions report a malformed document where they read through it, with and without json_strict_paths, and json() reports one it cannot copy
+# group: [scalar]
+
+require json
+
+statement error
+SELECT json_extract('{"a": 1, "b": [1,}', ['$.a', '$.b'])
+----
+Malformed JSON at byte 17 of input: unexpected character.
+
+statement error
+SELECT json_extract('{"a": 1, "x" 2, "b": 3}', ['$.a', '$.b'])
+----
+Malformed JSON at byte 13 of input: unexpected character.
+
+statement error
+SELECT json('{"a": [1,}')
+----
+Malformed JSON at byte 9 of input: unexpected character.
+
+statement error
+SELECT json_extract('{"x" 1, "y": 2}', '$.y')
+----
+Malformed JSON at byte 5 of input: unexpected character.
+
+statement error
+SELECT json_extract('{"a": {"b" 1}}', '$.a.b')
+----
+Malformed JSON at byte 11 of input: unexpected character.
+
+statement error
+SELECT json_extract('{"a": [1 2]}', '$.a[1]')
+----
+Malformed JSON at byte 9 of input: unexpected character.
+
+statement error
+SELECT json_extract('{"aa\q": 1}', '$.a')
+----
+Malformed JSON at byte 4 of input: invalid escaped sequence in string.
+
+statement error
+SELECT json_extract('{"a": tru}', '$.a')
+----
+Malformed JSON at byte 6 of input: invalid literal, expected 'true'.
+
+statement ok
+SET json_strict_paths = true
+
+query I
+SELECT json_extract('{"a":1}', '$.a')
+----
+1
+
+statement error
+SELECT json_extract('{"a":1,"b":[1,}', '$.a')
+----
+Malformed JSON at byte 14 of input: unexpected character.
+
+statement error
+SELECT json_extract('{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "b": "unterminated', '$.b')
+----
+Malformed JSON at byte 66 of input: unexpected end of data.
+
+statement error
+SELECT json_extract('{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "b": [1,}', '$.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+----
+Malformed JSON at byte 56 of input: unexpected character.

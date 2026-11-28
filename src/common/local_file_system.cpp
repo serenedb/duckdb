@@ -39,6 +39,8 @@
 #include <sys/uio.h>
 #include <unistd.h>
 #if defined(__linux__)
+#include <linux/mman.h>
+#include <sys/syscall.h>
 #include <sys/vfs.h>
 #elif defined(__APPLE__)
 #include <sys/param.h>
@@ -1123,7 +1125,7 @@ string LocalFileSystem::MakePathAbsolute(const string &path_p, optional_ptr<File
 //===----------------------------------------------------------------------===//
 class UnixMemoryMappedFile : public MemoryMappedFile {
 public:
-	UnixMemoryMappedFile(string path_p, FileOpenFlags flags_p, int fd_p, data_ptr_t data_p, idx_t size_p);
+	UnixMemoryMappedFile(string path_p, FileOpenFlags flags_p, int fd_p, data_ptr_t data_p, idx_t size_p, idx_t tail_p);
 	~UnixMemoryMappedFile() override;
 
 	void Sync() override;
@@ -1132,8 +1134,12 @@ public:
 	void Advise(MappedFileAccess access) override;
 	void Prefetch(idx_t location, idx_t nr_bytes) override;
 	void Evict(idx_t location, idx_t nr_bytes) override;
+	void Release(idx_t location, idx_t nr_bytes) override;
+	bool IsCached(idx_t location, idx_t nr_bytes) override;
 
 private:
+	pair<idx_t, idx_t> DropPages(idx_t location, idx_t nr_bytes);
+
 	int fd;
 };
 
@@ -1144,8 +1150,9 @@ constexpr idx_t WILL_NEED_CHUNK = 32 * 1024;
 } // namespace
 
 UnixMemoryMappedFile::UnixMemoryMappedFile(string path_p, FileOpenFlags flags_p, int fd_p, data_ptr_t data_p,
-                                           idx_t size_p)
+                                           idx_t size_p, idx_t tail_p)
     : MemoryMappedFile(std::move(path_p), std::move(flags_p), data_p, size_p), fd(fd_p) {
+	tail = tail_p;
 }
 
 UnixMemoryMappedFile::~UnixMemoryMappedFile() {
@@ -1179,9 +1186,10 @@ bool UnixMemoryMappedFile::Trim(idx_t offset, idx_t length) {
 
 void UnixMemoryMappedFile::Close() {
 	if (data != nullptr) {
-		munmap(data, size);
+		munmap(data, size + tail);
 		data = nullptr;
 		size = 0;
+		tail = 0;
 	}
 	if (fd != -1) {
 		close(fd);
@@ -1220,20 +1228,49 @@ void UnixMemoryMappedFile::Prefetch(idx_t location, idx_t nr_bytes) {
 	}
 }
 
-void UnixMemoryMappedFile::Evict(idx_t location, idx_t nr_bytes) {
+pair<idx_t, idx_t> UnixMemoryMappedFile::DropPages(idx_t location, idx_t nr_bytes) {
 	if (location >= size) {
-		return;
+		return {0, 0};
 	}
 	nr_bytes = MinValue(nr_bytes, size - location);
 	static const auto page = NumericCast<idx_t>(sysconf(_SC_PAGESIZE));
 	const auto begin = AlignValue(location, page);
 	const auto end = (location + nr_bytes) / page * page;
 	if (begin >= end) {
-		return;
+		return {0, 0};
 	}
 	::madvise(data + begin, end - begin, MADV_DONTNEED);
+	return {begin, end};
+}
+
+void UnixMemoryMappedFile::Evict(idx_t location, idx_t nr_bytes) {
+	[[maybe_unused]] const auto pages = DropPages(location, nr_bytes);
 #ifndef __APPLE__
-	::posix_fadvise(fd, NumericCast<off_t>(begin), NumericCast<off_t>(end - begin), POSIX_FADV_DONTNEED);
+	if (pages.first < pages.second) {
+		::posix_fadvise(fd, NumericCast<off_t>(pages.first), NumericCast<off_t>(pages.second - pages.first),
+		                POSIX_FADV_DONTNEED);
+	}
+#endif
+}
+
+void UnixMemoryMappedFile::Release(idx_t location, idx_t nr_bytes) {
+	DropPages(location, nr_bytes);
+}
+
+bool UnixMemoryMappedFile::IsCached(idx_t location, idx_t nr_bytes) {
+#if defined(__linux__) && defined(__NR_cachestat)
+	if (location >= size) {
+		return true;
+	}
+	nr_bytes = MinValue(nr_bytes, size - location);
+	static const auto page = NumericCast<idx_t>(sysconf(_SC_PAGESIZE));
+	const auto begin = location / page * page;
+	const auto end = AlignValue(location + nr_bytes, page);
+	struct cachestat_range range = {begin, end - begin};
+	struct cachestat stats = {};
+	return ::syscall(__NR_cachestat, fd, &range, &stats, 0) == 0 && stats.nr_cache == (end - begin) / page;
+#else
+	return false;
 #endif
 }
 
@@ -1297,19 +1334,35 @@ unique_ptr<MemoryMappedFile> LocalFileSystem::MemoryMapFile(const OpenFileInfo &
 	}
 
 	data_ptr_t data = nullptr;
-	if (mapping_size > 0) {
-		int prot = PROT_READ | (open_write ? PROT_WRITE : 0);
-		void *mapped = mmap(nullptr, mapping_size, prot, MAP_SHARED, fd, 0);
-		if (mapped == MAP_FAILED) {
-			int saved_errno = errno;
-			close(fd);
-			throw IOException({{"errno", std::to_string(saved_errno)}}, "Could not mmap file \"%s\" (size=%llu): %s",
-			                  path, mapping_size, strerror(saved_errno));
+	idx_t tail = 0;
+	static const auto page = NumericCast<idx_t>(sysconf(_SC_PAGESIZE));
+	const idx_t spare = AlignValue(mapping_size, page) - mapping_size;
+	void *mapped = nullptr;
+	if (!open_write && options.tail > spare) {
+		const idx_t reserved = AlignValue(mapping_size + options.tail, page);
+		mapped = mmap(nullptr, reserved, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mapped != MAP_FAILED && mapping_size > 0 &&
+		    mmap(mapped, mapping_size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED) {
+			const int saved_errno = errno;
+			munmap(mapped, reserved);
+			errno = saved_errno;
+			mapped = MAP_FAILED;
 		}
-		data = data_ptr_cast(mapped);
+		tail = reserved - mapping_size;
+	} else if (mapping_size > 0) {
+		int prot = PROT_READ | (open_write ? PROT_WRITE : 0);
+		mapped = mmap(nullptr, mapping_size, prot, MAP_SHARED, fd, 0);
+		tail = open_write || options.tail == 0 ? 0 : spare;
 	}
+	if (mapped == MAP_FAILED) {
+		int saved_errno = errno;
+		close(fd);
+		throw IOException({{"errno", std::to_string(saved_errno)}}, "Could not mmap file \"%s\" (size=%llu): %s", path,
+		                  mapping_size, strerror(saved_errno));
+	}
+	data = data_ptr_cast(mapped);
 
-	return make_uniq<UnixMemoryMappedFile>(path, flags, fd, data, mapping_size);
+	return make_uniq<UnixMemoryMappedFile>(path, flags, fd, data, mapping_size, tail);
 }
 
 #else

@@ -8,6 +8,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
 #include "duckdb/main/appender.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/formats/copy_fields.hpp"
 #include <sstream>
 
 namespace duckdb {
@@ -20,6 +21,67 @@ LinesPerBoundary::LinesPerBoundary(idx_t boundary_idx_p, idx_t lines_in_batch_p)
 
 CSVErrorHandler::CSVErrorHandler(bool ignore_errors_p, idx_t reject_tolerance_p)
     : ignore_errors(ignore_errors_p), reject_tolerance(reject_tolerance_p) {
+}
+
+void CSVErrorHandler::ThrowCopyError(const CSVError &csv_error) {
+	const auto context = CopyContext(csv_error.copy_table, GetLineInternal(csv_error.error_info), csv_error.copy_column,
+	                                 csv_error.copy_has_value, csv_error.copy_value);
+	duckdb::ThrowCopyError(csv_error.sqlstate.c_str(), csv_error.error_message, context, csv_error.detail,
+	                       csv_error.hint);
+}
+
+void CSVErrorHandler::ThrowOverRejectLimit() {
+	if (reject_tolerance == 0 || errors.size() <= reject_tolerance) {
+		return;
+	}
+	if (!errors.back().sqlstate.empty()) {
+		duckdb::ThrowCopyError("22P02", "skipped more than REJECT_LIMIT (" + std::to_string(reject_tolerance) +
+		                                    ") rows due to data type incompatibility");
+	}
+	throw InvalidInputException("skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
+	                            reject_tolerance, errors.back().error_message);
+}
+
+static idx_t EarliestOf(const vector<CSVError> &list) {
+	RangeFailure first;
+	idx_t earliest = 0;
+	for (idx_t i = 0; i < list.size(); i++) {
+		if (first.Fail(list[i].error_info.boundary_idx, list[i].error_info.lines_in_batch)) {
+			earliest = i;
+		}
+	}
+	return earliest;
+}
+
+void CSVErrorHandler::ThrowEarliestFailure(bool any) {
+	if (failures.empty()) {
+		return;
+	}
+	const idx_t earliest = EarliestOf(failures);
+	if (any || CanGetLine(failures[earliest].GetBoundaryIndex())) {
+		ThrowCopyError(failures[earliest]);
+	}
+}
+
+vector<string> CSVErrorHandler::CopySkippedRows() {
+	lock_guard<mutex> parallel_lock(main_mutex);
+	vector<pair<idx_t, string>> rows;
+	for (auto &error : errors) {
+		if (error.sqlstate.empty()) {
+			continue;
+		}
+		const auto line = GetLineInternal(error.error_info);
+		rows.emplace_back(line, "skipping row due to data type incompatibility at line " + std::to_string(line) +
+		                            " for column \"" + error.copy_column + "\": \"" + error.copy_value + "\"");
+	}
+	std::stable_sort(rows.begin(), rows.end(),
+	                 [](const pair<idx_t, string> &a, const pair<idx_t, string> &b) { return a.first < b.first; });
+	vector<string> result;
+	result.reserve(rows.size());
+	for (auto &row : rows) {
+		result.push_back(std::move(row.second));
+	}
+	return result;
 }
 
 void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
@@ -36,6 +98,9 @@ void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
 				}
 			}
 		}
+	}
+	if (!error_to_throw.sqlstate.empty()) {
+		ThrowCopyError(error_to_throw);
 	}
 	std::ostringstream error;
 	if (PrintLineNumber(error_to_throw)) {
@@ -61,45 +126,69 @@ void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
 	}
 }
 
+idx_t CSVErrorHandler::EarliestError() const {
+	return EarliestOf(errors);
+}
+
+void CSVErrorHandler::Absorb(CSVErrorHandler &other) {
+	vector<CSVError> taken;
+	{
+		lock_guard<mutex> other_lock(other.main_mutex);
+		std::swap(taken, other.errors);
+	}
+	for (auto &error : taken) {
+		Error(error);
+	}
+}
+
 void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 	lock_guard<mutex> parallel_lock(main_mutex);
+	if (ignore_errors && !csv_error.sqlstate.empty() && csv_error.type != CSVErrorType::CAST_ERROR) {
+		failures.push_back(csv_error);
+		ThrowEarliestFailure(false);
+		return;
+	}
 	if (!force_error && (ignore_errors || (PrintLineNumber(csv_error) && !CanGetLine(csv_error.GetBoundaryIndex())))) {
 		// We store this error, we can't throw it now, or we are ignoring it
 		errors.push_back(csv_error);
+		if (ignore_errors) {
+			ThrowOverRejectLimit();
+		}
 		return;
 	}
-	// Otherwise we can throw directly
+	if (!force_error && !errors.empty()) {
+		errors.push_back(csv_error);
+		ThrowError(errors[EarliestError()]);
+	}
 	ThrowError(csv_error);
 }
 
 void CSVErrorHandler::ErrorIfNeeded() {
 	lock_guard<mutex> parallel_lock(main_mutex);
-	// PG's REJECT_LIMIT is a tolerance, not a cap on what we record: fail once the batch
-	// accumulated more skipped rows than the caller is willing to accept.
-	if (reject_tolerance > 0 && errors.size() > reject_tolerance) {
-		throw InvalidInputException("skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
-		                            reject_tolerance, errors.back().error_message);
-	}
+	ThrowEarliestFailure(false);
+	ThrowOverRejectLimit();
 	if (ignore_errors || errors.empty()) {
 		// Nothing to error
 		return;
 	}
-
-	if (CanGetLine(errors[0].error_info.boundary_idx)) {
-		ThrowError(errors[0]);
+	auto &earliest = errors[EarliestError()];
+	if (CanGetLine(earliest.error_info.boundary_idx)) {
+		ThrowError(earliest);
 	}
 }
 
 void CSVErrorHandler::ErrorIfAny() {
 	lock_guard<mutex> parallel_lock(main_mutex);
+	ThrowEarliestFailure(true);
 	if (ignore_errors || errors.empty()) {
 		// Nothing to error
 		return;
 	}
-	if (!CanGetLine(errors[0].error_info.boundary_idx)) {
+	auto &earliest = errors[EarliestError()];
+	if (!CanGetLine(earliest.error_info.boundary_idx)) {
 		throw InternalException("Failed to get error information for boundary index");
 	}
-	ThrowError(errors[0]);
+	ThrowError(earliest);
 }
 
 void CSVErrorHandler::ErrorIfTypeExists(CSVErrorType error_type) {
@@ -114,11 +203,7 @@ void CSVErrorHandler::ErrorIfTypeExists(CSVErrorType error_type) {
 
 void CSVErrorHandler::Insert(idx_t boundary_idx, idx_t rows) {
 	lock_guard<mutex> parallel_lock(main_mutex);
-	if (lines_per_batch_map.find(boundary_idx) == lines_per_batch_map.end()) {
-		lines_per_batch_map[boundary_idx] = {boundary_idx, rows};
-	} else {
-		lines_per_batch_map[boundary_idx].lines_in_batch += rows;
-	}
+	lines.Add(boundary_idx, rows);
 }
 
 void CSVErrorHandler::NewMaxLineSize(idx_t scan_line_size) {
@@ -531,17 +616,6 @@ CSVError CSVError::SniffingError(const CSVReaderOptions &options, const string &
 	return CSVError(error.str(), SNIFFING, {});
 }
 
-CSVError CSVError::NullPaddingFail(const CSVReaderOptions &options, LinesPerBoundary error_info,
-                                   const String &current_path) {
-	std::ostringstream error;
-	error << " The parallel scanner does not support null_padding in conjunction with quoted new lines. Please "
-	         "disable the parallel csv reader with parallel=false"
-	      << '\n';
-	// What were the options
-	error << options.ToString(current_path);
-	return CSVError(error.str(), NULLPADDED_QUOTED_NEW_VALUE, error_info);
-}
-
 CSVError CSVError::UnterminatedQuotesError(const CSVReaderOptions &options, idx_t current_column,
                                            LinesPerBoundary error_info, string &csv_row, idx_t row_byte_position,
                                            optional_idx byte_position, const String &current_path) {
@@ -610,6 +684,9 @@ bool CSVErrorHandler::PrintLineNumber(const CSVError &error) const {
 	if (!print_line) {
 		return false;
 	}
+	if (!error.sqlstate.empty()) {
+		return true;
+	}
 	switch (error.type) {
 	case CAST_ERROR:
 	case UNTERMINATED_QUOTES:
@@ -625,12 +702,7 @@ bool CSVErrorHandler::PrintLineNumber(const CSVError &error) const {
 }
 
 bool CSVErrorHandler::CanGetLine(idx_t boundary_index) {
-	for (idx_t i = 0; i < boundary_index; i++) {
-		if (lines_per_batch_map.find(i) == lines_per_batch_map.end()) {
-			return false;
-		}
-	}
-	return true;
+	return lines.Known(boundary_index);
 }
 
 idx_t CSVErrorHandler::GetLine(const LinesPerBoundary &error_info) {
@@ -638,12 +710,7 @@ idx_t CSVErrorHandler::GetLine(const LinesPerBoundary &error_info) {
 	return GetLineInternal(error_info);
 }
 idx_t CSVErrorHandler::GetLineInternal(const LinesPerBoundary &error_info) {
-	// We start from one, since the lines are 1-indexed
-	idx_t current_line = 1 + error_info.lines_in_batch;
-	for (idx_t boundary_idx = 0; boundary_idx < error_info.boundary_idx; boundary_idx++) {
-		current_line += lines_per_batch_map[boundary_idx].lines_in_batch;
-	}
-	return current_line;
+	return lines.Line(error_info.boundary_idx, error_info.lines_in_batch);
 }
 
 } // namespace duckdb

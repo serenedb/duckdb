@@ -170,6 +170,11 @@ void CachingFileSystemWrapper::Read(FileHandle &handle, void *buffer, int64_t nr
 	group.CopyTo(static_cast<data_ptr_t>(buffer), NumericCast<idx_t>(nr_bytes));
 }
 
+void CachingFileSystemWrapper::ReadInPlace(FileHandle &handle, idx_t nr_bytes, idx_t location) {
+	auto file = handle.Cast<CachingFileHandleWrapper>().caching_handle->GetFileHandle();
+	file->file_system.ReadInPlace(*file, nr_bytes, location);
+}
+
 int64_t CachingFileSystemWrapper::Read(FileHandle &handle, void *buffer, int64_t nr_bytes) {
 	const idx_t current_position = SeekPosition(handle);
 	const idx_t max_read = NumericCast<idx_t>(GetFileSize(handle)) - current_position;

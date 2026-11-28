@@ -94,3 +94,34 @@ true
 
 statement ok
 select json_serialize_plan('select blob ''\\x00''');
+
+query I
+SELECT json_serialize_plan('SELECT 42', format := true) LIKE '{' || chr(10) || '    "error": false,' || chr(10) || '    "plans": [%';
+----
+true
+
+query I
+SELECT json(json_serialize_plan('SELECT 42', format := true)) = json_serialize_plan('SELECT 42');
+----
+true
+
+statement ok
+CREATE TABLE moods (m ENUM('sad', 'ok', 'happy'));
+
+query I
+SELECT json_serialize_plan('SELECT m FROM moods', skip_empty := true) LIKE '%"values":["sad","ok","happy"]%';
+----
+true
+
+query I
+SELECT json_serialize_plan('SELECT m FROM moods') LIKE '%"values":["sad","ok","happy"]%';
+----
+true
+
+statement ok
+CREATE TABLE blank_moods (m ENUM('', 'ok'));
+
+query I
+SELECT json_serialize_plan('SELECT m FROM blank_moods', skip_empty := true) LIKE '%"values":["","ok"]%';
+----
+true

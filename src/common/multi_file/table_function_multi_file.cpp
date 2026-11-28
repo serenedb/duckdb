@@ -89,6 +89,7 @@ void TableFunctionFileReader::BindFunction(ClientContext &context, const TableFu
 	file_input.multi_file_scan = options.multi_file_scan;
 	file_input.schema_only = schema_only;
 	file_input.file_bind_data = file_bind_data;
+	file_input.copy_rules = options.copy_rules;
 	if (!options.expected_names.empty()) {
 		// the schema of the scan is known upfront - bind this file against that schema
 		file_input.expected_names = options.expected_names;
@@ -419,7 +420,9 @@ unique_ptr<MultiFileReaderInterface> TableFunctionMultiFileWrapper::CreateInterf
 }
 
 unique_ptr<MultiFileReaderInterface> TableFunctionMultiFileWrapper::Copy() {
-	return make_uniq<TableFunctionMultiFileWrapper>(function, settings);
+	auto result = make_uniq<TableFunctionMultiFileWrapper>(function, settings);
+	result->copy_rules = copy_rules;
+	return std::move(result);
 }
 
 FileGlobInput TableFunctionMultiFileWrapper::GetGlobInput() {
@@ -516,6 +519,7 @@ void TableFunctionMultiFileWrapper::FinalizeCopyBind(ClientContext &context, Bas
 	auto &options = options_p.Cast<TableFunctionFileReaderOptions>();
 	options.expected_names = expected_names;
 	options.expected_types = expected_types;
+	options.copy_rules = copy_rules;
 }
 
 unique_ptr<TableFunctionData>
@@ -757,6 +761,15 @@ unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindWith(
 	    make_uniq<TableFunctionMultiFileWrapper>(std::move(single_file_function), std::move(settings)));
 }
 
+unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindWith(
+    ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types, vector<Identifier> &names,
+    TableFunction single_file_function, TableFunctionMultiFileSettings settings, vector<OpenFileInfo> expanded) {
+	return TableFunctionMultiFileFunction::MultiFileBindInterface(
+	    context, input, return_types, names,
+	    make_uniq<TableFunctionMultiFileWrapper>(std::move(single_file_function), std::move(settings)),
+	    make_shared_ptr<SimpleMultiFileList>(std::move(expanded)));
+}
+
 static unique_ptr<FunctionData> TableFunctionMultiFileBind(ClientContext &context, TableFunctionBindInput &input,
                                                            vector<LogicalType> &return_types,
                                                            vector<Identifier> &names) {
@@ -785,6 +798,21 @@ unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindCopyWith(
 	return TableFunctionMultiFileFunction::MultiFileBindCopyInterface(
 	    context, input, expected_names, expected_types,
 	    make_uniq<TableFunctionMultiFileWrapper>(std::move(single_file_function), std::move(settings)));
+}
+
+unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindCopyRules(ClientContext &context,
+                                                                               CopyFromFunctionBindInput &input,
+                                                                               vector<Identifier> &expected_names,
+                                                                               vector<LogicalType> &expected_types,
+                                                                               shared_ptr<const CopyFromRules> rules) {
+	auto &info = input.tf.function_info->Cast<TableFunctionMultiFileInfo>();
+	auto interface = make_uniq<TableFunctionMultiFileWrapper>(info.function, info.settings);
+	interface->copy_rules = std::move(rules);
+	auto parsed = input.info.Copy();
+	parsed->options.clear();
+	CopyFromFunctionBindInput parsed_input(*parsed, input.tf);
+	return TableFunctionMultiFileFunction::MultiFileBindCopyInterface(context, parsed_input, expected_names,
+	                                                                  expected_types, std::move(interface));
 }
 
 //! Report the metrics of the scan: the shared multi-file ones, plus those the wrapped function keeps for each of
@@ -875,6 +903,7 @@ TableFunction TableFunctionMultiFileWrapper::CreateFunction(TableFunction single
 	result.filter_pushdown = single_file_function.filter_pushdown;
 	result.filter_prune = single_file_function.filter_prune;
 	result.supports_pushdown_type = single_file_function.supports_pushdown_type;
+	result.pushdown_expression = single_file_function.pushdown_expression;
 	result.late_materialization = single_file_function.late_materialization;
 	if (single_file_function.get_partition_stats) {
 		// the row groups of the scan are those of its files

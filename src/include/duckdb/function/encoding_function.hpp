@@ -99,4 +99,27 @@ struct EncodingFunctionSet {
 	case_insensitive_map_t<EncodingFunction> functions;
 };
 
+enum class TextEncoding : uint8_t {
+	LATIN1,
+	UTF16_LE,
+	UTF16_BE,
+	UTF32_LE,
+	UTF32_BE,
+};
+
+enum class Utf8DecodeStatus : uint8_t {
+	DONE,
+	INCOMPLETE,
+	FULL,
+	INVALID,
+};
+
+struct Utf8DecodeResult {
+	idx_t read;
+	idx_t written;
+	Utf8DecodeStatus status;
+};
+
+Utf8DecodeResult DecodeToUtf8(TextEncoding encoding, const char *input, idx_t size, char *output, idx_t capacity);
+
 } // namespace duckdb

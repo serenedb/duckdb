@@ -1,4 +1,7 @@
+#include "duckdb/common/read_within_page.hpp"
 #include "duckdb/common/type_visitor.hpp"
+#include "duckdb/common/types/cast_helpers.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
@@ -27,52 +30,14 @@ namespace duckdb {
 static constexpr const char *JSON_COPY_TO_JSON_INTERNAL_NAME = "__internal_json_copy_to_json";
 static constexpr const char *JSON_COPY_TO_GEOJSON_INTERNAL_NAME = "__internal_json_copy_to_geojson";
 
-struct StructNames {
-	void Insert(const string &name) {
-		values[name] = make_uniq<Vector>(Value(name), count_t(0ULL));
-	}
-
-	StructNames Copy() const {
-		StructNames result;
-		// Have to do this because we can't implicitly copy Vector
-		for (const auto &kv : values) {
-			// The vectors are const vectors of the key value
-			result.values[kv.first] = make_uniq<Vector>(Value(kv.first), count_t(0ULL));
-		}
-		return result;
-	}
-
-	bool Equals(const StructNames &other) const {
-		if (values.size() != other.values.size()) {
-			return false;
-		}
-		for (const auto &kv : values) {
-			if (other.values.find(kv.first) == other.values.end()) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-private:
-	unordered_map<string, unique_ptr<Vector>> values;
-};
-
 struct JSONCreateFunctionData : public FunctionData {
 public:
-	explicit JSONCreateFunctionData(StructNames const_struct_names_p)
-	    : const_struct_names(std::move(const_struct_names_p)) {
-	}
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<JSONCreateFunctionData>(const_struct_names.Copy());
+		return make_uniq<JSONCreateFunctionData>();
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		return true;
 	}
-
-public:
-	// Const struct name vectors live here so they don't have to be re-initialized for every DataChunk
-	StructNames const_struct_names;
 };
 
 //! How a GEOMETRY value is represented in JSON. WKT is the default so that plain JSON output is unchanged;
@@ -126,14 +91,14 @@ static JSONCopyFormatOptions ClientFormatOptions(ClientContext &context) {
 
 struct JSONCopyToJSONFunctionData : public FunctionData {
 public:
-	JSONCopyToJSONFunctionData(StructNames const_struct_names_p, bool has_date_format_p, string date_format_string_p,
-	                           StrfTimeFormat date_format_p, bool has_timestamp_format_p,
-	                           string timestamp_format_string_p, StrfTimeFormat timestamp_format_p,
+	JSONCopyToJSONFunctionData(bool has_date_format_p, string date_format_string_p, StrfTimeFormat date_format_p,
+	                           bool has_timestamp_format_p, string timestamp_format_string_p,
+	                           StrfTimeFormat timestamp_format_p,
 	                           unique_ptr<Expression> timestamptz_format_expression_p,
 	                           unique_ptr<Expression> timestamptz_ns_format_expression_p)
-	    : const_struct_names(std::move(const_struct_names_p)), has_date_format(has_date_format_p),
-	      date_format_string(std::move(date_format_string_p)), date_format(std::move(date_format_p)),
-	      has_timestamp_format(has_timestamp_format_p), timestamp_format_string(std::move(timestamp_format_string_p)),
+	    : has_date_format(has_date_format_p), date_format_string(std::move(date_format_string_p)),
+	      date_format(std::move(date_format_p)), has_timestamp_format(has_timestamp_format_p),
+	      timestamp_format_string(std::move(timestamp_format_string_p)),
 	      timestamp_format(std::move(timestamp_format_p)),
 	      timestamptz_format_expression(std::move(timestamptz_format_expression_p)),
 	      timestamptz_ns_format_expression(std::move(timestamptz_ns_format_expression_p)) {
@@ -141,9 +106,8 @@ public:
 
 	unique_ptr<FunctionData> Copy() const override {
 		return make_uniq<JSONCopyToJSONFunctionData>(
-		    const_struct_names.Copy(), has_date_format, date_format_string, date_format, has_timestamp_format,
-		    timestamp_format_string, timestamp_format,
-		    timestamptz_format_expression ? timestamptz_format_expression->Copy() : nullptr,
+		    has_date_format, date_format_string, date_format, has_timestamp_format, timestamp_format_string,
+		    timestamp_format, timestamptz_format_expression ? timestamptz_format_expression->Copy() : nullptr,
 		    timestamptz_ns_format_expression ? timestamptz_ns_format_expression->Copy() : nullptr);
 	}
 
@@ -151,8 +115,7 @@ public:
 		auto &other = other_p.Cast<JSONCopyToJSONFunctionData>();
 		return has_date_format == other.has_date_format && has_timestamp_format == other.has_timestamp_format &&
 		       date_format_string == other.date_format_string &&
-		       timestamp_format_string == other.timestamp_format_string &&
-		       const_struct_names.Equals(other.const_struct_names);
+		       timestamp_format_string == other.timestamp_format_string;
 	}
 
 	JSONCopyFormatOptions GetFormatOptions(ClientContext &context) {
@@ -171,7 +134,6 @@ public:
 	}
 
 public:
-	StructNames const_struct_names;
 	bool has_date_format;
 	string date_format_string;
 	StrfTimeFormat date_format;
@@ -220,7 +182,7 @@ static bool HasOwnJSONCast(const CastFunctionSet &casts, const LogicalType &type
 	return type.HasAlias() && casts.HasExactRegisteredCast(type, LogicalType::JSON());
 }
 
-static LogicalType GetJSONType(StructNames &const_struct_names, const CastFunctionSet &casts, const LogicalType &type) {
+static LogicalType GetJSONType(const CastFunctionSet &casts, const LogicalType &type) {
 	if (type.IsJSONType()) {
 		return type;
 	}
@@ -261,22 +223,19 @@ static LogicalType GetJSONType(StructNames &const_struct_names, const CastFuncti
 	case LogicalTypeId::UUID:
 	case LogicalTypeId::BIGNUM:
 	case LogicalTypeId::DECIMAL:
-	// GEOMETRY is emitted as either WKT or GeoJSON, so it must reach CreateValues untouched
 	case LogicalTypeId::GEOMETRY:
 		return type;
 	case LogicalTypeId::VARIANT:
 		return LogicalType::JSON();
 	case LogicalTypeId::LIST:
-		return LogicalType::LIST(GetJSONType(const_struct_names, casts, ListType::GetChildType(type)));
+		return LogicalType::LIST(GetJSONType(casts, ListType::GetChildType(type)));
 	case LogicalTypeId::ARRAY:
-		return LogicalType::ARRAY(GetJSONType(const_struct_names, casts, ArrayType::GetChildType(type)),
-		                          ArrayType::GetSize(type));
+		return LogicalType::ARRAY(GetJSONType(casts, ArrayType::GetChildType(type)), ArrayType::GetSize(type));
 	// Struct and MAP are treated as JSON values
 	case LogicalTypeId::STRUCT: {
 		child_list_t<LogicalType> child_types;
 		for (const auto &child_type : StructType::GetChildTypes(type)) {
-			const_struct_names.Insert(child_type.first.GetIdentifierName());
-			child_types.emplace_back(child_type.first, GetJSONType(const_struct_names, casts, child_type.second));
+			child_types.emplace_back(child_type.first, GetJSONType(casts, child_type.second));
 		}
 		return LogicalType::STRUCT(child_types);
 	}
@@ -284,21 +243,19 @@ static LogicalType GetJSONType(StructNames &const_struct_names, const CastFuncti
 	case LogicalTypeId::TUPLE: {
 		vector<LogicalType> child_types;
 		for (const auto &child_type : StructType::GetChildTypes(type)) {
-			child_types.push_back(GetJSONType(const_struct_names, casts, child_type.second));
+			child_types.push_back(GetJSONType(casts, child_type.second));
 		}
 		return LogicalType::TUPLE(std::move(child_types));
 	}
 	case LogicalTypeId::MAP: {
-		return LogicalType::MAP(MapType::KeyType(type),
-		                        GetJSONType(const_struct_names, casts, MapType::ValueType(type)));
+		return LogicalType::MAP(MapType::KeyType(type), GetJSONType(casts, MapType::ValueType(type)));
 	}
 	case LogicalTypeId::UNION: {
 		child_list_t<LogicalType> member_types;
 		for (idx_t member_idx = 0; member_idx < UnionType::GetMemberCount(type); member_idx++) {
 			auto &member_name = UnionType::GetMemberName(type, member_idx);
 			auto &member_type = UnionType::GetMemberType(type, member_idx);
-			const_struct_names.Insert(member_name.GetIdentifierName());
-			member_types.emplace_back(member_name, GetJSONType(const_struct_names, casts, member_type));
+			member_types.emplace_back(member_name, GetJSONType(casts, member_type));
 		}
 		return LogicalType::UNION(member_types);
 	}
@@ -312,7 +269,6 @@ static unique_ptr<FunctionData> JSONCreateBindParams(BindScalarFunctionInput &in
 	auto &bound_function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();
 	auto &casts = CastFunctionSet::Get(input.GetClientContext());
-	StructNames const_struct_names;
 	auto &bound_arguments = bound_function.GetArguments();
 	bound_arguments.clear();
 	bound_arguments.reserve(arguments.size());
@@ -328,10 +284,10 @@ static unique_ptr<FunctionData> JSONCreateBindParams(BindScalarFunctionInput &in
 			bound_arguments.push_back(LogicalType::VARCHAR);
 		} else {
 			// Value, cast to types that we can put in JSON
-			bound_arguments.push_back(GetJSONType(const_struct_names, casts, type));
+			bound_arguments.push_back(GetJSONType(casts, type));
 		}
 	}
-	return make_uniq<JSONCreateFunctionData>(std::move(const_struct_names));
+	return make_uniq<JSONCreateFunctionData>();
 }
 
 static unique_ptr<FunctionData> JSONObjectBind(BindScalarFunctionInput &input) {
@@ -432,8 +388,8 @@ static unique_ptr<Expression> BindJSONCopyTimestampTZFormatter(ClientContext &co
 }
 
 static unique_ptr<JSONCopyToJSONFunctionData>
-CreateJSONCopyToJSONFunctionData(ClientContext &context, StructNames const_struct_names, bool has_date_format,
-                                 string date_format_string, bool has_timestamp_format, string timestamp_format_string) {
+CreateJSONCopyToJSONFunctionData(ClientContext &context, bool has_date_format, string date_format_string,
+                                 bool has_timestamp_format, string timestamp_format_string) {
 	StrfTimeFormat date_format;
 	StrfTimeFormat timestamp_format;
 	if (has_date_format) {
@@ -452,16 +408,14 @@ CreateJSONCopyToJSONFunctionData(ClientContext &context, StructNames const_struc
 		    BindJSONCopyTimestampTZFormatter(context, timestamp_format_string, LogicalType::TIMESTAMP_TZ_NS);
 	}
 
-	return make_uniq<JSONCopyToJSONFunctionData>(
-	    std::move(const_struct_names), has_date_format, std::move(date_format_string), std::move(date_format),
-	    has_timestamp_format, std::move(timestamp_format_string), std::move(timestamp_format),
-	    std::move(timestamptz_format_expression), std::move(timestamptz_ns_format_expression));
+	return make_uniq<JSONCopyToJSONFunctionData>(has_date_format, std::move(date_format_string), std::move(date_format),
+	                                             has_timestamp_format, std::move(timestamp_format_string),
+	                                             std::move(timestamp_format), std::move(timestamptz_format_expression),
+	                                             std::move(timestamptz_ns_format_expression));
 }
 
-static unique_ptr<JSONCopyToJSONFunctionData> CreateJSONCopyToJSONFunctionData(ClientContext &context,
-                                                                               StructNames const_struct_names,
-                                                                               Expression &date_argument,
-                                                                               Expression &timestamp_argument) {
+static unique_ptr<JSONCopyToJSONFunctionData>
+CreateJSONCopyToJSONFunctionData(ClientContext &context, Expression &date_argument, Expression &timestamp_argument) {
 	StrfTimeFormat date_format;
 	StrfTimeFormat timestamp_format;
 	string date_format_string;
@@ -469,425 +423,331 @@ static unique_ptr<JSONCopyToJSONFunctionData> CreateJSONCopyToJSONFunctionData(C
 	auto has_date_format = BindJSONCopyFormat(context, date_argument, "date", date_format_string, date_format);
 	auto has_timestamp_format =
 	    BindJSONCopyFormat(context, timestamp_argument, "timestamp", timestamp_format_string, timestamp_format);
-	return CreateJSONCopyToJSONFunctionData(context, std::move(const_struct_names), has_date_format,
-	                                        std::move(date_format_string), has_timestamp_format,
-	                                        std::move(timestamp_format_string));
+	return CreateJSONCopyToJSONFunctionData(context, has_date_format, std::move(date_format_string),
+	                                        has_timestamp_format, std::move(timestamp_format_string));
 }
 
 static unique_ptr<FunctionData> JSONCopyToJSONBind(BindScalarFunctionInput &) {
 	throw BinderException("%s is for internal use only", JSON_COPY_TO_JSON_INTERNAL_NAME);
 }
 
-template <class INPUT_TYPE, class RESULT_TYPE>
-struct CreateJSONValue {
-	static inline RESULT_TYPE Operation(const INPUT_TYPE &input) {
-		throw NotImplementedException("Unsupported type for CreateJSONValue");
+static constexpr auto JSON_CREATE_FLAGS = JSONCommon::WRITE_FLAG;
+static constexpr idx_t JSON_TEXT_SLACK = 32;
+static constexpr char JSON_COMMA[JSON_TEXT_SLACK + 1] = ",";
+
+static inline char *CopyText(char *out, const char *text, idx_t size) {
+	CopyPaddedWithSlack<JSON_TEXT_SLACK>(out, text, size);
+	return out + size;
+}
+
+template <idx_t N>
+static inline char *AppendText(char *out, const char (&text)[N]) {
+	memcpy(out, text, N - 1);
+	return out + N - 1;
+}
+
+static inline char *WriteNull(char *out) {
+	return AppendText(out, "null");
+}
+
+static inline char *WriteBoolean(char *out, bool value) {
+	return value ? AppendText(out, "true") : AppendText(out, "false");
+}
+
+struct JSONTexts {
+	const char *data = nullptr;
+	const idx_t *offsets = nullptr;
+
+	const char *Begin(idx_t row) const {
+		return data + offsets[row];
+	}
+	idx_t Length(idx_t row) const {
+		return offsets[row + 1] - offsets[row];
+	}
+	idx_t Bytes(idx_t begin, idx_t end) const {
+		return offsets[end] - offsets[begin];
 	}
 };
 
-template <class INPUT_TYPE>
-struct CreateJSONValue<INPUT_TYPE, bool> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_bool(doc, input);
+class JSONTextsWriter {
+public:
+	JSONTextsWriter(ArenaAllocator &offset_arena, ArenaAllocator &arena_p, idx_t count, idx_t size)
+	    : arena(arena_p), capacity(size + JSON_TEXT_SLACK),
+	      offsets(reinterpret_cast<idx_t *>(offset_arena.AllocateAligned(sizeof(idx_t) * (count + 1)))),
+	      data(char_ptr_cast(arena.Allocate(capacity))) {
+		offsets[0] = 0;
 	}
+
+	char *Next() {
+		return data + used;
+	}
+	char *Reserve(idx_t size) {
+		if (used + size + JSON_TEXT_SLACK > capacity) {
+			Grow(size);
+		}
+		return data + used;
+	}
+	void EndRow(idx_t row, const char *end) {
+		used = static_cast<idx_t>(end - data);
+		offsets[row + 1] = used;
+	}
+	JSONTexts Texts() const {
+		return {data, offsets};
+	}
+
+private:
+	void Grow(idx_t size) {
+		const auto new_capacity = MaxValue<idx_t>(capacity * 2, used + size + JSON_TEXT_SLACK);
+		data = char_ptr_cast(arena.Reallocate(data_ptr_cast(data), capacity, new_capacity));
+		capacity = new_capacity;
+	}
+
+	ArenaAllocator &arena;
+	idx_t capacity;
+	idx_t used = 0;
+	idx_t *offsets;
+	char *data;
 };
 
-template <class INPUT_TYPE>
-struct CreateJSONValue<INPUT_TYPE, uint64_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_uint(doc, input);
+struct JSONEncodeContext {
+	JSONEncodeContext(JSONFunctionLocalState &lstate, const JSONCopyFormatOptions &options_p)
+	    : arena(lstate.arena), parser(lstate.parser), writer(lstate.writer), options(options_p) {
 	}
+
+	ArenaAllocator &arena;
+	JSONTreeParser &parser;
+	JSONStringWriter &writer;
+	const JSONCopyFormatOptions &options;
 };
 
-template <class INPUT_TYPE>
-struct CreateJSONValue<INPUT_TYPE, int64_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_sint(doc, input);
-	}
+struct JSONMember {
+	std::string_view key;
+	JSONTexts texts;
 };
 
-template <class INPUT_TYPE>
-struct CreateJSONValue<INPUT_TYPE, double> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_real(doc, input);
-	}
-};
+static JSONTexts EncodeValues(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena);
 
-template <>
-struct CreateJSONValue<string_t, string_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const string_t &input) {
-		return yyjson_mut_strncpy(doc, input.GetData(), input.GetSize());
+static JSONTexts EncodeNulls(JSONEncodeContext &ctx, idx_t count, ArenaAllocator &text_arena) {
+	JSONTextsWriter texts(ctx.arena, text_arena, count, count * 4);
+	for (idx_t i = 0; i < count; i++) {
+		texts.EndRow(i, WriteNull(texts.Next()));
 	}
-};
+	return texts.Texts();
+}
 
-template <>
-struct CreateJSONValue<hugeint_t, string_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const hugeint_t &input) {
-		const auto input_string = input.ToString();
-		return yyjson_mut_rawncpy(doc, input_string.c_str(), input_string.length());
+template <class T, class WRITE>
+static JSONTexts EncodeScalars(JSONEncodeContext &ctx, const Vector &value_v, idx_t count, ArenaAllocator &text_arena,
+                               idx_t max_size, WRITE &&write) {
+	UnifiedVectorFormat value_data;
+	value_v.ToUnifiedFormat(value_data);
+	const auto values = UnifiedVectorFormat::GetData<T>(value_data);
+	const auto room = MaxValue<idx_t>(max_size, 4);
+	JSONTextsWriter texts(ctx.arena, text_arena, count, count * room);
+	for (idx_t i = 0; i < count; i++) {
+		const auto idx = value_data.sel->get_index(i);
+		const auto out = texts.Reserve(room);
+		texts.EndRow(i, value_data.validity.RowIsValid(idx) ? write(out, values[idx]) : WriteNull(out));
 	}
-};
-
-template <>
-struct CreateJSONValue<uhugeint_t, string_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const uhugeint_t &input) {
-		const auto input_string = input.ToString();
-		return yyjson_mut_rawncpy(doc, input_string.c_str(), input_string.length());
-	}
-};
+	return texts.Texts();
+}
 
 template <class T>
-static inline yyjson_mut_val *CreateJSONValueFromJSON(yyjson_mut_doc *doc, const T &value) {
-	return nullptr; // This function should only be called with string_t as template
+static JSONTexts EncodeSignedIntegers(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                      ArenaAllocator &text_arena) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, 20,
+	                        [](char *out, T value) { return JSONStringWriter::WriteSignedInteger(out, value); });
 }
 
-template <>
-inline yyjson_mut_val *CreateJSONValueFromJSON(yyjson_mut_doc *doc, const string_t &value) {
-	auto value_doc = JSONCommon::ReadDocument(value, JSONCommon::READ_FLAG, &doc->alc);
-	auto result = yyjson_val_mut_copy(doc, value_doc->root);
-	return result;
+template <class T>
+static JSONTexts EncodeUnsignedIntegers(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                        ArenaAllocator &text_arena) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, 20,
+	                        [](char *out, T value) { return JSONStringWriter::WriteUnsignedInteger(out, value); });
 }
 
-// Forward declaration so we can recurse for nested types
-static void CreateValues(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                         idx_t count, const JSONCopyFormatOptions &options = JSONCopyFormatOptions());
-
-static void AddKeyValuePairs(yyjson_mut_doc *doc, yyjson_mut_val *objs[], const Vector &key_v, yyjson_mut_val *vals[],
-                             idx_t count) {
-	auto keys = key_v.Values<string_t>();
-	for (idx_t i = 0; i < count; i++) {
-		auto key_entry = keys[i];
-		if (!key_entry.IsValid()) {
-			throw InvalidInputException("JSON key cannot be NULL");
-		}
-		auto key = CreateJSONValue<string_t, string_t>::Operation(doc, key_entry.GetValue());
-		yyjson_mut_obj_add(objs[i], key, vals[i]);
-	}
+template <class T>
+static JSONTexts EncodeHugeIntegers(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                    ArenaAllocator &text_arena) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, 41, [](char *out, const T &value) {
+		const auto text = value.ToString();
+		memcpy(out, text.data(), text.size());
+		return out + text.size();
+	});
 }
 
-static void CreateKeyValuePairs(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *objs[],
-                                yyjson_mut_val *vals[], const Vector &key_v, Vector &value_v, idx_t count,
-                                const JSONCopyFormatOptions &options = JSONCopyFormatOptions()) {
-	CreateValues(names, doc, vals, value_v, count, options);
-	AddKeyValuePairs(doc, objs, key_v, vals, count);
+template <class T>
+static JSONTexts EncodeFloatingPoints(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                      ArenaAllocator &text_arena) {
+	return EncodeScalars<T>(
+	    ctx, value_v, count, text_arena, JSONStringWriter::MAX_DOUBLE_LENGTH, [](char *out, T value) {
+		    return JSONStringWriter::WriteCheckedDouble(out, static_cast<double>(value), JSON_CREATE_FLAGS);
+	    });
 }
 
-static void CreateValuesNull(yyjson_mut_doc *doc, yyjson_mut_val *vals[], idx_t count) {
-	for (idx_t i = 0; i < count; i++) {
-		vals[i] = yyjson_mut_null(doc);
-	}
+template <class T>
+static JSONTexts EncodeDecimals(JSONEncodeContext &ctx, const Vector &value_v, idx_t count, ArenaAllocator &text_arena,
+                                uint8_t width, uint8_t scale) {
+	const int64_t fixed_min = scale > 4 ? NumericHelper::POWERS_OF_TEN[scale - 4] : 0;
+	return EncodeScalars<T>(
+	    ctx, value_v, count, text_arena, JSONStringWriter::MAX_DOUBLE_LENGTH, [&](char *out, T value) {
+		    if (value != 0 && value > -fixed_min && value < fixed_min) {
+			    double real;
+			    CastParameters parameters;
+			    TryCastFromDecimal::Operation<T, double>(value, real, parameters, width, scale);
+			    return JSONStringWriter::WriteCheckedDouble(out, real, JSON_CREATE_FLAGS);
+		    }
+		    const auto size = UnsafeNumericCast<idx_t>(DecimalToString::DecimalLength<T>(value, width, scale));
+		    DecimalToString::FormatDecimal<T>(value, width, scale, out, size);
+		    auto end = out + size;
+		    if (scale == 0) {
+			    return AppendText(end, ".0");
+		    }
+		    while (end[-1] == '0' && end[-2] != '.') {
+			    end--;
+		    }
+		    return end;
+	    });
 }
 
-template <class INPUT_TYPE, class TARGET_TYPE>
-static void TemplatedCreateValues(yyjson_mut_doc *doc, yyjson_mut_val *vals[], const Vector &value_v, idx_t count) {
+template <class T>
+static JSONTexts EncodeDecimalTexts(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                    ArenaAllocator &text_arena, uint8_t width, uint8_t scale) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, idx_t(width) + 3, [&](char *out, T value) {
+		const auto size = UnsafeNumericCast<idx_t>(DecimalToString::DecimalLength<T>(value, width, scale));
+		DecimalToString::FormatDecimal<T>(value, width, scale, out, size);
+		return out + size;
+	});
+}
+
+template <class WRITE>
+static JSONTexts EncodeStringValues(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                    ArenaAllocator &text_arena, WRITE &&write) {
 	UnifiedVectorFormat value_data;
 	value_v.ToUnifiedFormat(value_data);
-	auto values = UnifiedVectorFormat::GetData<INPUT_TYPE>(value_data);
-
-	const auto type_is_json = value_v.GetType().IsJSONType();
-	for (idx_t i = 0; i < count; i++) {
-		idx_t val_idx = value_data.sel->get_index(i);
-		if (!value_data.validity.RowIsValid(val_idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		} else if (type_is_json) {
-			vals[i] = CreateJSONValueFromJSON(doc, values[val_idx]);
-		} else {
-			vals[i] = CreateJSONValue<INPUT_TYPE, TARGET_TYPE>::Operation(doc, values[val_idx]);
-		}
-		D_ASSERT(vals[i] != nullptr);
-	}
-}
-
-static void CreateRawValues(yyjson_mut_doc *doc, yyjson_mut_val *vals[], const Vector &value_v, idx_t count) {
-	UnifiedVectorFormat value_data;
-	value_v.ToUnifiedFormat(value_data);
-	auto values = UnifiedVectorFormat::GetData<string_t>(value_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t val_idx = value_data.sel->get_index(i);
-		if (!value_data.validity.RowIsValid(val_idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		} else {
-			const auto &str = values[val_idx];
-			vals[i] = yyjson_mut_rawncpy(doc, str.GetData(), str.GetSize());
-		}
-		D_ASSERT(vals[i] != nullptr);
-	}
-}
-
-static void CreateValuesStruct(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                               idx_t count, const JSONCopyFormatOptions &options) {
-	// Structs become values, therefore we initialize vals to JSON values
-	for (idx_t i = 0; i < count; i++) {
-		vals[i] = yyjson_mut_obj(doc);
-	}
-	// Initialize re-usable array for the nested values
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-
-	// Add the key/value pairs to the values
-	auto &entries = StructVector::GetEntries(value_v);
-	for (idx_t entry_i = 0; entry_i < entries.size(); entry_i++) {
-		Vector struct_key_v(Value(StructType::GetChildName(value_v.GetType(), entry_i).GetIdentifierName()),
-		                    count_t(count));
-		auto &struct_val_v = entries[entry_i];
-		CreateKeyValuePairs(names, doc, vals, nested_vals, struct_key_v, struct_val_v, count, options);
-	}
-	// Whole struct can be NULL
-	UnifiedVectorFormat struct_data;
-	value_v.ToUnifiedFormat(struct_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t idx = struct_data.sel->get_index(i);
-		if (!struct_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		}
-	}
-}
-
-static void CreateValuesTuple(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                              idx_t count) {
-	// a TUPLE becomes a JSON array (matching how Python serializes tuples)
-	for (idx_t i = 0; i < count; i++) {
-		vals[i] = yyjson_mut_arr(doc);
-	}
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	auto &entries = StructVector::GetEntries(value_v);
-	for (idx_t entry_i = 0; entry_i < entries.size(); entry_i++) {
-		CreateValues(names, doc, nested_vals, entries[entry_i], count);
-		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_arr_append(vals[i], nested_vals[i]);
-		}
-	}
-	// Whole tuple can be NULL
-	UnifiedVectorFormat tuple_data;
-	value_v.ToUnifiedFormat(tuple_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t idx = tuple_data.sel->get_index(i);
-		if (!tuple_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		}
-	}
-}
-static void CreateValuesMapKeys(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                                const JSONCopyFormatOptions &options);
-
-static void CreateValuesMap(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                            idx_t count, const JSONCopyFormatOptions &options) {
-	// Create nested keys
-	auto &map_key_v = MapVector::GetKeys(value_v);
-	auto map_key_count = ListVector::GetListSize(value_v);
-	auto nested_keys = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, map_key_count);
-	CreateValuesMapKeys(doc, nested_keys, map_key_v, map_key_count, options);
-	// Create nested values
-	auto &map_val_v = MapVector::GetValues(value_v);
-	auto map_val_count = ListVector::GetListSize(value_v);
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, map_val_count);
-	CreateValues(names, doc, nested_vals, map_val_v, map_val_count, options);
-	// Add the key/value pairs to the values
-	UnifiedVectorFormat map_data;
-	value_v.ToUnifiedFormat(map_data);
-	auto map_key_list_entries = UnifiedVectorFormat::GetData<list_entry_t>(map_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t idx = map_data.sel->get_index(i);
-		if (!map_data.validity.RowIsValid(idx)) {
-			// Whole map can be NULL
-			vals[i] = yyjson_mut_null(doc);
-		} else {
-			vals[i] = yyjson_mut_obj(doc);
-			const auto &key_list_entry = map_key_list_entries[idx];
-			for (idx_t child_i = key_list_entry.offset; child_i < key_list_entry.offset + key_list_entry.length;
-			     child_i++) {
-				if (!unsafe_yyjson_is_null(nested_keys[child_i])) {
-					yyjson_mut_obj_add(vals[i], nested_keys[child_i], nested_vals[child_i]);
-				}
-			}
-		}
-	}
-}
-
-static void CreateValuesUnion(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                              idx_t count, const JSONCopyFormatOptions &options) {
-	// Structs become values, therefore we initialize vals to JSON values
-	UnifiedVectorFormat value_data;
-	value_v.ToUnifiedFormat(value_data);
-	if (value_data.validity.CannotHaveNull()) {
-		for (idx_t i = 0; i < count; i++) {
-			vals[i] = yyjson_mut_obj(doc);
-		}
-	} else {
-		for (idx_t i = 0; i < count; i++) {
-			auto index = value_data.sel->get_index(i);
-			if (!value_data.validity.RowIsValid(index)) {
-				// Make the entry NULL if the Union value is NULL
-				vals[i] = yyjson_mut_null(doc);
-			} else {
-				vals[i] = yyjson_mut_obj(doc);
-			}
-		}
-	}
-
-	// Initialize re-usable array for the nested values
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-
-	auto &tag_v = UnionVector::GetTags(value_v);
-	UnifiedVectorFormat tag_data;
-	tag_v.ToUnifiedFormat(tag_data);
-
-	// Add the key/value pairs to the values
-	for (idx_t member_idx = 0; member_idx < UnionType::GetMemberCount(value_v.GetType()); member_idx++) {
-		auto &member_val_v = UnionVector::GetMember(value_v, member_idx);
-		Vector member_key_v(Value(UnionType::GetMemberName(value_v.GetType(), member_idx).GetIdentifierName()),
-		                    count_t(count));
-
-		// This implementation is not optimal since we convert the entire member vector,
-		// and then skip the rows not matching the tag afterwards.
-
-		CreateValues(names, doc, nested_vals, member_val_v, count, options);
-
-		// This is a inlined copy of AddKeyValuePairs but we also skip null tags
-		// and the rows where the member is not matching the tag
-		UnifiedVectorFormat key_data;
-		member_key_v.ToUnifiedFormat(key_data);
-		auto keys = UnifiedVectorFormat::GetData<string_t>(key_data);
-
-		for (idx_t i = 0; i < count; i++) {
-			auto value_index = value_data.sel->get_index(i);
-			if (!value_data.validity.RowIsValid(value_index)) {
-				// This entry is just NULL in it's entirety
-				continue;
-			}
-			auto tag_idx = tag_data.sel->get_index(i);
-			if (!tag_data.validity.RowIsValid(tag_idx)) {
-				continue;
-			}
-			auto tag = (UnifiedVectorFormat::GetData<uint8_t>(tag_data))[tag_idx];
-			if (tag != member_idx) {
-				continue;
-			}
-			auto key_idx = key_data.sel->get_index(i);
-			if (!key_data.validity.RowIsValid(key_idx)) {
-				continue;
-			}
-			auto key = CreateJSONValue<string_t, string_t>::Operation(doc, keys[key_idx]);
-			yyjson_mut_obj_add(vals[i], key, nested_vals[i]);
-		}
-	}
-}
-
-static void CreateValuesList(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                             idx_t count, const JSONCopyFormatOptions &options) {
-	// Initialize array for the nested values
-	auto &child_v = ListVector::GetChildMutable(value_v);
-	auto child_count = ListVector::GetListSize(value_v);
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, child_count);
-	// Fill nested_vals with list values
-	CreateValues(names, doc, nested_vals, child_v, child_count, options);
-	// Now we add the values to the appropriate JSON arrays
-	UnifiedVectorFormat list_data;
-	value_v.ToUnifiedFormat(list_data);
-	auto list_entries = UnifiedVectorFormat::GetData<list_entry_t>(list_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t idx = list_data.sel->get_index(i);
-		if (!list_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		} else {
-			vals[i] = yyjson_mut_arr(doc);
-			const auto &entry = list_entries[idx];
-			for (idx_t child_i = entry.offset; child_i < entry.offset + entry.length; child_i++) {
-				yyjson_mut_arr_append(vals[i], nested_vals[child_i]);
-			}
-		}
-	}
-}
-
-static void CreateValuesArray(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                              idx_t count, const JSONCopyFormatOptions &options) {
-	value_v.Flatten();
-
-	// Initialize array for the nested values
-	auto &child_v = ArrayVector::GetChildMutable(value_v);
-	auto array_size = ArrayType::GetSize(value_v.GetType());
-	auto child_count = count * array_size;
-
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, child_count);
-	// Fill nested_vals with list values
-	CreateValues(names, doc, nested_vals, child_v, child_count, options);
-	// Now we add the values to the appropriate JSON arrays
-	UnifiedVectorFormat list_data;
-	value_v.ToUnifiedFormat(list_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t idx = list_data.sel->get_index(i);
-		if (!list_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		} else {
-			vals[i] = yyjson_mut_arr(doc);
-			auto offset = idx * array_size;
-			for (idx_t child_i = offset; child_i < offset + array_size; child_i++) {
-				yyjson_mut_arr_append(vals[i], nested_vals[child_i]);
-			}
-		}
-	}
-}
-
-static void CreateValuesFromDefaultCast(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count) {
-	Vector string_vector(LogicalTypeId::VARCHAR, count);
-	VectorOperations::DefaultCast(value_v, string_vector, count);
-	TemplatedCreateValues<string_t, string_t>(doc, vals, string_vector, count);
-}
-
-static void CreateValuesGeometry(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count) {
-	UnifiedVectorFormat value_data;
-	value_v.ToUnifiedFormat(value_data);
-	auto values = UnifiedVectorFormat::GetData<string_t>(value_data);
+	const auto values = UnifiedVectorFormat::GetData<string_t>(value_data);
+	JSONTextsWriter texts(ctx.arena, text_arena, count, count * 16);
 	for (idx_t i = 0; i < count; i++) {
 		const auto idx = value_data.sel->get_index(i);
 		if (!value_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
-		} else {
-			vals[i] = JSONGeometry::ToGeoJSON(values[idx], doc);
+			texts.EndRow(i, WriteNull(texts.Reserve(4)));
+			continue;
 		}
+		texts.EndRow(i, write(texts, values[idx]));
 	}
+	return texts.Texts();
+}
+
+static char *WriteVerbatim(JSONTextsWriter &texts, std::string_view text) {
+	const auto out = texts.Reserve(text.size());
+	memcpy(out, text.data(), text.size());
+	return out + text.size();
+}
+
+static JSONTexts EncodeStrings(JSONEncodeContext &ctx, const Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	return EncodeStringValues(ctx, value_v, count, text_arena, [](JSONTextsWriter &texts, const string_t &value) {
+		const auto size = value.GetSize();
+		return JSONStringWriter::WriteCheckedString(texts.Reserve(JSONStringWriter::MaxStringLength(size)),
+		                                            std::string_view(value.GetData(), size), JSON_CREATE_FLAGS);
+	});
+}
+
+static JSONTexts EncodeRawStrings(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                  ArenaAllocator &text_arena) {
+	return EncodeStringValues(ctx, value_v, count, text_arena, [](JSONTextsWriter &texts, const string_t &value) {
+		return WriteVerbatim(texts, std::string_view(value.GetData(), value.GetSize()));
+	});
+}
+
+static JSONTexts EncodeJSONStrings(JSONEncodeContext &ctx, const Vector &value_v, idx_t count,
+                                   ArenaAllocator &text_arena) {
+	return EncodeStringValues(ctx, value_v, count, text_arena, [&](JSONTextsWriter &texts, const string_t &value) {
+		JSONParseError error;
+		if (!ctx.parser.Write(value.GetData(), value.GetSize(), ctx.writer, error)) {
+			JSONCommon::ThrowParseError(value.GetData(), value.GetSize(), error);
+		}
+		return WriteVerbatim(texts, ctx.writer.View());
+	});
+}
+
+static JSONTexts EncodeGeoJSON(JSONEncodeContext &ctx, const Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	JSONBuilder builder(ctx.arena);
+	return EncodeStringValues(ctx, value_v, count, text_arena, [&](JSONTextsWriter &texts, const string_t &value) {
+		ctx.writer.Clear();
+		ctx.writer.Value(*JSONGeometry::ToGeoJSON(value, builder));
+		return WriteVerbatim(texts, ctx.writer.View());
+	});
+}
+
+static JSONTexts EncodeCastStrings(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	Vector string_vector(LogicalTypeId::VARCHAR, count);
+	VectorOperations::DefaultCast(value_v, string_vector, count);
+	return EncodeStrings(ctx, string_vector, count, text_arena);
 }
 
 template <class FILL>
-static void CreateValuesFormatted(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                                  bool has_format, FILL &&fill_strings) {
+static JSONTexts EncodeFormatted(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena,
+                                 bool has_format, FILL &&fill_strings) {
 	if (!has_format) {
-		CreateValuesFromDefaultCast(doc, vals, value_v, count);
-		return;
+		return EncodeCastStrings(ctx, value_v, count, text_arena);
 	}
 	Vector string_vector(LogicalType::VARCHAR, count);
 	fill_strings(string_vector);
-	TemplatedCreateValues<string_t, string_t>(doc, vals, string_vector, count);
+	return EncodeStrings(ctx, string_vector, count, text_arena);
 }
 
-static void CreateValuesDate(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                             const JSONCopyFormatOptions &options) {
-	CreateValuesFormatted(doc, vals, value_v, count, bool(options.date_format), [&](Vector &string_vector) {
+template <class T, class WRITE>
+static JSONTexts EncodeQuoted(JSONEncodeContext &ctx, const Vector &value_v, idx_t count, ArenaAllocator &text_arena,
+                              idx_t max_size, WRITE &&write) {
+	return EncodeScalars<T>(ctx, value_v, count, text_arena, max_size + 2, [&](char *out, T value) {
+		*out = '"';
+		out += 1 + write(value, out + 1);
+		*out = '"';
+		return out + 1;
+	});
+}
+
+static JSONTexts EncodeDates(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &options = ctx.options;
+	if (!options.date_format) {
+		return EncodeQuoted<date_t>(ctx, value_v, count, text_arena, DateToStringCast::MAX_LENGTH,
+		                            [](date_t value, char *out) { return DateToStringCast::Write(value, out); });
+	}
+	return EncodeFormatted(ctx, value_v, count, text_arena, true, [&](Vector &string_vector) {
 		options.date_format.get_mutable()->ConvertDateVector(value_v, string_vector);
 	});
 }
 
-static void CreateValuesTimestamp(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                                  const JSONCopyFormatOptions &options) {
+static JSONTexts EncodeTimestamps(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &options = ctx.options;
 	if (options.timestamp_format && value_v.GetType().id() != LogicalTypeId::TIMESTAMP) {
 		Vector timestamp_vector(LogicalType::TIMESTAMP, count);
 		VectorOperations::DefaultCast(value_v, timestamp_vector, count);
-		CreateValuesTimestamp(doc, vals, timestamp_vector, count, options);
-		return;
+		return EncodeTimestamps(ctx, timestamp_vector, count, text_arena);
 	}
-	CreateValuesFormatted(doc, vals, value_v, count, bool(options.timestamp_format), [&](Vector &string_vector) {
+	if (!options.timestamp_format && value_v.GetType().id() == LogicalTypeId::TIMESTAMP) {
+		return EncodeQuoted<timestamp_t>(
+		    ctx, value_v, count, text_arena, TimestampToStringCast::MAX_LENGTH,
+		    [](timestamp_t value, char *out) { return TimestampToStringCast::Write(value, out); });
+	}
+	return EncodeFormatted(ctx, value_v, count, text_arena, bool(options.timestamp_format), [&](Vector &string_vector) {
 		options.timestamp_format.get_mutable()->ConvertTimestampVector(value_v, string_vector);
 	});
 }
 
-static void CreateValuesTimestampNS(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                                    const JSONCopyFormatOptions &options) {
-	CreateValuesFormatted(doc, vals, value_v, count, bool(options.timestamp_format), [&](Vector &string_vector) {
+static JSONTexts EncodeTimestampsNS(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &options = ctx.options;
+	if (!options.timestamp_format) {
+		return EncodeQuoted<timestamp_ns_t>(
+		    ctx, value_v, count, text_arena, TimestampToStringCast::MAX_LENGTH,
+		    [](timestamp_ns_t value, char *out) { return TimestampToStringCast::Write(value, out); });
+	}
+	return EncodeFormatted(ctx, value_v, count, text_arena, true, [&](Vector &string_vector) {
 		options.timestamp_format.get_mutable()->ConvertTimestampNSVector(value_v, string_vector);
 	});
 }
 
-static void CreateValuesTimestampTZ(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                                    const JSONCopyFormatOptions &options) {
+static JSONTexts EncodeTimestampsTZ(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &options = ctx.options;
 	if (!options.timestamp_format) {
 		// no COPY format was given - use the full cast set so that the session time zone is applied
 		Vector string_vector(LogicalType::VARCHAR, count);
@@ -896,10 +756,9 @@ static void CreateValuesTimestampTZ(yyjson_mut_doc *doc, yyjson_mut_val *vals[],
 		} else {
 			VectorOperations::DefaultCast(value_v, string_vector, count);
 		}
-		TemplatedCreateValues<string_t, string_t>(doc, vals, string_vector, count);
-		return;
+		return EncodeStrings(ctx, string_vector, count, text_arena);
 	}
-	CreateValuesFormatted(doc, vals, value_v, count, true, [&](Vector &string_vector) {
+	return EncodeFormatted(ctx, value_v, count, text_arena, true, [&](Vector &string_vector) {
 		auto format_expression = value_v.GetType().id() == LogicalTypeId::TIMESTAMP_TZ_NS
 		                             ? options.timestamptz_ns_format_expression
 		                             : options.timestamptz_format_expression;
@@ -915,156 +774,321 @@ static void CreateValuesTimestampTZ(yyjson_mut_doc *doc, yyjson_mut_val *vals[],
 	});
 }
 
-static void CreateValuesMapKeys(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
-                                const JSONCopyFormatOptions &options) {
-	switch (value_v.GetType().id()) {
-	case LogicalTypeId::DATE:
-		CreateValuesDate(doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_MS:
-	case LogicalTypeId::TIMESTAMP_SEC:
-		CreateValuesTimestamp(doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::TIMESTAMP_NS:
-		CreateValuesTimestampNS(doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::TIMESTAMP_TZ:
-	case LogicalTypeId::TIMESTAMP_TZ_NS:
-		CreateValuesTimestampTZ(doc, vals, value_v, count, options);
-		break;
+static JSONTexts EncodeDecimalValues(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &type = value_v.GetType();
+	const auto width = DecimalType::GetWidth(type);
+	const auto scale = DecimalType::GetScale(type);
+	if (width > 15) {
+		if (type.InternalType() == PhysicalType::INT64) {
+			return EncodeDecimalTexts<int64_t>(ctx, value_v, count, text_arena, width, scale);
+		}
+		return EncodeDecimalTexts<hugeint_t>(ctx, value_v, count, text_arena, width, scale);
+	}
+	switch (type.InternalType()) {
+	case PhysicalType::INT16:
+		return EncodeDecimals<int16_t>(ctx, value_v, count, text_arena, width, scale);
+	case PhysicalType::INT32:
+		return EncodeDecimals<int32_t>(ctx, value_v, count, text_arena, width, scale);
 	default:
-		CreateValuesFromDefaultCast(doc, vals, value_v, count);
-		break;
+		return EncodeDecimals<int64_t>(ctx, value_v, count, text_arena, width, scale);
 	}
 }
 
-static void CreateValues(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                         idx_t count, const JSONCopyFormatOptions &options) {
-	const auto &type = value_v.GetType();
-	switch (type.id()) {
-	case LogicalTypeId::SQLNULL:
-		CreateValuesNull(doc, vals, count);
-		break;
-	case LogicalTypeId::BOOLEAN:
-		TemplatedCreateValues<bool, bool>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::TINYINT:
-		TemplatedCreateValues<int8_t, int64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::SMALLINT:
-		TemplatedCreateValues<int16_t, int64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::INTEGER:
-		TemplatedCreateValues<int32_t, int64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::BIGINT:
-		TemplatedCreateValues<int64_t, int64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::HUGEINT:
-		TemplatedCreateValues<hugeint_t, string_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::UHUGEINT:
-		TemplatedCreateValues<uhugeint_t, string_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::UTINYINT:
-		TemplatedCreateValues<uint8_t, uint64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::USMALLINT:
-		TemplatedCreateValues<uint16_t, uint64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::UINTEGER:
-		TemplatedCreateValues<uint32_t, uint64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::UBIGINT:
-		TemplatedCreateValues<uint64_t, uint64_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::FLOAT:
-		TemplatedCreateValues<float, double>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::DOUBLE:
-		TemplatedCreateValues<double, double>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::VARCHAR:
-		TemplatedCreateValues<string_t, string_t>(doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::STRUCT:
-		CreateValuesStruct(names, doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::TUPLE:
-		CreateValuesTuple(names, doc, vals, value_v, count);
-		break;
-	case LogicalTypeId::MAP:
-		CreateValuesMap(names, doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::LIST:
-		CreateValuesList(names, doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::UNION:
-		CreateValuesUnion(names, doc, vals, value_v, count, options);
-		break;
-	case LogicalTypeId::ARRAY:
-		CreateValuesArray(names, doc, vals, value_v, count, options);
-		break;
+static std::string_view EncodeKey(JSONEncodeContext &ctx, const string &name, bool first) {
+	const auto key =
+	    char_ptr_cast(ctx.arena.Allocate(JSONStringWriter::MaxStringLength(name.size()) + 2 + JSON_TEXT_SLACK));
+	auto out = key;
+	if (!first) {
+		*out++ = ',';
+	}
+	out = JSONStringWriter::WriteCheckedKey(out, name, JSON_CREATE_FLAGS);
+	return std::string_view(key, static_cast<idx_t>(out - key));
+}
+
+static JSONTexts AssembleMembers(JSONEncodeContext &ctx, const vector<JSONMember> &members, idx_t count, char open,
+                                 char close, optional_ptr<const UnifiedVectorFormat> parent,
+                                 ArenaAllocator &text_arena) {
+	idx_t size = count * 4;
+	for (const auto &member : members) {
+		size += count * member.key.size() + member.texts.Bytes(0, count);
+	}
+	JSONTextsWriter texts(ctx.arena, text_arena, count, size);
+	for (idx_t i = 0; i < count; i++) {
+		auto out = texts.Next();
+		if (parent && !parent->validity.RowIsValid(parent->sel->get_index(i))) {
+			texts.EndRow(i, WriteNull(out));
+			continue;
+		}
+		*out++ = open;
+		for (const auto &member : members) {
+			out = CopyText(out, member.key.data(), member.key.size());
+			out = CopyText(out, member.texts.Begin(i), member.texts.Length(i));
+		}
+		*out++ = close;
+		texts.EndRow(i, out);
+	}
+	return texts.Texts();
+}
+
+static JSONTexts EncodeStructs(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	auto &entries = StructVector::GetEntries(value_v);
+	vector<JSONMember> members(entries.size());
+	for (idx_t m = 0; m < entries.size(); m++) {
+		members[m].texts = EncodeValues(ctx, entries[m], count, ctx.arena);
+		members[m].key = EncodeKey(ctx, StructType::GetChildName(value_v.GetType(), m).GetIdentifierName(), m == 0);
+	}
+	UnifiedVectorFormat struct_data;
+	value_v.ToUnifiedFormat(struct_data);
+	return AssembleMembers(ctx, members, count, '{', '}', struct_data, text_arena);
+}
+
+static JSONTexts EncodeTuples(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	auto &entries = StructVector::GetEntries(value_v);
+	vector<JSONMember> members(entries.size());
+	for (idx_t m = 0; m < entries.size(); m++) {
+		members[m].texts = EncodeValues(ctx, entries[m], count, ctx.arena);
+		members[m].key = std::string_view(JSON_COMMA, m == 0 ? 0 : 1);
+	}
+	UnifiedVectorFormat tuple_data;
+	value_v.ToUnifiedFormat(tuple_data);
+	return AssembleMembers(ctx, members, count, '[', ']', tuple_data, text_arena);
+}
+
+template <class ENTRY>
+static JSONTexts AssembleLists(JSONEncodeContext &ctx, const JSONTexts &children, const UnifiedVectorFormat &list_data,
+                               idx_t count, ArenaAllocator &text_arena, ENTRY &&get_entry) {
+	JSONTextsWriter texts(ctx.arena, text_arena, count, count * 4);
+	for (idx_t i = 0; i < count; i++) {
+		const auto idx = list_data.sel->get_index(i);
+		if (!list_data.validity.RowIsValid(idx)) {
+			texts.EndRow(i, WriteNull(texts.Reserve(4)));
+			continue;
+		}
+		const list_entry_t entry = get_entry(idx);
+		const auto end = entry.offset + entry.length;
+		auto out = texts.Reserve(2 + entry.length + children.Bytes(entry.offset, end));
+		*out++ = '[';
+		for (idx_t k = entry.offset; k < end; k++) {
+			out = CopyText(out, children.Begin(k), children.Length(k));
+			*out++ = ',';
+		}
+		out -= entry.length > 0;
+		*out++ = ']';
+		texts.EndRow(i, out);
+	}
+	return texts.Texts();
+}
+
+static JSONTexts EncodeLists(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	auto &child_v = ListVector::GetChildMutable(value_v);
+	const auto children = EncodeValues(ctx, child_v, ListVector::GetListSize(value_v), ctx.arena);
+	UnifiedVectorFormat list_data;
+	value_v.ToUnifiedFormat(list_data);
+	const auto entries = UnifiedVectorFormat::GetData<list_entry_t>(list_data);
+	return AssembleLists(ctx, children, list_data, count, text_arena, [&](idx_t idx) { return entries[idx]; });
+}
+
+static JSONTexts EncodeArrays(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	value_v.Flatten();
+	auto &child_v = ArrayVector::GetChildMutable(value_v);
+	const auto array_size = ArrayType::GetSize(value_v.GetType());
+	const auto children = EncodeValues(ctx, child_v, count * array_size, ctx.arena);
+	UnifiedVectorFormat array_data;
+	value_v.ToUnifiedFormat(array_data);
+	return AssembleLists(ctx, children, array_data, count, text_arena,
+	                     [&](idx_t idx) { return list_entry_t(idx * array_size, array_size); });
+}
+
+static JSONTexts EncodeMapKeys(JSONEncodeContext &ctx, Vector &value_v, idx_t count) {
+	switch (value_v.GetType().id()) {
 	case LogicalTypeId::DATE:
-		CreateValuesDate(doc, vals, value_v, count, options);
-		break;
+		return EncodeDates(ctx, value_v, count, ctx.arena);
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_MS:
 	case LogicalTypeId::TIMESTAMP_SEC:
-		CreateValuesTimestamp(doc, vals, value_v, count, options);
-		break;
+		return EncodeTimestamps(ctx, value_v, count, ctx.arena);
 	case LogicalTypeId::TIMESTAMP_NS:
-		CreateValuesTimestampNS(doc, vals, value_v, count, options);
-		break;
+		return EncodeTimestampsNS(ctx, value_v, count, ctx.arena);
 	case LogicalTypeId::TIMESTAMP_TZ:
 	case LogicalTypeId::TIMESTAMP_TZ_NS:
-		CreateValuesTimestampTZ(doc, vals, value_v, count, options);
-		break;
+		return EncodeTimestampsTZ(ctx, value_v, count, ctx.arena);
+	default:
+		return EncodeCastStrings(ctx, value_v, count, ctx.arena);
+	}
+}
+
+static JSONTexts EncodeMaps(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto entry_count = ListVector::GetListSize(value_v);
+	const auto keys = EncodeMapKeys(ctx, MapVector::GetKeys(value_v), entry_count);
+	const auto values = EncodeValues(ctx, MapVector::GetValues(value_v), entry_count, ctx.arena);
+	UnifiedVectorFormat map_data;
+	value_v.ToUnifiedFormat(map_data);
+	const auto entries = UnifiedVectorFormat::GetData<list_entry_t>(map_data);
+	JSONTextsWriter texts(ctx.arena, text_arena, count, count * 4);
+	for (idx_t i = 0; i < count; i++) {
+		const auto idx = map_data.sel->get_index(i);
+		if (!map_data.validity.RowIsValid(idx)) {
+			texts.EndRow(i, WriteNull(texts.Reserve(4)));
+			continue;
+		}
+		const auto &entry = entries[idx];
+		const auto end = entry.offset + entry.length;
+		auto out =
+		    texts.Reserve(2 + 2 * entry.length + keys.Bytes(entry.offset, end) + values.Bytes(entry.offset, end));
+		*out++ = '{';
+		bool first = true;
+		for (idx_t k = entry.offset; k < end; k++) {
+			const auto key = keys.Begin(k);
+			if (*key != '"') {
+				continue;
+			}
+			if (!first) {
+				*out++ = ',';
+			}
+			first = false;
+			out = CopyText(out, key, keys.Length(k));
+			*out++ = ':';
+			out = CopyText(out, values.Begin(k), values.Length(k));
+		}
+		*out++ = '}';
+		texts.EndRow(i, out);
+	}
+	return texts.Texts();
+}
+
+static JSONTexts EncodeUnions(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &type = value_v.GetType();
+	vector<JSONMember> members(UnionType::GetMemberCount(type));
+	for (idx_t m = 0; m < members.size(); m++) {
+		members[m].texts = EncodeValues(ctx, UnionVector::GetMember(value_v, m), count, ctx.arena);
+		members[m].key = EncodeKey(ctx, UnionType::GetMemberName(type, m).GetIdentifierName(), true);
+	}
+	UnifiedVectorFormat value_data;
+	value_v.ToUnifiedFormat(value_data);
+	UnifiedVectorFormat tag_data;
+	UnionVector::GetTags(value_v).ToUnifiedFormat(tag_data);
+	const auto tags = UnifiedVectorFormat::GetData<union_tag_t>(tag_data);
+	JSONTextsWriter texts(ctx.arena, text_arena, count, count * 4);
+	for (idx_t i = 0; i < count; i++) {
+		if (!value_data.validity.RowIsValid(value_data.sel->get_index(i))) {
+			texts.EndRow(i, WriteNull(texts.Reserve(4)));
+			continue;
+		}
+		const auto tag_idx = tag_data.sel->get_index(i);
+		if (!tag_data.validity.RowIsValid(tag_idx)) {
+			texts.EndRow(i, AppendText(texts.Reserve(2), "{}"));
+			continue;
+		}
+		const auto &member = members[tags[tag_idx]];
+		auto out = texts.Reserve(2 + member.key.size() + member.texts.Length(i));
+		*out++ = '{';
+		out = CopyText(out, member.key.data(), member.key.size());
+		out = CopyText(out, member.texts.Begin(i), member.texts.Length(i));
+		*out++ = '}';
+		texts.EndRow(i, out);
+	}
+	return texts.Texts();
+}
+
+static JSONTexts EncodeValues(JSONEncodeContext &ctx, Vector &value_v, idx_t count, ArenaAllocator &text_arena) {
+	const auto &type = value_v.GetType();
+	switch (type.id()) {
+	case LogicalTypeId::SQLNULL:
+		return EncodeNulls(ctx, count, text_arena);
+	case LogicalTypeId::BOOLEAN:
+		return EncodeScalars<bool>(ctx, value_v, count, text_arena, 5, WriteBoolean);
+	case LogicalTypeId::TINYINT:
+		return EncodeSignedIntegers<int8_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::SMALLINT:
+		return EncodeSignedIntegers<int16_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::INTEGER:
+		return EncodeSignedIntegers<int32_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::BIGINT:
+		return EncodeSignedIntegers<int64_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::HUGEINT:
+		return EncodeHugeIntegers<hugeint_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::UHUGEINT:
+		return EncodeHugeIntegers<uhugeint_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::UTINYINT:
+		return EncodeUnsignedIntegers<uint8_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::USMALLINT:
+		return EncodeUnsignedIntegers<uint16_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::UINTEGER:
+		return EncodeUnsignedIntegers<uint32_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::UBIGINT:
+		return EncodeUnsignedIntegers<uint64_t>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::FLOAT:
+		return EncodeFloatingPoints<float>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::DOUBLE:
+		return EncodeFloatingPoints<double>(ctx, value_v, count, text_arena);
+	case LogicalTypeId::VARCHAR:
+		if (type.IsJSONType()) {
+			return EncodeJSONStrings(ctx, value_v, count, text_arena);
+		}
+		return EncodeStrings(ctx, value_v, count, text_arena);
+	case LogicalTypeId::STRUCT:
+		return EncodeStructs(ctx, value_v, count, text_arena);
+	case LogicalTypeId::TUPLE:
+		return EncodeTuples(ctx, value_v, count, text_arena);
+	case LogicalTypeId::MAP:
+		return EncodeMaps(ctx, value_v, count, text_arena);
+	case LogicalTypeId::LIST:
+		return EncodeLists(ctx, value_v, count, text_arena);
+	case LogicalTypeId::UNION:
+		return EncodeUnions(ctx, value_v, count, text_arena);
+	case LogicalTypeId::ARRAY:
+		return EncodeArrays(ctx, value_v, count, text_arena);
+	case LogicalTypeId::DATE:
+		return EncodeDates(ctx, value_v, count, text_arena);
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP_SEC:
+		return EncodeTimestamps(ctx, value_v, count, text_arena);
+	case LogicalTypeId::TIMESTAMP_NS:
+		return EncodeTimestampsNS(ctx, value_v, count, text_arena);
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+		return EncodeTimestampsTZ(ctx, value_v, count, text_arena);
+	case LogicalTypeId::TIME:
+		return EncodeQuoted<dtime_t>(ctx, value_v, count, text_arena, TimeToStringCast::MAX_LENGTH,
+		                             [](dtime_t value, char *out) { return TimeToStringCast::Write(value, out); });
+	case LogicalTypeId::TIME_NS:
+		return EncodeQuoted<dtime_ns_t>(
+		    ctx, value_v, count, text_arena, TimeToStringCast::MAX_LENGTH,
+		    [](dtime_ns_t value, char *out) { return TimeToStringCast::Write(value, out); });
+	case LogicalTypeId::INTERVAL:
+		return EncodeQuoted<interval_t>(
+		    ctx, value_v, count, text_arena, IntervalToStringCast::MAX_LENGTH,
+		    [](interval_t value, char *out) { return IntervalToStringCast::Format(value, out); });
+	case LogicalTypeId::UUID:
+		return EncodeQuoted<hugeint_t>(ctx, value_v, count, text_arena, UUID::STRING_SIZE,
+		                               [](hugeint_t value, char *out) {
+			                               UUID::ToString(value, out);
+			                               return UUID::STRING_SIZE;
+		                               });
 	case LogicalTypeId::BIT:
 	case LogicalTypeId::BLOB:
 	case LogicalTypeId::LEGACY_AGGREGATE_STATE:
 	case LogicalTypeId::ENUM:
-	case LogicalTypeId::INTERVAL:
-	case LogicalTypeId::TIME:
-	case LogicalTypeId::TIME_NS:
 	case LogicalTypeId::TIME_TZ:
-	case LogicalTypeId::UUID: {
-		CreateValuesFromDefaultCast(doc, vals, value_v, count);
-		break;
-	}
-	case LogicalTypeId::GEOMETRY: {
-		if (options.geometry_format == JSONGeometryFormat::GEOJSON) {
-			CreateValuesGeometry(doc, vals, value_v, count);
-		} else {
-			CreateValuesFromDefaultCast(doc, vals, value_v, count);
+		return EncodeCastStrings(ctx, value_v, count, text_arena);
+	case LogicalTypeId::GEOMETRY:
+		if (ctx.options.geometry_format == JSONGeometryFormat::GEOJSON) {
+			return EncodeGeoJSON(ctx, value_v, count, text_arena);
 		}
-		break;
-	}
+		return EncodeCastStrings(ctx, value_v, count, text_arena);
 	case LogicalTypeId::BIGNUM: {
 		Vector string_vector(LogicalTypeId::VARCHAR, count);
 		VectorOperations::DefaultCast(value_v, string_vector, count);
-		CreateRawValues(doc, vals, string_vector, count);
-		break;
+		return EncodeRawStrings(ctx, string_vector, count, text_arena);
 	}
 	case LogicalTypeId::VARIANT: {
 		Vector json_vector(LogicalType::JSON(), count);
 		VectorOperations::DefaultCast(value_v, json_vector, count);
-		TemplatedCreateValues<string_t, string_t>(doc, vals, json_vector, count);
-		break;
+		return EncodeJSONStrings(ctx, json_vector, count, text_arena);
 	}
-	case LogicalTypeId::DECIMAL: {
-		if (DecimalType::GetWidth(type) > 15) {
-			Vector string_vector(LogicalTypeId::VARCHAR, count);
-			VectorOperations::DefaultCast(value_v, string_vector, count);
-			CreateRawValues(doc, vals, string_vector, count);
-		} else {
-			Vector double_vector(LogicalType::DOUBLE, count);
-			VectorOperations::DefaultCast(value_v, double_vector, count);
-			TemplatedCreateValues<double, double>(doc, vals, double_vector, count);
-		}
-		break;
-	}
+	case LogicalTypeId::DECIMAL:
+		return EncodeDecimalValues(ctx, value_v, count, text_arena);
 	case LogicalTypeId::INVALID:
 	case LogicalTypeId::UNKNOWN:
 	case LogicalTypeId::ANY:
@@ -1078,117 +1102,121 @@ static void CreateValues(const StructNames &names, yyjson_mut_doc *doc, yyjson_m
 	case LogicalTypeId::VALIDITY:
 	case LogicalTypeId::TABLE:
 	case LogicalTypeId::LAMBDA:
-		throw InternalException("Unsupported type arrived at JSON create function");
+		break;
+	}
+	throw InternalException("Unsupported type arrived at JSON create function");
+}
+
+static string_t TextString(const JSONTexts &texts, idx_t row) {
+	const auto size = texts.Length(row);
+	if (size > string_t::MAX_STRING_SIZE) {
+		string_t::ThrowTooLarge(size);
+	}
+	return string_t(texts.Begin(row), UnsafeNumericCast<uint32_t>(size));
+}
+
+static void WriteTexts(const JSONTexts &texts, idx_t count, Vector &result) {
+	auto objects = FlatVector::GetDataMutable<string_t>(result);
+	for (idx_t i = 0; i < count; i++) {
+		objects[i] = TextString(texts, i);
 	}
 }
 
 static void ObjectFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &info = func_expr.BindInfo()->Cast<JSONCreateFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
-	auto options = ClientFormatOptions(state.GetContext());
+	const auto options = ClientFormatOptions(state.GetContext());
+	JSONEncodeContext ctx(lstate, options);
 
-	// Initialize values
 	const idx_t count = args.size();
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto objs = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	const idx_t pair_count = args.data.size() / 2;
+	vector<UnifiedVectorFormat> keys(pair_count);
+	vector<JSONTexts> values(pair_count);
+	for (idx_t p = 0; p < pair_count; p++) {
+		args.data[p * 2].ToUnifiedFormat(keys[p]);
+		values[p] = EncodeValues(ctx, args.data[p * 2 + 1], count, ctx.arena);
+	}
+	JSONTextsWriter texts(ctx.arena, StringVector::GetStringAllocator(result), count, count * 2);
 	for (idx_t i = 0; i < count; i++) {
-		objs[i] = yyjson_mut_obj(doc);
+		idx_t size = 2;
+		for (idx_t p = 0; p < pair_count; p++) {
+			const auto key_idx = keys[p].sel->get_index(i);
+			if (!keys[p].validity.RowIsValid(key_idx)) {
+				throw InvalidInputException("JSON key cannot be NULL");
+			}
+			const auto key_size = UnifiedVectorFormat::GetData<string_t>(keys[p])[key_idx].GetSize();
+			size += JSONStringWriter::MaxStringLength(key_size) + 2 + values[p].Length(i);
+		}
+		auto out = texts.Reserve(size);
+		*out++ = '{';
+		for (idx_t p = 0; p < pair_count; p++) {
+			if (p > 0) {
+				*out++ = ',';
+			}
+			const auto &key = UnifiedVectorFormat::GetData<string_t>(keys[p])[keys[p].sel->get_index(i)];
+			out = JSONStringWriter::WriteCheckedKey(out, std::string_view(key.GetData(), key.GetSize()),
+			                                        JSON_CREATE_FLAGS);
+			out = CopyText(out, values[p].Begin(i), values[p].Length(i));
+		}
+		*out++ = '}';
+		texts.EndRow(i, out);
 	}
-	// Initialize a re-usable value array
-	auto vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	// Loop through key/value pairs
-	for (idx_t pair_idx = 0; pair_idx < args.data.size() / 2; pair_idx++) {
-		Vector &key_v = args.data[pair_idx * 2];
-		Vector &value_v = args.data[pair_idx * 2 + 1];
-		CreateKeyValuePairs(info.const_struct_names, doc, objs, vals, key_v, value_v, count, options);
-	}
-	// Write JSON values to string
-	auto objects = FlatVector::GetDataMutable<string_t>(result);
-	for (idx_t i = 0; i < count; i++) {
-		objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(objs[i], alc);
-	}
-	JSONAllocator::AddBuffer(result, alc);
+	WriteTexts(texts.Texts(), count, result);
 }
 
 static void ArrayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &info = func_expr.BindInfo()->Cast<JSONCreateFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
-	auto options = ClientFormatOptions(state.GetContext());
+	const auto options = ClientFormatOptions(state.GetContext());
+	JSONEncodeContext ctx(lstate, options);
 
-	// Initialize arrays
 	const idx_t count = args.size();
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto arrs = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	for (idx_t i = 0; i < count; i++) {
-		arrs[i] = yyjson_mut_arr(doc);
+	vector<JSONMember> members(args.data.size());
+	for (idx_t m = 0; m < members.size(); m++) {
+		members[m].texts = EncodeValues(ctx, args.data[m], count, ctx.arena);
+		members[m].key = std::string_view(JSON_COMMA, m == 0 ? 0 : 1);
 	}
-	// Initialize a re-usable value array
-	auto vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	// Loop through args
-	for (auto &v : args.data) {
-		CreateValues(info.const_struct_names, doc, vals, v, count, options);
-		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_arr_append(arrs[i], vals[i]);
-		}
-	}
-	// Write JSON arrays to string
-	auto objects = FlatVector::GetDataMutable<string_t>(result);
-	for (idx_t i = 0; i < count; i++) {
-		objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(arrs[i], alc);
-	}
-	JSONAllocator::AddBuffer(result, alc);
+	const auto texts =
+	    AssembleMembers(ctx, members, count, '[', ']', nullptr, StringVector::GetStringAllocator(result));
+	WriteTexts(texts, count, result);
 }
 
-static void ToJSONFunctionInternal(const StructNames &names, Vector &input, const idx_t count, Vector &result,
-                                   yyjson_alc *alc, const JSONCopyFormatOptions &options = JSONCopyFormatOptions()) {
-	// Initialize array for values
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	CreateValues(names, doc, vals, input, count, options);
+static void ToJSONFunctionInternal(Vector &input, const idx_t count, Vector &result, JSONFunctionLocalState &lstate,
+                                   const JSONCopyFormatOptions &options) {
+	const bool constant = input.GetVectorType() == VectorType::CONSTANT_VECTOR;
+	const auto rows = constant ? MinValue<idx_t>(count, 1) : count;
+	JSONEncodeContext ctx(lstate, options);
+	const auto texts = EncodeValues(ctx, input, rows, StringVector::GetStringAllocator(result));
 
-	// Write JSON values to string
 	auto objects = FlatVector::GetDataMutable<string_t>(result);
 	auto &result_validity = FlatVector::ValidityMutable(result);
 	UnifiedVectorFormat input_data;
 	input.ToUnifiedFormat(input_data);
-	for (idx_t i = 0; i < count; i++) {
-		idx_t idx = input_data.sel->get_index(i);
-		if (input_data.validity.RowIsValid(idx)) {
-			objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(vals[i], alc);
+	for (idx_t i = 0; i < rows; i++) {
+		if (input_data.validity.RowIsValid(input_data.sel->get_index(i))) {
+			objects[i] = TextString(texts, i);
 		} else {
 			result_validity.SetInvalid(i);
 		}
 	}
 
-	if (input.GetVectorType() == VectorType::CONSTANT_VECTOR || count == 1) {
+	if (constant || count == 1) {
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 static void ToJSONFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &info = func_expr.BindInfo()->Cast<JSONCreateFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = ClientFormatOptions(state.GetContext());
 
-	ToJSONFunctionInternal(info.const_struct_names, args.data[0], args.size(), result, alc, options);
+	ToJSONFunctionInternal(args.data[0], args.size(), result, lstate, options);
 }
 
 static void JSONCopyToJSONFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<JSONCopyToJSONFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = info.GetFormatOptions(state.GetContext());
 
-	ToJSONFunctionInternal(info.const_struct_names, args.data[0], args.size(), result, alc, options);
+	ToJSONFunctionInternal(args.data[0], args.size(), result, lstate, options);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1196,35 +1224,38 @@ static void JSONCopyToJSONFunction(DataChunk &args, ExpressionState &state, Vect
 //===--------------------------------------------------------------------===//
 //! Generate a "bbox" from each geometry. GeoJSON orders it as all the minimums followed by all the maximums, and
 //! includes Z when the geometry has it. Geometries without a finite extent (NULL or empty) get no bbox at all.
-static void AddGeoJSONBoundingBoxes(yyjson_mut_doc *doc, yyjson_mut_val *features[], Vector &geometry_v,
-                                    const idx_t count) {
-	UnifiedVectorFormat geometry_data;
-	geometry_v.ToUnifiedFormat(geometry_data);
-	auto geometries = UnifiedVectorFormat::GetData<string_t>(geometry_data);
-	for (idx_t i = 0; i < count; i++) {
-		const auto idx = geometry_data.sel->get_index(i);
-		if (!geometry_data.validity.RowIsValid(idx)) {
-			continue;
-		}
-		auto extent = GeometryExtent::Empty();
-		Geometry::GetExtent(geometries[idx], extent);
-		if (!extent.HasXY()) {
-			continue;
-		}
-		auto bbox = yyjson_mut_arr(doc);
-		const auto has_z = extent.HasZ();
-		yyjson_mut_arr_add_real(doc, bbox, extent.x_min);
-		yyjson_mut_arr_add_real(doc, bbox, extent.y_min);
-		if (has_z) {
-			yyjson_mut_arr_add_real(doc, bbox, extent.z_min);
-		}
-		yyjson_mut_arr_add_real(doc, bbox, extent.x_max);
-		yyjson_mut_arr_add_real(doc, bbox, extent.y_max);
-		if (has_z) {
-			yyjson_mut_arr_add_real(doc, bbox, extent.z_max);
-		}
-		yyjson_mut_obj_add_val(doc, features[i], "bbox", bbox);
+static char *WriteGeoJSONBoundingBox(char *out, const UnifiedVectorFormat &geometry_data, idx_t row) {
+	const auto idx = geometry_data.sel->get_index(row);
+	if (!geometry_data.validity.RowIsValid(idx)) {
+		return out;
 	}
+	auto extent = GeometryExtent::Empty();
+	Geometry::GetExtent(UnifiedVectorFormat::GetData<string_t>(geometry_data)[idx], extent);
+	if (!extent.HasXY()) {
+		return out;
+	}
+	const auto has_z = extent.HasZ();
+	const auto write = [&](double value) {
+		out = JSONStringWriter::WriteCheckedDouble(out, value, JSON_CREATE_FLAGS);
+	};
+	out = AppendText(out, ",\"bbox\":[");
+	write(extent.x_min);
+	*out++ = ',';
+	write(extent.y_min);
+	if (has_z) {
+		*out++ = ',';
+		write(extent.z_min);
+	}
+	*out++ = ',';
+	write(extent.x_max);
+	*out++ = ',';
+	write(extent.y_max);
+	if (has_z) {
+		*out++ = ',';
+		write(extent.z_max);
+	}
+	*out++ = ']';
+	return out;
 }
 
 //! Turns one row into a GeoJSON Feature: the geometry column becomes "geometry", the ID_COLUMN column becomes
@@ -1233,58 +1264,66 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<JSONCopyToGeoJSONFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = info.formats->GetFormatOptions(state.GetContext());
 	options.geometry_format = JSONGeometryFormat::GEOJSON;
+	JSONEncodeContext ctx(lstate, options);
 
 	const auto count = args.size();
 	auto &payload = args.data[0];
 	auto &payload_type = payload.GetType();
 	auto &entries = StructVector::GetEntries(payload);
-	auto &names = info.formats->const_struct_names;
 
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto features = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	auto properties = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	for (idx_t i = 0; i < count; i++) {
-		features[i] = yyjson_mut_obj(doc);
-		yyjson_mut_obj_add_str(doc, features[i], "type", "Feature");
-		properties[i] = yyjson_mut_obj(doc);
-	}
-
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-
+	JSONTexts ids;
 	if (info.id_index.IsValid()) {
-		CreateValues(names, doc, nested_vals, entries[info.id_index.GetIndex()], count, options);
-		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_obj_add_val(doc, features[i], "id", nested_vals[i]);
-		}
+		ids = EncodeValues(ctx, entries[info.id_index.GetIndex()], count, ctx.arena);
 	}
-
+	JSONTexts geometries;
+	UnifiedVectorFormat geometry_data;
 	if (info.geometry_index.IsValid()) {
 		auto &geometry_v = entries[info.geometry_index.GetIndex()];
-		CreateValues(names, doc, nested_vals, geometry_v, count, options);
-		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_obj_add_val(doc, features[i], "geometry", nested_vals[i]);
-		}
-		if (info.write_bbox) {
-			AddGeoJSONBoundingBoxes(doc, features, geometry_v, count);
-		}
-	} else {
-		// A Feature without a geometry is still valid GeoJSON, it is simply unlocated
-		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_obj_add_null(doc, features[i], "geometry");
-		}
+		geometries = EncodeValues(ctx, geometry_v, count, ctx.arena);
+		geometry_v.ToUnifiedFormat(geometry_data);
 	}
+	vector<JSONMember> members(info.property_indices.size());
+	for (idx_t m = 0; m < members.size(); m++) {
+		const auto property_index = info.property_indices[m];
+		members[m].texts = EncodeValues(ctx, entries[property_index], count, ctx.arena);
+		members[m].key =
+		    EncodeKey(ctx, StructType::GetChildName(payload_type, property_index).GetIdentifierName(), m == 0);
+	}
+	const auto properties = AssembleMembers(ctx, members, count, '{', '}', nullptr, ctx.arena);
 
-	for (const auto property_index : info.property_indices) {
-		Vector key_v(Value(StructType::GetChildName(payload_type, property_index).GetIdentifierName()), count_t(count));
-		CreateKeyValuePairs(names, doc, properties, nested_vals, key_v, entries[property_index], count, options);
-	}
+	const idx_t bbox_size = info.write_bbox ? 6 * JSONStringWriter::MAX_DOUBLE_LENGTH + 16 : 0;
+	JSONTextsWriter texts(ctx.arena, StringVector::GetStringAllocator(result), count, count * 64);
 	for (idx_t i = 0; i < count; i++) {
-		yyjson_mut_obj_add_val(doc, features[i], "properties", properties[i]);
+		idx_t size = 64 + bbox_size + properties.Length(i);
+		if (info.id_index.IsValid()) {
+			size += ids.Length(i);
+		}
+		if (info.geometry_index.IsValid()) {
+			size += geometries.Length(i);
+		}
+		auto out = AppendText(texts.Reserve(size), "{\"type\":\"Feature\"");
+		if (info.id_index.IsValid()) {
+			out = AppendText(out, ",\"id\":");
+			out = CopyText(out, ids.Begin(i), ids.Length(i));
+		}
+		out = AppendText(out, ",\"geometry\":");
+		if (info.geometry_index.IsValid()) {
+			out = CopyText(out, geometries.Begin(i), geometries.Length(i));
+			if (info.write_bbox) {
+				out = WriteGeoJSONBoundingBox(out, geometry_data, i);
+			}
+		} else {
+			out = WriteNull(out);
+		}
+		out = AppendText(out, ",\"properties\":");
+		out = CopyText(out, properties.Begin(i), properties.Length(i));
+		*out++ = '}';
+		texts.EndRow(i, out);
 	}
 
+	const auto features = texts.Texts();
 	auto objects = FlatVector::GetDataMutable<string_t>(result);
 	auto &result_validity = FlatVector::ValidityMutable(result);
 	UnifiedVectorFormat payload_data;
@@ -1292,7 +1331,7 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	for (idx_t i = 0; i < count; i++) {
 		const auto idx = payload_data.sel->get_index(i);
 		if (payload_data.validity.RowIsValid(idx)) {
-			objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(features[i], alc);
+			objects[i] = TextString(features, i);
 		} else {
 			result_validity.SetInvalid(i);
 		}
@@ -1300,8 +1339,6 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	if (payload.GetVectorType() == VectorType::CONSTANT_VECTOR || count == 1) {
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 //! The column-selecting options are three-state: a NULL argument means the option was not given (use the default
@@ -1408,13 +1445,11 @@ static unique_ptr<FunctionData> JSONCopyToGeoJSONBind(BindScalarFunctionInput &i
 	const auto write_bbox =
 	    BooleanValue::Get(ExpressionExecutor::EvaluateScalar(input.GetClientContext(), *arguments[5]));
 
-	StructNames const_struct_names;
 	auto &bound_arguments = bound_function.GetArguments();
-	bound_arguments[0] = GetJSONType(const_struct_names, CastFunctionSet::Get(input.GetClientContext()), payload_type);
+	bound_arguments[0] = GetJSONType(CastFunctionSet::Get(input.GetClientContext()), payload_type);
 	bound_function.SetReturnType(LogicalType::JSON());
 
-	auto formats = CreateJSONCopyToJSONFunctionData(input.GetClientContext(), std::move(const_struct_names),
-	                                                *arguments[1], *arguments[2]);
+	auto formats = CreateJSONCopyToJSONFunctionData(input.GetClientContext(), *arguments[1], *arguments[2]);
 	return make_uniq<JSONCopyToGeoJSONFunctionData>(std::move(formats), geometry_index, id_index,
 	                                                std::move(property_indices), write_bbox);
 }
@@ -1444,22 +1479,16 @@ static unique_ptr<FunctionData> JSONCopyToJSONDeserialize(Deserializer &deserial
 	}
 
 	auto &context = deserializer.Get<ClientContext &>();
-	StructNames const_struct_names;
-	GetJSONType(const_struct_names, CastFunctionSet::Get(context), arguments[0]);
-
-	return CreateJSONCopyToJSONFunctionData(context, std::move(const_struct_names), has_date_format,
-	                                        std::move(date_format_string), has_timestamp_format,
-	                                        std::move(timestamp_format_string));
+	return CreateJSONCopyToJSONFunctionData(context, has_date_format, std::move(date_format_string),
+	                                        has_timestamp_format, std::move(timestamp_format_string));
 }
 
 unique_ptr<Expression> JSONFunctions::CreateJSONCopyToJSONExpression(ClientContext &context,
                                                                      unique_ptr<Expression> payload,
                                                                      unique_ptr<Expression> date_format,
                                                                      unique_ptr<Expression> timestamp_format) {
-	StructNames const_struct_names;
-	auto json_type = GetJSONType(const_struct_names, CastFunctionSet::Get(context), payload->GetReturnType());
-	auto bind_data =
-	    CreateJSONCopyToJSONFunctionData(context, std::move(const_struct_names), *date_format, *timestamp_format);
+	auto json_type = GetJSONType(CastFunctionSet::Get(context), payload->GetReturnType());
+	auto bind_data = CreateJSONCopyToJSONFunctionData(context, *date_format, *timestamp_format);
 
 	payload = BoundCastExpression::AddCastToType(context, std::move(payload), json_type);
 
@@ -1561,14 +1590,11 @@ public:
 	}
 
 	unique_ptr<BoundCastData> Copy() const override {
-		auto result = make_uniq<NestedToJSONCastData>(client, json_type, json_type_cast.Copy());
-		result->const_struct_names = const_struct_names.Copy();
-		return std::move(result);
+		return make_uniq<NestedToJSONCastData>(client, json_type, json_type_cast.Copy());
 	}
 
 public:
 	optional_ptr<ClientContext> client;
-	StructNames const_struct_names;
 	LogicalType json_type;
 	BoundCastInfo json_type_cast;
 };
@@ -1592,10 +1618,8 @@ static unique_ptr<FunctionLocalState> InitNestedToJSONLocalState(CastLocalStateP
 
 static bool AnyToJSONCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<NestedToJSONLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
+	lstate.arena.Reset();
 	auto &cast_data = parameters.cast_data->Cast<NestedToJSONCastData>();
-	const auto &names = cast_data.const_struct_names;
 
 	JSONCopyFormatOptions options;
 	options.context = cast_data.client;
@@ -1603,28 +1627,27 @@ static bool AnyToJSONCast(Vector &source, Vector &result, idx_t count, CastParam
 		options.geometry_format = ClientGeometryFormat(*cast_data.client);
 	}
 	if (!cast_data.json_type_cast.HasFunction()) {
-		ToJSONFunctionInternal(names, source, count, result, alc, options);
+		ToJSONFunctionInternal(source, count, result, lstate, options);
 		return true;
 	}
 	Vector json_typed(cast_data.json_type, count);
 	CastParameters json_type_parameters(parameters, cast_data.json_type_cast.GetCastData(),
 	                                    lstate.json_type_cast_state);
 	const auto success = cast_data.json_type_cast.Cast(source, json_typed, count, json_type_parameters);
-	ToJSONFunctionInternal(names, json_typed, count, result, alc, options);
+	ToJSONFunctionInternal(json_typed, count, result, lstate, options);
 	return success;
 }
 
 static BoundCastInfo AnyToJSONCastBind(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
-	StructNames const_struct_names;
-	auto json_type = GetJSONType(const_struct_names, input.function_set, source);
+	auto json_type = GetJSONType(input.function_set, source);
 	BoundCastInfo json_type_cast(nullptr);
 	if (TypeVisitor::Contains(source,
 	                          [&](const LogicalType &type) { return HasOwnJSONCast(input.function_set, type); })) {
 		json_type_cast = input.GetCastFunction(source, json_type);
 	}
-	auto cast_data = make_uniq<NestedToJSONCastData>(input.context, std::move(json_type), std::move(json_type_cast));
-	cast_data->const_struct_names = std::move(const_struct_names);
-	return BoundCastInfo(AnyToJSONCast, std::move(cast_data), InitNestedToJSONLocalState);
+	return BoundCastInfo(
+	    AnyToJSONCast, make_uniq<NestedToJSONCastData>(input.context, std::move(json_type), std::move(json_type_cast)),
+	    InitNestedToJSONLocalState);
 }
 
 void JSONFunctions::RegisterJSONCreateCastFunctions(ExtensionLoader &loader) {

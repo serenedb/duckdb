@@ -12,6 +12,7 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/common/windows.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
+#include "duckdb/logging/file_system_logger.hpp"
 #include "duckdb/logging/log_type.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -478,6 +479,10 @@ bool FileSystem::SupportsGlobExtended() const {
 
 void FileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
 	throw NotImplementedException("%s: Read (with location) is not implemented!", GetName());
+}
+
+void FileSystem::ReadInPlace(FileHandle &handle, idx_t nr_bytes, idx_t location) {
+	DUCKDB_LOG_FILE_SYSTEM_READ(handle, NumericCast<int64_t>(nr_bytes), location);
 }
 
 void FileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) {
@@ -959,6 +964,11 @@ unique_ptr<FileHandle> FileSystem::OpenCompressedFile(QueryContext context, uniq
 	throw NotImplementedException("%s: OpenCompressedFile is not implemented!", GetName());
 }
 
+optional_ptr<CompressedFileSystem> FileSystem::GetCompressedFileSystem(const FileCompressionType &compression,
+                                                                       const string &path) {
+	return nullptr;
+}
+
 bool FileSystem::IsLocalFileSystem() const {
 	return false;
 }
@@ -1030,6 +1040,13 @@ void FileHandle::Read(QueryContext context, void *buffer, idx_t nr_bytes, idx_t 
 	if (track) {
 		const auto elapsed_us = NumericCast<idx_t>(start.ElapsedMicros());
 		QueryProfiler::Get(*context.GetClientContext()).TrackBytesRead(nr_bytes, elapsed_us);
+	}
+}
+
+void FileHandle::ReadInPlace(QueryContext context, idx_t nr_bytes, idx_t location) {
+	file_system.ReadInPlace(*this, nr_bytes, location);
+	if (track_io && context.GetClientContext()) {
+		QueryProfiler::Get(*context.GetClientContext()).TrackBytesRead(nr_bytes, 0);
 	}
 }
 

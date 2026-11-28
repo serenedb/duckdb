@@ -55,7 +55,7 @@ public:
 
 public:
 	DUCKDB_API AsyncFileWriter(QueryContext context, FileSystem &fs, const string &path,
-	                           const FileOpenFlags &open_flags = DEFAULT_OPEN_FLAGS);
+	                           const FileOpenFlags &open_flags = DEFAULT_OPEN_FLAGS, bool local_in_place = false);
 	DUCKDB_API ~AsyncFileWriter() override;
 	using WriteStream::Write;
 	using WriteStream::WriteData;
@@ -150,6 +150,7 @@ private:
 	ClientContext &client_context;
 	FileSystem &fs;
 	string path;
+	bool local_in_place;
 	unique_ptr<FileHandle> handle;
 	//! Managed queue that owns stream scheduling, backpressure, and write coalescing.
 	unique_ptr<ManagedAsyncWriteStreamQueue> write_queue;

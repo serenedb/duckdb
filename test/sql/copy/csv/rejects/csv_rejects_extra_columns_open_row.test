@@ -1,0 +1,36 @@
+# name: test/sql/copy/csv/rejects/csv_rejects_extra_columns_open_row.test
+# description: A row with extra columns that is still being read while the rows before it are emitted keeps its extra columns
+# group: [rejects]
+
+require skip_reload
+
+statement ok
+COPY (SELECT CASE WHEN i = 0 THEN 'b,c' WHEN i < 2048 THEN 'a,b,c' ELSE 'a,b,c,d' END AS line FROM range(2049) t(i) ORDER BY i) TO '{TEMP_DIR}/open_row.csv' (HEADER false, DELIMITER '|', PREFIX 'a,', SUFFIX ',e');
+
+statement ok
+COPY (SELECT CASE WHEN i < 2048 THEN 'a,b,c' ELSE 'a,b,c,d,e' END AS line FROM range(2049) t(i) ORDER BY i) TO '{TEMP_DIR}/closed_row.csv' (HEADER false, DELIMITER '|');
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/open_row.csv', columns = {'a': 'VARCHAR', 'b': 'VARCHAR'}, auto_detect = false, header = false, ignore_errors = true);
+----
+0
+
+foreach file open_row closed_row
+
+statement ok
+SELECT * FROM read_csv('{TEMP_DIR}/${file}.csv', columns = {'a': 'VARCHAR', 'b': 'VARCHAR'}, auto_detect = false, header = false, store_rejects = true);
+
+query IIIIII
+SELECT line, line_byte_position, byte_position, column_idx, error_type, error_message FROM reject_errors WHERE line = 2049 ORDER BY column_idx;
+----
+2049	12289	12292	3	TOO MANY COLUMNS	Expected Number of Columns: 2 Found: 3
+2049	12289	12294	4	TOO MANY COLUMNS	Expected Number of Columns: 2 Found: 4
+2049	12289	12296	5	TOO MANY COLUMNS	Expected Number of Columns: 2 Found: 5
+
+statement ok
+DROP TABLE reject_errors;
+
+statement ok
+DROP TABLE reject_scans;
+
+endloop

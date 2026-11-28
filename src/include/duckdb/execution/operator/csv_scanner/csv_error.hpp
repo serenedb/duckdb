@@ -16,6 +16,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/execution/operator/csv_scanner/header_value.hpp"
 #include "duckdb/execution/operator/csv_scanner/set_columns.hpp"
+#include "duckdb/formats/range_lines.hpp"
 
 namespace duckdb {
 class InternalAppender;
@@ -77,9 +78,6 @@ public:
 	static CSVError UnterminatedQuotesError(const CSVReaderOptions &options, idx_t current_column,
 	                                        LinesPerBoundary error_info, string &csv_row, idx_t row_byte_position,
 	                                        optional_idx byte_position, const String &current_path);
-	//! Produces error messages for null_padding option is set, and we have quoted new values in parallel
-	static CSVError NullPaddingFail(const CSVReaderOptions &options, LinesPerBoundary error_info,
-	                                const String &current_path);
 	//! Produces error for incorrect (e.g., smaller and lower than the predefined) number of columns in a CSV Line
 	static CSVError IncorrectColumnAmountError(const CSVReaderOptions &state_machine, idx_t actual_columns,
 	                                           LinesPerBoundary error_info, string &csv_row, idx_t row_byte_position,
@@ -114,6 +112,13 @@ public:
 	idx_t row_byte_position {};
 	//! Byte Position where error occurred.
 	optional_idx byte_position;
+	string sqlstate;
+	string detail;
+	string hint;
+	string copy_table;
+	string copy_column;
+	string copy_value;
+	bool copy_has_value = false;
 };
 
 class CSVErrorHandler {
@@ -121,6 +126,7 @@ public:
 	explicit CSVErrorHandler(bool ignore_errors = false, idx_t reject_tolerance = 0);
 	//! Throws the error
 	void Error(const CSVError &csv_error, bool force_error = false);
+	void Absorb(CSVErrorHandler &other);
 	//! If we have a cached error, and we can now error, we error.
 	void ErrorIfNeeded();
 	//! Throw an error if there are any
@@ -153,18 +159,25 @@ private:
 	void ThrowError(const CSVError &csv_error);
 	//! If we processed all boundaries before the one that error-ed
 	bool CanGetLine(idx_t boundary_index);
+	idx_t EarliestError() const;
 	//! Return the 1-indexed line number
 	idx_t GetLineInternal(const LinesPerBoundary &error_info);
+	void ThrowEarliestFailure(bool any);
+	void ThrowOverRejectLimit();
+	[[noreturn]] void ThrowCopyError(const CSVError &csv_error);
 	//! CSV Error Handler Mutex
 	mutex main_mutex;
-	//! Map of <boundary indexes> -> lines read
-	unordered_map<idx_t, LinesPerBoundary> lines_per_batch_map;
+	RangeLines lines;
 	idx_t max_line_length = 0;
 	bool ignore_errors = false;
 	idx_t reject_tolerance = 0;
 	bool print_line = true;
 	//! Set of errors
 	vector<CSVError> errors;
+	vector<CSVError> failures;
+
+public:
+	vector<string> CopySkippedRows();
 };
 
 } // namespace duckdb

@@ -45,6 +45,9 @@ struct ArrowBuffer {
 	}
 
 	void reserve(idx_t bytes) { // NOLINT
+		if (bytes <= capacity && capacity > 1) {
+			return;
+		}
 		auto new_capacity = NextPowerOfTwo(bytes);
 		if (new_capacity <= capacity) {
 			return;

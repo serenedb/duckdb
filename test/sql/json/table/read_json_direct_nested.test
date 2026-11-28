@@ -1,0 +1,114 @@
+# name: test/sql/json/table/read_json_direct_nested.test
+# description: read_json decodes STRUCT and LIST columns straight from the document
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"id": 1, "s": {"a": 1, "b": "x", "t": "2024-01-02 03:04:05", "l": [1, 2, 3], "j": {"k": [true]}}, "ls": [{"x": 1, "y": [1.5]}, {"x": 2, "y": []}], "ll": [[1], [2, 3], []]}'),
+  ('{"id": 2, "s": null, "ls": null, "ll": [[], null]}'),
+  ('{"id": 3, "s": {"b": "y"}, "ls": [null, {"y": [2.5, null]}]}'),
+  ('{"id": 4, "s": {"a": null, "b": null, "t": null, "l": null, "j": null}, "ls": [], "ll": null}'),
+  ('{"id": 5, "s": {"b": "q\u0021\"", "j": [1, {"z": null}]}, "ls": [{"x": 3}]}')
+) t(line)) TO '{TEST_DIR}/nested.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query IIII
+SELECT id, s, ls, ll FROM read_ndjson('{TEST_DIR}/nested.ndjson', columns := {id: 'BIGINT', s: 'STRUCT(a BIGINT, b VARCHAR, t TIMESTAMP, l INTEGER[], j JSON)', ls: 'STRUCT(x BIGINT, y DOUBLE[])[]', ll: 'INTEGER[][]'}) ORDER BY id;
+----
+1	{'a': 1, 'b': x, 't': '2024-01-02 03:04:05', 'l': [1, 2, 3], 'j': '{"k":[true]}'}	[{'x': 1, 'y': [1.5]}, {'x': 2, 'y': []}]	[[1], [2, 3], []]
+2	NULL	NULL	[[], NULL]
+3	{'a': NULL, 'b': y, 't': NULL, 'l': NULL, 'j': NULL}	[NULL, {'x': NULL, 'y': [2.5, NULL]}]	NULL
+4	{'a': NULL, 'b': NULL, 't': NULL, 'l': NULL, 'j': NULL}	[]	NULL
+5	{'a': NULL, 'b': 'q!"', 't': NULL, 'l': NULL, 'j': '[1,{"z":null}]'}	[{'x': 3, 'y': NULL}]	NULL
+
+# projected struct children
+query III
+SELECT id, s.b, s.l FROM read_ndjson('{TEST_DIR}/nested.ndjson', columns := {id: 'BIGINT', s: 'STRUCT(a BIGINT, b VARCHAR, t TIMESTAMP, l INTEGER[], j JSON)'}) ORDER BY id;
+----
+1	x	[1, 2, 3]
+2	NULL	NULL
+3	y	NULL
+4	NULL	NULL
+5	q!"	NULL
+
+# a list that grows past one vector inside a chunk
+statement ok
+COPY (SELECT '{"id": ' || r || ', "ls": [' || string_agg('{"x": ' || i || ', "y": [' || i || ', null]}', ', ') || ']}' FROM range(3) a(r), range(3000) b(i) GROUP BY r) TO '{TEST_DIR}/long.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query IIII
+SELECT count(*), sum(len(ls)), sum(list_sum(list_transform(ls, lambda e: e.x))), sum(list_sum(list_transform(ls, lambda e: len(e.y)))) FROM read_ndjson('{TEST_DIR}/long.ndjson', columns := {id: 'BIGINT', ls: 'STRUCT(x BIGINT, y DOUBLE[])[]'});
+----
+3	9000	13495500	18000
+
+# auto-detected nested types
+query II
+SELECT id, ls FROM read_json('{TEST_DIR}/nested.ndjson') WHERE id <= 2 ORDER BY id;
+----
+1	[{'x': 1, 'y': [1.5]}, {'x': 2, 'y': []}]
+2	NULL
+
+# a key that only differs in case, and an escaped key, take the fallback and match as before
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"s": {"B": "upper"}}'),
+  ('{"s": {"b": "escaped"}}'),
+  ('{"s": {"b": "plain"}}')
+) t(line)) TO '{TEST_DIR}/keys.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT s.b FROM read_ndjson('{TEST_DIR}/keys.ndjson', columns := {s: 'STRUCT(b VARCHAR)'});
+----
+upper
+escaped
+plain
+
+# an unknown nested key is an error when every child is read, and is ignored when the struct is projected
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"s": {"a": 1, "b": 1}}'),
+  ('{"s": {"a": 2, "b": 2, "extra": 3}}')
+) t(line)) TO '{TEST_DIR}/unknown.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT s FROM read_json('{TEST_DIR}/unknown.ndjson', sample_size := 1);
+----
+<REGEX>:.*unknown key.*
+
+query I
+SELECT s.a FROM read_json('{TEST_DIR}/unknown.ndjson', sample_size := 1);
+----
+1
+2
+
+# a duplicate nested key is an error unless errors are ignored
+statement ok
+COPY (SELECT '{"ls": [{"x": 3, "x": 4}]}') TO '{TEST_DIR}/duplicate.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT ls FROM read_ndjson('{TEST_DIR}/duplicate.ndjson', columns := {ls: 'STRUCT(x BIGINT)[]'});
+----
+<REGEX>:.*duplicate key.*
+
+query I
+SELECT ls FROM read_ndjson('{TEST_DIR}/duplicate.ndjson', columns := {ls: 'STRUCT(x BIGINT)[]'}, ignore_errors := true);
+----
+[{'x': 3}]
+
+# a value of the wrong shape
+statement ok
+COPY (SELECT * FROM (VALUES
+  ('{"s": {"l": 5}}'),
+  ('{"s": [1]}')
+) t(line)) TO '{TEST_DIR}/shape.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT s FROM read_ndjson('{TEST_DIR}/shape.ndjson', columns := {s: 'STRUCT(l INTEGER[])'});
+----
+<REGEX>:.*Expected ARRAY.*
+
+query I
+SELECT s FROM read_ndjson('{TEST_DIR}/shape.ndjson', columns := {s: 'STRUCT(l INTEGER[])'}, ignore_errors := true);
+----
+{'l': NULL}
+{'l': NULL}

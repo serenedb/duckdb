@@ -38,6 +38,9 @@ public:
 	unique_ptr<StreamWrapper> CreateStream() override;
 	idx_t InBufferSize() override;
 	idx_t OutBufferSize() override;
+	unique_ptr<PiecedFile> CreatePieces() override;
+	bool FindPieces(const_data_ptr_t data, idx_t size, vector<PieceSpan> &pieces) override;
+	unique_ptr<PieceDecompressor> CreateDecompressor() override;
 
 	static int64_t DefaultCompressionLevel();
 	static int64_t MinimumCompressionLevel();

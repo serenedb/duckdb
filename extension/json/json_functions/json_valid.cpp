@@ -4,11 +4,10 @@ namespace duckdb {
 
 static void ValidFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	const auto &inputs = args.data[0];
-	UnaryExecutor::Execute<string_t, bool>(inputs, result, [&](string_t input) {
-		return JSONCommon::ReadDocumentUnsafe(input, JSONCommon::READ_FLAG, alc);
-	});
+	JSONParseError error;
+	UnaryExecutor::Execute<string_t, bool>(
+	    inputs, result, [&](string_t input) { return lstate.parser.IsValid(input.GetData(), input.GetSize(), error); });
 }
 
 static void GetValidFunctionInternal(ScalarFunctionSet &set, const LogicalType &input_type) {

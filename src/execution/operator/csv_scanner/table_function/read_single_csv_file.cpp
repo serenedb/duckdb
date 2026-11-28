@@ -2,13 +2,15 @@
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_states.hpp"
 #include "duckdb/common/multi_file/table_function_multi_file.hpp"
-#include "duckdb/execution/operator/csv_scanner/string_value_scanner.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_schema_discovery.hpp"
-#include "duckdb/execution/operator/csv_scanner/global_csv_state.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
 #include "duckdb/execution/operator/persistent/csv_rejects_table.hpp"
+#include "duckdb/formats/csv_scan.hpp"
 #include "duckdb/function/table/read_csv.hpp"
+#include "duckdb/main/appender.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 namespace duckdb {
 
@@ -22,9 +24,10 @@ struct ReadSingleCSVFileData : public ReadCSVData {
 
 struct ReadSingleCSVFileGlobalState : public GlobalTableFunctionState {
 public:
-	ReadSingleCSVFileGlobalState(ClientContext &context, ReadSingleCSVFileData &csv_data,
+	ReadSingleCSVFileGlobalState(ClientContext &context_p, const ReadSingleCSVFileData &csv_data_p,
 	                             const TableFunctionInitInput &input)
-	    : state(context, csv_data, csv_data.csv_names, TableFunctionFileInitInput::Get(input).file_count, input.op) {
+	    : context(context_p), csv_data(csv_data_p), scan_op(input.op),
+	      file_count(TableFunctionFileInitInput::Get(input).file_count) {
 	}
 
 public:
@@ -33,22 +36,22 @@ public:
 	}
 
 public:
-	//! The file that is read - declared before the state below, which holds buffers of this file and must therefore
-	//! be destroyed first
+	ClientContext &context;
+	const ReadSingleCSVFileData &csv_data;
+	optional_ptr<const PhysicalOperator> scan_op;
+	idx_t file_count;
 	shared_ptr<CSVFileScan> file_scan;
-	CSVGlobalState state;
-	//! Handing out the next part of the file is done single-threadedly
+	unique_ptr<CsvScanGlobal> scan;
 	mutable mutex lock;
-	//! Whether we are done handing out parts of the file
-	bool finished_launching = false;
+	bool finished = false;
 	idx_t max_threads = 1;
 };
 
 struct ReadSingleCSVFileLocalState : public LocalTableFunctionState {
-	CSVLocalState state;
-	//! Whether our caller claims the batches we read - see table_function_claim_batch_t
 	bool claimed_externally = false;
-	unique_ptr<StringValueScanner> lookup;
+	bool scanning = false;
+	idx_t range = 0;
+	unique_ptr<CsvScan> scan;
 };
 
 //! The columns "force_not_null" was given, looked up the way column names are compared
@@ -98,10 +101,9 @@ static void SniffCSVFile(ClientContext &context, ReadSingleCSVFileData &result, 
                          vector<Identifier> &names) {
 	auto &options = result.options;
 	result.buffer_manager = CSVBufferManager::Open(context, options, options.file_path, false);
-	auto &state_machine_cache = CSVStateMachineCache::Get(context);
 	if (file_schema.Empty()) {
 		// the columns of this file are fixed - only its dialect is sniffed
-		CSVSniffer sniffer(options, file_options, result.buffer_manager, state_machine_cache);
+		CSVSniffer sniffer(options, file_options, result.buffer_manager);
 		sniffer.SniffCSV();
 		return;
 	}
@@ -109,10 +111,30 @@ static void SniffCSVFile(ClientContext &context, ReadSingleCSVFileData &result, 
 		// an empty file has no dialect for us to reconcile with the schema of the scan
 		return;
 	}
-	CSVSniffer sniffer(options, file_options, result.buffer_manager, state_machine_cache, false);
+	CSVSniffer sniffer(options, file_options, result.buffer_manager, false);
 	auto sniff_result = sniffer.AdaptiveSniff(file_schema);
 	names = std::move(sniff_result.names);
 	return_types = std::move(sniff_result.return_types);
+}
+
+static void ApplyCopyRules(CSVReaderOptions &options, shared_ptr<const CopyFromRules> rules) {
+	auto &copy = rules->options;
+	const bool csv = copy.format == CopyFormat::CSV;
+	options.auto_detect = false;
+	options.SetDelimiter(string(1, copy.delimiter));
+	options.SetQuote(csv ? string(1, copy.quote) : string());
+	options.SetEscape(csv ? string(1, copy.escape) : string());
+	options.SetComment(string());
+	options.dialect_options.state_machine_options.new_line = NewLineIdentifier::SINGLE_N;
+	options.SetHeader(copy.header);
+	options.null_str = {copy.null_str};
+	options.allow_quoted_nulls = false;
+	options.ignore_errors.Set(copy.ignore_errors);
+	options.rejects_limit = copy.reject_limit;
+	options.encoding = copy.encoding;
+	options.compression = copy.compression;
+	options.rendering = copy.rendering;
+	options.copy_rules = std::move(rules);
 }
 
 static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, TableFunctionBindInput &input,
@@ -120,8 +142,20 @@ static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, Ta
 	auto &file_input = TableFunctionFileBindInput::Get(input);
 	auto result = make_uniq<ReadSingleCSVFileData>();
 	auto &options = result->options;
-	for (auto &kv : input.named_parameters) {
-		options.ParseOption(context, kv.first, kv.second);
+	optional_ptr<const ReadSingleCSVFileData> schema_source;
+	if (file_input.HasExpectedSchema() && file_input.expected_bind_data) {
+		// the schema of the scan was determined on (other) files of this scan - start from the options it was
+		// determined with, so that this file is read with the same dialect
+		schema_source = file_input.expected_bind_data->Cast<ReadSingleCSVFileData>();
+		options = schema_source->options;
+		options.force_not_null.clear();
+	} else {
+		for (auto &kv : input.named_parameters) {
+			options.ParseOption(context, kv.first, kv.second);
+		}
+		if (file_input.copy_rules) {
+			ApplyCopyRules(options, file_input.copy_rules);
+		}
 	}
 	if (input.inputs[0].IsNull()) {
 		throw BinderException("read_single_csv_file requires a non-NULL file name");
@@ -138,14 +172,8 @@ static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, Ta
 	//! Whether the options that name columns are verified against the columns of this file, which is the schema of
 	//! the scan only when this file is the whole scan
 	bool verify_against_file = false;
-	optional_ptr<const ReadSingleCSVFileData> schema_source;
 	if (file_input.HasExpectedSchema()) {
-		if (file_input.expected_bind_data) {
-			// the schema of the scan was determined on (other) files of this scan - start from the options it was
-			// determined with, so that this file is read with the same dialect
-			schema_source = file_input.expected_bind_data->Cast<ReadSingleCSVFileData>();
-			options = schema_source->options;
-			options.force_not_null.clear();
+		if (schema_source) {
 			names = *file_input.expected_names;
 			return_types = *file_input.expected_types;
 		} else {
@@ -254,6 +282,17 @@ static unique_ptr<FunctionData> ReadSingleCSVFileCombineSchema(ClientContext &co
 		// the files have different columns - every file is read the way it was bound
 		return nullptr;
 	}
+	auto &first = input.bind_data[0].get().Cast<ReadSingleCSVFileData>();
+	if (!first.options.auto_detect) {
+		VerifyForceNotNull(first.options, names);
+		auto result = make_uniq<ReadSingleCSVFileData>();
+		result->options = first.options;
+		result->buffer_manager = first.buffer_manager;
+		result->csv_names = names;
+		result->csv_types = return_types;
+		result->Finalize();
+		return std::move(result);
+	}
 	optional_ptr<const ReadSingleCSVFileData> first_file;
 	CSVSchema best_schema;
 	for (auto &bind_data : input.bind_data) {
@@ -323,9 +362,10 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleCSVFileInitGlobal(ClientCo
 	options.auto_detect = false;
 	MultiFileOptions file_options;
 	CSVSchema no_schema;
+	const bool many_files = result->file_count > 1 && result->file_count > TaskScheduler::QueryThreads(context) * 2;
 	result->file_scan = make_shared_ptr<CSVFileScan>(
 	    context, csv_data.file, std::move(options), file_options, csv_data.csv_names, csv_data.csv_types, no_schema,
-	    result->state.SingleThreadedRead(), csv_data.buffer_manager, false);
+	    many_files || !csv_data.options.parallel, csv_data.buffer_manager, false);
 
 	// perform projection pushdown - the scanner emits the columns in the order they are requested
 	auto &file_scan = *result->file_scan;
@@ -360,12 +400,8 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleCSVFileInitGlobal(ClientCo
 		}
 	}
 	file_scan.InitializeFileNamesTypes();
-	file_scan.SetStart();
-
-	if (!result->state.SingleThreadedRead()) {
-		const idx_t bytes_per_thread = CSVIterator::BytesPerThread(csv_data.options);
-		result->max_threads = file_scan.file_size / bytes_per_thread + 1;
-	}
+	result->scan = make_uniq<CsvScanGlobal>(context, file_scan, input.filters);
+	result->max_threads = result->scan->MaxThreads();
 	return std::move(result);
 }
 
@@ -375,33 +411,129 @@ static unique_ptr<LocalTableFunctionState> ReadSingleCSVFileInitLocal(ExecutionC
 	return make_uniq<ReadSingleCSVFileLocalState>();
 }
 
-//! Assign the next part of the file to this thread
-static bool ClaimNextPart(ReadSingleCSVFileGlobalState &gstate, ReadSingleCSVFileLocalState &lstate) {
+static void FillScanErrorTable(InternalAppender &appender, idx_t scan_idx, idx_t file_idx, CSVFileScan &file) {
+	auto &options = file.options;
+	auto &dialect = options.dialect_options;
+	appender.BeginRow();
+	appender.Append(scan_idx);
+	appender.Append(file_idx);
+	appender.Append(string_t(file.GetFileName()));
+	appender.Append(string_t(dialect.state_machine_options.delimiter.FormatValue()));
+	appender.Append(string_t(dialect.state_machine_options.quote.FormatValue()));
+	appender.Append(string_t(dialect.state_machine_options.escape.FormatValue()));
+	appender.Append(string_t(options.NewLineIdentifierToString()));
+	appender.Append(Value::UINTEGER(NumericCast<uint32_t>(dialect.skip_rows.GetValue())));
+	appender.Append(Value::BOOLEAN(dialect.header.GetValue()));
+	auto &types = file.GetTypes();
+	auto &names = file.GetNames();
+	string columns = "{";
+	for (idx_t i = 0; i < types.size(); i++) {
+		columns += "'" + names[i] + "': '" + types[i].ToString() + "'";
+		if (i + 1 != types.size()) {
+			columns += ",";
+		}
+	}
+	columns += "}";
+	appender.Append(string_t(columns));
+	for (auto type : {LogicalTypeId::DATE, LogicalTypeId::TIMESTAMP}) {
+		auto format = dialect.date_format[type].GetValue();
+		if (format.Empty()) {
+			appender.Append(Value());
+		} else {
+			appender.Append(string_t(format.format_specifier));
+		}
+	}
+	appender.Append(string_t(options.GetUserDefinedParameters()));
+	appender.EndRow();
+}
+
+static void FillRejectsTable(ReadSingleCSVFileGlobalState &gstate, CSVFileScan &file) {
+	auto &options = gstate.csv_data.options;
+	if (!options.store_rejects.GetValue()) {
+		return;
+	}
+	auto &context = gstate.context;
+	auto rejects = CSVRejectsTable::GetOrCreate(context, options.rejects_scan_name.GetValue(),
+	                                            options.rejects_table_name.GetValue());
+	const lock_guard<mutex> lock(rejects->write_lock);
+	auto &errors_table = rejects->GetErrorsTable(context);
+	auto &scans_table = rejects->GetScansTable(context);
+	InternalAppender errors_appender(context, errors_table);
+	InternalAppender scans_appender(context, scans_table);
+	const idx_t scan_idx = context.transaction.GetActiveQuery();
+	const idx_t file_idx =
+	    rejects->GetFileIndexBase(scan_idx, gstate.scan_op.get(), gstate.file_count) + file.GetFileIndex();
+	file.error_handler->FillRejectsTable(errors_appender, file_idx, scan_idx, file, *rejects, gstate.csv_data.csv_names,
+	                                     options.rejects_limit);
+	if (rejects->count != 0) {
+		rejects->count = 0;
+		FillScanErrorTable(scans_appender, scan_idx, file_idx, file);
+	}
+	errors_appender.Close();
+	scans_appender.Close();
+}
+
+static void NoticeSkippedRows(ClientContext &context, const CSVReaderOptions &options, CSVErrorHandler &handler) {
+	auto &rules = options.copy_rules;
+	if (!rules || !rules->options.ignore_errors) {
+		return;
+	}
+	auto notices = context.registered_state->Get<CopyNotices>(CopyNotices::NAME);
+	if (!notices) {
+		return;
+	}
+	const auto rows = handler.CopySkippedRows();
+	const auto verbosity = rules->options.log_verbosity;
+	if (verbosity == CopyLogVerbosity::VERBOSE) {
+		for (auto &row : rows) {
+			notices->Notice(row);
+		}
+	}
+	if (!rows.empty() && verbosity != CopyLogVerbosity::SILENT) {
+		notices->Notice(std::to_string(rows.size()) + (rows.size() == 1 ? " row was" : " rows were") +
+		                " skipped due to data type incompatibility");
+	}
+}
+
+static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
 	lock_guard<mutex> guard(gstate.lock);
-	gstate.state.FinishScan(std::move(lstate.state.csv_reader));
-	lstate.state.claim_state = CSVLocalState::ClaimState::IDLE;
-	if (gstate.finished_launching) {
+	if (gstate.finished) {
+		return;
+	}
+	gstate.finished = true;
+	auto &file = *gstate.file_scan;
+	file.Finish();
+	file.error_handler->ErrorIfAny();
+	NoticeSkippedRows(gstate.context, gstate.csv_data.options, *file.error_handler);
+	FillRejectsTable(gstate, file);
+}
+
+static bool ClaimNextPart(ReadSingleCSVFileGlobalState &gstate, ReadSingleCSVFileLocalState &lstate) {
+	if (!lstate.scan && gstate.scan->ranges->Intake()) {
+		lstate.scan = make_uniq<CsvScan>(*gstate.scan);
+	}
+	if (!gstate.scan->Claim(lstate.range)) {
+		if (gstate.scan->AllFinished()) {
+			FinishFile(gstate);
+		}
 		return false;
 	}
-	if (gstate.state.Next(gstate.file_scan, lstate.state)) {
-		return true;
+	if (!lstate.scan) {
+		lstate.scan = make_uniq<CsvScan>(*gstate.scan);
 	}
-	// we have handed out the entire file - this is also where the errors of the file are reported
-	gstate.finished_launching = true;
-	gstate.state.FinishLaunchingTasks(*gstate.file_scan);
-	return false;
+	lstate.scan->Start(lstate.range);
+	lstate.scanning = true;
+	return true;
 }
 
 static bool ReadSingleCSVFileClaimBatch(ClientContext &context, TableFunctionInput &input) {
 	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
-	// our caller hands out the parts of the file, so we must not claim the next one ourselves
 	lstate.claimed_externally = true;
 	return ClaimNextPart(gstate, lstate);
 }
 
-//! The CSV scanner can be read ahead when the buffers of the file can be addressed individually
-static bool ReadSingleCSVFileSupportsReadAhead(optional_ptr<const FunctionData> bind_data) {
+static bool ReadSingleCSVFileSupportsRandomAccess(optional_ptr<const FunctionData> bind_data) {
 	if (!bind_data) {
 		return false;
 	}
@@ -410,57 +542,31 @@ static bool ReadSingleCSVFileSupportsReadAhead(optional_ptr<const FunctionData> 
 	       csv_data.buffer_manager->file_handle->HasKnownBufferRanges();
 }
 
-//! Load the buffers of the claimed part of the file that are not in memory yet
-static AsyncResult ReadSingleCSVFileScheduleIO(ClientContext &context, TableFunctionInput &input) {
-	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
-	if (lstate.state.claim_state != CSVLocalState::ClaimState::PENDING) {
-		return SourceResultType::HAVE_MORE_OUTPUT;
-	}
-	return AsyncResult::FromTasks(CSVCollectClaimIOTasks(lstate.state), TaskSchedulerType::ASYNC);
-}
-
-//! Release the part of the file this thread was reading
-static void ReadSingleCSVFileFinishBatch(ClientContext &context, TableFunctionInput &input) {
-	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
-	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
-	lock_guard<mutex> guard(gstate.lock);
-	gstate.state.FinishScan(std::move(lstate.state.csv_reader));
+static bool ReadSingleCSVFileSupportsLookup(optional_ptr<const FunctionData> bind_data) {
+	return ReadSingleCSVFileSupportsRandomAccess(bind_data) &&
+	       !bind_data->Cast<ReadSingleCSVFileData>().options.ignore_errors.GetValue();
 }
 
 static void ReadSingleCSVFileFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
-
 	while (true) {
-		if (lstate.state.claim_state == CSVLocalState::ClaimState::IDLE) {
+		if (!lstate.scanning) {
 			if (lstate.claimed_externally) {
-				// the next part of the file is claimed by our caller
 				return;
 			}
 			if (!ClaimNextPart(gstate, lstate)) {
-				// there is nothing left for us to read in this file
 				return;
 			}
 		}
-		if (lstate.state.claim_state == CSVLocalState::ClaimState::PENDING) {
-			lstate.state.Materialize();
+		const bool file_done = lstate.scan->Scan(output);
+		if (output.size() != 0) {
+			return;
 		}
-		auto &csv_reader = *lstate.state.csv_reader;
-		if (csv_reader.IsSuspended() || !csv_reader.FinishedIterator()) {
-			csv_reader.Flush(output);
-			if (csv_reader.IsSuspended()) {
-				// the scanner needs a buffer that is not in memory - load it and resume
-				csv_reader.buffer_manager->GetBuffer(csv_reader.PendingBufferIdx());
-				continue;
-			}
-			if (output.size() != 0) {
-				return;
-			}
+		lstate.scanning = false;
+		if (file_done) {
+			FinishFile(gstate);
 		}
-		// this part of the file is done - grab the next one
-		lock_guard<mutex> guard(gstate.lock);
-		gstate.state.FinishScan(std::move(lstate.state.csv_reader));
-		lstate.state.claim_state = CSVLocalState::ClaimState::IDLE;
 	}
 }
 
@@ -500,74 +606,18 @@ static virtual_column_map_t ReadSingleCSVFileGetVirtualColumns(ClientContext &, 
 	return result;
 }
 
-namespace {
-
-// Maps a global byte offset to (buffer_idx, buffer_pos) and returns a tight
-// CSVIterator pinned to that offset. SetExactBoundary marks first_one=true
-// so the scanner trusts the offset is a real row start (no SetStart).
-//
-// Quirk: the pk encoding for non-first rows points at the trailing newline of
-// the previous row (pre-existing upstream behavior of
-// line_positions_per_row.begin -- see StringValueResult::AddRowInternal).
-CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t boundary_idx) {
-	const auto buf_size = file_scan.buffer_manager->GetBufferSize();
-	idx_t buf_idx = global_offset / buf_size;
-	idx_t buf_pos = global_offset % buf_size;
-	auto handle = file_scan.buffer_manager->GetBuffer(buf_idx);
-	const bool empty_lines_are_rows = file_scan.state_machine->dialect_options.num_cols == 1;
-	for (bool skipped_newline = false; handle;) {
-		if (buf_pos == handle->actual_size) {
-			if (handle->is_last_buffer) {
-				break;
-			}
-			handle = file_scan.buffer_manager->GetBuffer(++buf_idx);
-			buf_pos = 0;
-			continue;
-		}
-		const char c = handle->Ptr()[buf_pos];
-		if ((c != '\r' && c != '\n') || (skipped_newline && empty_lines_are_rows)) {
-			break;
-		}
-		skipped_newline = skipped_newline || c == '\n';
-		++buf_pos;
-	}
-	CSVIterator iter = file_scan.start_iterator;
-	iter.SetExactBoundary(buf_idx, buf_pos, buf_pos + 1, boundary_idx);
-	return iter;
-}
-
-void ReadSingleCSVFileLookup(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
+static void ReadSingleCSVFileLookup(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
-	auto &file_scan = gstate.file_scan;
-	if (!lstate.lookup) {
-		lstate.lookup =
-		    make_uniq<StringValueScanner>(0, file_scan->buffer_manager, file_scan->state_machine,
-		                                  file_scan->error_handler, file_scan, false, file_scan->start_iterator);
-		lstate.lookup->row_lookup = true;
+	if (!lstate.scan) {
+		lstate.scan = make_uniq<CsvScan>(*gstate.scan);
 	}
-	auto &scanner = *lstate.lookup;
-	scanner.GetStringValueResult().Reset();
-	for (idx_t i = 0; i < input.pk_lookups.size(); i++) {
-		scanner.ResetForAppend(MakeTightIterator(*file_scan, NumericCast<idx_t>(input.pk_lookups[i]), i));
-		scanner.ParseChunkAppend();
-		while (scanner.IsSuspended()) {
-			file_scan->buffer_manager->GetBuffer(scanner.PendingBufferIdx());
-			scanner.ParseChunk();
-		}
-		input.pk_survivors[i] = i;
-	}
-	scanner.Flush(output, false);
-	D_ASSERT(output.size() == input.pk_lookups.size());
-	if (file_scan->file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto writer = FlatVector::Writer<int64_t>(output.data[file_scan->file_row_number_idx], output.size());
-		for (auto offset : input.pk_lookups) {
-			writer.WriteValue(offset);
-		}
-	}
+	lstate.scan->Lookup(input.pk_lookups, input.pk_survivors, output);
 }
 
-} // namespace
+static bool ReadSingleCSVFilePushdownExpression(ClientContext &, const LogicalGet &, Expression &expr) {
+	return CsvScan::EvaluatesOnFieldBytes(expr);
+}
 
 TableFunction ReadCSVTableFunction::GetSingleFileFunction() {
 	TableFunction read_csv("read_single_csv_file", FunctionSignature().AddPositionalOnly("path", LogicalType::VARCHAR),
@@ -577,6 +627,9 @@ TableFunction ReadCSVTableFunction::GetSingleFileFunction() {
 	read_csv.table_scan_progress = ReadSingleCSVFileProgress;
 	read_csv.cardinality = ReadSingleCSVFileCardinality;
 	read_csv.projection_pushdown = true;
+	read_csv.filter_pushdown = true;
+	read_csv.filter_prune = true;
+	read_csv.pushdown_expression = ReadSingleCSVFilePushdownExpression;
 	ReadCSVAddNamedParameters(read_csv);
 	return read_csv;
 }
@@ -593,11 +646,8 @@ TableFunction ReadCSVTableFunction::GetMultiFileFunction(Identifier name) {
 	settings.sampled_schema_is_union = false;
 	settings.combine_schema = ReadSingleCSVFileCombineSchema;
 	settings.claim_batch = ReadSingleCSVFileClaimBatch;
-	settings.finish_batch = ReadSingleCSVFileFinishBatch;
-	settings.supports_read_ahead = ReadSingleCSVFileSupportsReadAhead;
-	settings.schedule_io = ReadSingleCSVFileScheduleIO;
 	settings.lookup = ReadSingleCSVFileLookup;
-	settings.supports_lookup = ReadSingleCSVFileSupportsReadAhead;
+	settings.supports_lookup = ReadSingleCSVFileSupportsLookup;
 	settings.row_storage = true;
 	settings.row_id_names = {"file_index", "file_offset"};
 	// the scanner converts to the types the scan asks for while parsing, rather than casting its output

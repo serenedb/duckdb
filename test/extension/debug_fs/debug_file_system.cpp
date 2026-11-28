@@ -125,6 +125,11 @@ int64_t DebugFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes
 	return inner.file_system.Read(inner, buffer, nr_bytes);
 }
 
+void DebugFileSystem::ReadInPlace(FileHandle &handle, idx_t nr_bytes, idx_t location) {
+	auto &inner = *handle.Cast<DebugFileHandle>().inner;
+	inner.file_system.ReadInPlace(inner, nr_bytes, location);
+}
+
 void DebugFileSystem::Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
 	ApplyDelay();
 	auto &inner = *handle.Cast<DebugFileHandle>().inner;

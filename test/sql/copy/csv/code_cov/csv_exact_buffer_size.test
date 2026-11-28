@@ -19,7 +19,12 @@ select count(*) from read_csv_auto('{DATA_DIR}/csv/small_file.csv', buffer_size 
 ----
 2
 
-query I
+statement error
 select count(*) from read_csv('{DATA_DIR}/csv/quoted_comment_buffer_boundary.csv', buffer_size=30, delim=';', header=false, null_padding=true, union_by_name=false, ignore_errors=true)
+----
+Maximum line size of 30 bytes exceeded
+
+query I
+select count(*) from read_csv('{DATA_DIR}/csv/quoted_comment_buffer_boundary.csv', buffer_size=30, delim=';', header=false, null_padding=true, union_by_name=false, ignore_errors=true, quote='', comment='#', new_line='\n', columns={'column0': 'VARCHAR', 'column1': 'VARCHAR', 'column2': 'VARCHAR', 'column3': 'DOUBLE'}, auto_detect=false)
 ----
 4

@@ -24,7 +24,6 @@ struct JSONStructureNode {
 public:
 	JSONStructureNode();
 	JSONStructureNode(const char *key_ptr, const size_t key_len);
-	JSONStructureNode(yyjson_val *key_p, yyjson_val *val_p, bool ignore_errors, bool detect_geojson);
 
 	//! Disable copy constructors
 	JSONStructureNode(const JSONStructureNode &other) = delete;
@@ -38,17 +37,17 @@ public:
 	bool ContainsVarchar() const;
 	void InitializeCandidateTypes(idx_t max_depth, bool convert_strings_to_integers,
 	                              bool user_specified_timestamp_format = false, idx_t depth = 0);
-	void RefineCandidateTypes(yyjson_val *vals[], idx_t val_count, Vector &string_vector, ArenaAllocator &allocator,
+	void RefineCandidateTypes(const JSONNode *vals[], idx_t val_count, Vector &string_vector, ArenaAllocator &allocator,
 	                          MutableDateFormatMap &date_format_map, bool user_specified_timestamp_format = false);
 
 private:
-	void RefineCandidateTypesArray(yyjson_val *vals[], idx_t val_count, Vector &string_vector,
+	void RefineCandidateTypesArray(const JSONNode *vals[], idx_t val_count, Vector &string_vector,
 	                               ArenaAllocator &allocator, MutableDateFormatMap &date_format_map,
 	                               bool user_specified_timestamp_format);
-	void RefineCandidateTypesObject(yyjson_val *vals[], idx_t val_count, Vector &string_vector,
+	void RefineCandidateTypesObject(const JSONNode *vals[], idx_t val_count, Vector &string_vector,
 	                                ArenaAllocator &allocator, MutableDateFormatMap &date_format_map,
 	                                bool user_specified_timestamp_format);
-	void RefineCandidateTypesString(yyjson_val *vals[], idx_t val_count, Vector &string_vector,
+	void RefineCandidateTypesString(const JSONNode *vals[], idx_t val_count, Vector &string_vector,
 	                                MutableDateFormatMap &date_format_map, bool user_specified_timestamp_format);
 	void EliminateCandidateTypes(idx_t vec_count, Vector &string_vector, MutableDateFormatMap &date_format_map,
 	                             bool user_specified_timestamp_format);
@@ -75,7 +74,8 @@ public:
 
 	JSONStructureNode &GetOrCreateChild();
 	JSONStructureNode &GetOrCreateChild(const char *key_ptr, size_t key_size);
-	JSONStructureNode &GetOrCreateChild(yyjson_val *key, yyjson_val *val, bool ignore_errors, bool detect_geojson);
+	idx_t GetOrCreateChildIndex(const char *key_ptr, size_t key_size, idx_t hint);
+	optional_idx FindChild(const char *key_ptr, size_t key_size, idx_t hint) const;
 
 public:
 	//! Type of this description
@@ -97,7 +97,7 @@ public:
 
 struct JSONStructure {
 public:
-	static void ExtractStructure(yyjson_val *val, JSONStructureNode &node, bool ignore_errors, bool detect_geojson);
+	static void ExtractStructure(const JSONNode &val, JSONStructureNode &node, bool detect_geojson);
 	static void MergeNodes(JSONStructureNode &merged, const JSONStructureNode &node);
 	static LogicalType StructureToType(ClientContext &context, const JSONStructureNode &node, idx_t max_depth,
 	                                   double field_appearance_threshold, idx_t map_inference_threshold,

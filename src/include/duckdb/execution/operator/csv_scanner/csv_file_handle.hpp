@@ -47,15 +47,16 @@ public:
 
 	//! Random-access read that bypasses the handle's seek state, only valid for files with known buffer ranges
 	void ReadAt(void *buffer, idx_t nr_bytes, idx_t position);
+	void ReadInPlace(idx_t nr_bytes, idx_t position) const;
 
 	string ReadLine();
 
 	string GetFilePath();
 
 	static unique_ptr<FileHandle> OpenFileHandle(FileSystem &fs, Allocator &allocator, const OpenFileInfo &file,
-	                                             FileCompressionType compression);
+	                                             FileCompressionType compression, CachingMode caching_mode);
 	static unique_ptr<CSVFileHandle> OpenFile(ClientContext &context, const OpenFileInfo &file,
-	                                          const CSVReaderOptions &options);
+	                                          const CSVReaderOptions &options, CachingMode caching_mode);
 	FileCompressionType compression_type;
 
 	double GetProgress() const;
@@ -69,6 +70,7 @@ private:
 	unique_ptr<FileHandle> file_handle;
 	CSVEncoder encoder;
 	const OpenFileInfo file;
+	const bool postgres_errors;
 	bool can_seek = false;
 	bool on_disk_file = false;
 	bool is_pipe = false;

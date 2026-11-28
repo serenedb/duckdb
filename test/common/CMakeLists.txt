@@ -6,11 +6,20 @@ add_library_unity(
   test_buffer_manager_pins.cpp
   test_managed_async_task_queue.cpp
   test_bit_utils.cpp
+  test_block_codecs.cpp
   test_memory_file_system.cpp
   test_memory_stream.cpp
   test_cast.cpp
   test_checked_integer.cpp
   test_checksum.cpp
+  test_copy_fields.cpp
+  test_copy_from.cpp
+  test_csv_encoder.cpp
+  test_csv_splitter.cpp
+  test_encoding_util.cpp
+  test_json_document.cpp
+  test_json_ranges.cpp
+  test_row_ranges.cpp
   test_column_data_allocator.cpp
   test_compression_type.cpp
   test_file_buffer_handle_group.cpp
@@ -38,6 +47,7 @@ add_library_unity(
   test_logical_type_is_complete.cpp
   test_logical_type_immutable.cpp
   test_utf.cpp
+  test_value_parsers.cpp
   test_allocator_debug_info.cpp
   test_buffer_pool_reservation.cpp
   test_storage_fuzz.cpp

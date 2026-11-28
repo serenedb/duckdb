@@ -10,7 +10,8 @@ include_directories(include)
 add_subdirectory(json_functions)
 
 set(JSON_EXTENSION_FILES
-    json_reader.cpp
+    json_direct.cpp
+    json_engine.cpp
     json_extension.cpp
     json_common.cpp
     json_enums.cpp
@@ -46,7 +47,6 @@ set(JSON_EXTENSION_FILES
     json_functions/read_single_json_file.cpp)
 
 build_extension_library(json ${JSON_EXTENSION_FILES})
-target_link_libraries(json_loadable_extension duckdb_yyjson)
 
 install(
   TARGETS json_extension

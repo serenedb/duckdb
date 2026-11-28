@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include "duckdb/common/types/data_chunk.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 
@@ -11,8 +13,9 @@ namespace duckdb_shell {
 // Selects which subcommand the shell is rendering for. SHELL is a
 // superset of upstream DuckDB's standalone shell -- adds psql-style
 // flag spellings (--no-align, -x/--expanded, -P/--pset, etc.) but
-// no auto-connect. PSQL adds the connection options and auto-ATTACH
-// against a pg-wire endpoint on top of everything SHELL has.
+// no auto-connect. PSQL adds the connection options, auto-ATTACH
+// against a pg-wire endpoint and psql's table output on top of
+// everything SHELL has.
 enum class ShellSubcommand : uint8_t {
 	SHELL, // `serenedb shell`
 	PSQL,  // `serenedb psql`
@@ -22,6 +25,7 @@ struct ShellEngine {
 	duckdb::shared_ptr<duckdb::DatabaseInstance> (*open)(const std::string &path, bool read_only);
 	void (*close)();
 	std::string name = "duckdb";
+	void (*render_text)(duckdb::ClientContext &context, duckdb::DataChunk &input, duckdb::DataChunk &output);
 };
 
 // Public entry point. Parses argv, opens the database, runs init / -cmd /

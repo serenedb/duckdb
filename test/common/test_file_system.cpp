@@ -787,6 +787,79 @@ TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
 	fs.RemoveFile(path);
 }
 
+TEST_CASE("A read-only mapping reads zeros in the tail it asks for past the end of its file", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_tail.bin");
+	for (const idx_t size : {idx_t(0), idx_t(1), idx_t(4095), idx_t(4096), idx_t(65536), idx_t(65537)}) {
+		INFO("size " << size);
+		vector<data_t> data(size, 0x5A);
+		{
+			auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+			if (size > 0) {
+				handle->Write(QueryContext(), data.data(), size, 0);
+			}
+		}
+		MMapOptions options;
+		options.tail = 64;
+		auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, options);
+		REQUIRE(mapped->Size() == size);
+		REQUIRE(mapped->Tail() >= 64);
+		const auto bytes = mapped->GetData(0, size);
+		REQUIRE((size == 0 || memcmp(bytes, data.data(), size) == 0));
+		idx_t nonzero = 0;
+		for (idx_t i = 0; i < mapped->Tail(); i++) {
+			nonzero += bytes[size + i] != 0;
+		}
+		REQUIRE(nonzero == 0);
+		mapped->Close();
+		REQUIRE(mapped->Tail() == 0);
+	}
+	auto plain = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(plain->Tail() == 0);
+	plain->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("A file the system cannot map fails to map, with or without a tail", "[file_system]") {
+	LocalFileSystem fs;
+	auto dir = TestCreatePath("unmappable_dir");
+	fs.CreateDirectory(dir);
+	{
+		auto handle = fs.OpenFile(fs.JoinPath(dir, "entry.bin"),
+		                          FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	}
+	for (const idx_t tail : {idx_t(0), idx_t(4096)}) {
+		INFO("tail " << tail);
+		MMapOptions options;
+		options.tail = tail;
+		REQUIRE_THROWS_AS(fs.MemoryMapFile(dir, FileFlags::FILE_FLAGS_READ, options), IOException);
+	}
+	fs.RemoveFile(fs.JoinPath(dir, "entry.bin"));
+	fs.RemoveDirectory(dir);
+}
+
+TEST_CASE("A mapped file that knows its pages are cached says so for every part of it", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_cached.bin");
+	constexpr idx_t size = 256 * 1024 + 5;
+	vector<data_t> data(size, 0x42);
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	if (mapped->IsCached(0, size)) {
+		REQUIRE(mapped->IsCached(4097, 100));
+		REQUIRE(mapped->IsCached(size - 1, 10));
+		REQUIRE(mapped->IsCached(size, 10));
+	}
+	mapped->Release(0, size);
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
 TEST_CASE("Mapped files read evicted ranges back from the file", "[file_system]") {
 	LocalFileSystem fs;
 	auto path = TestCreatePath("mapped_file_evict.bin");

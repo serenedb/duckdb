@@ -1,13 +1,23 @@
+#include "duckdb/formats/json_ranges.hpp"
 #include "json_executors.hpp"
 
 namespace duckdb {
 
-static inline optional<uint64_t> GetArrayLength(yyjson_val *val, yyjson_alc *, Vector &) {
-	return yyjson_arr_size(val);
+static inline optional<uint64_t> GetArrayLength(const JSONNode *val, JSONFunctionLocalState &, Vector &) {
+	return val->type == JSONValueType::ARRAY ? static_cast<uint64_t>(val->size) : 0;
 }
 
 static void UnaryArrayLengthFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	JSONExecutors::UnaryExecute<uint64_t>(args, state, result, GetArrayLength);
+	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
+	UnaryExecutor::Execute<string_t, uint64_t>(args.data[0], result, [&](string_t input) -> optional<uint64_t> {
+		const auto data = input.GetData();
+		const auto size = input.GetSize();
+		const idx_t root = JsonSkipSpace(data, size, 0);
+		if (root < size && (data[root] == '{' || data[root] == '[') && lstate.parser.IsPlain(data, size)) {
+			return data[root] == '[' ? JsonArrayLength(data + root, size - root) : 0;
+		}
+		return GetArrayLength(&JSONCommon::ReadDocument(lstate.parser, input), lstate, result);
+	});
 }
 
 static void BinaryArrayLengthFunction(DataChunk &args, ExpressionState &state, Vector &result) {

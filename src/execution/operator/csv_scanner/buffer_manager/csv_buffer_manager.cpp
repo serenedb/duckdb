@@ -3,13 +3,23 @@
 #include "duckdb/execution/operator/csv_scanner/csv_random_access_buffer_manager.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/function/table/read_csv.hpp"
+#include "duckdb/formats/row_input.hpp"
 namespace duckdb {
+
+static idx_t ReadBufferSize(ClientContext &context, const CSVReaderOptions &options, const OpenFileInfo &file,
+                            const CSVFileHandle &handle) {
+	const idx_t size = options.buffer_size_option.GetValue();
+	if (!RowInput::HostStream(context, handle, file.path, options.encoding == "utf-8")) {
+		return size;
+	}
+	return MaxValue(MinValue(size, RowInput::HOST_STREAM_BYTES), options.maximum_line_size.GetValue());
+}
 
 CSVBufferManager::CSVBufferManager(ClientContext &context_p, const CSVReaderOptions &options,
                                    const OpenFileInfo &file_p, bool per_file_single_threaded_p,
                                    unique_ptr<CSVFileHandle> file_handle_p)
     : file_handle(std::move(file_handle_p)), context(context_p), per_file_single_threaded(per_file_single_threaded_p),
-      file(file_p), buffer_size(options.buffer_size_option.GetValue()) {
+      file(file_p), buffer_size(ReadBufferSize(context_p, options, file_p, *file_handle)) {
 	D_ASSERT(file_handle);
 }
 
@@ -21,8 +31,13 @@ shared_ptr<CSVBufferManager> CSVBufferManager::Open(ClientContext &context, cons
 		file_handle = ReadCSV::OpenCSV(file, options, context);
 	}
 	if (file_handle->HasKnownBufferRanges()) {
-		return make_shared_ptr<CSVRandomAccessBufferManager>(context, options, file, per_file_single_threaded,
-		                                                     std::move(file_handle));
+		auto manager = make_shared_ptr<CSVRandomAccessBufferManager>(context, options, file, per_file_single_threaded,
+		                                                             std::move(file_handle));
+		manager->mapped = MappedRowSource::Open(context, *manager->file_handle, file.path);
+		if (manager->mapped) {
+			manager->cached_buffers.clear();
+		}
+		return manager;
 	}
 	return make_shared_ptr<CSVSequentialBufferManager>(context, options, file, per_file_single_threaded,
 	                                                   std::move(file_handle));
@@ -53,6 +68,22 @@ idx_t CSVBufferManager::GetBufferSize() const {
 	return buffer_size;
 }
 
+idx_t CSVBufferManager::ReadBuffered(char *data, idx_t count, idx_t offset) {
+	idx_t read = 0;
+	while (read < count) {
+		const idx_t position = offset + read;
+		auto handle = GetBuffer(position / buffer_size);
+		const idx_t within = position % buffer_size;
+		if (!handle || within >= handle->actual_size) {
+			break;
+		}
+		const idx_t piece = MinValue(count - read, handle->actual_size - within);
+		memcpy(data + read, handle->Ptr() + within, piece);
+		read += piece;
+	}
+	return read;
+}
+
 idx_t CSVBufferManager::BufferCount() const {
 	return cached_buffers.size();
 }
@@ -61,9 +92,9 @@ string CSVBufferManager::GetFilePath() const {
 	return file.path;
 }
 
-bool CSVBufferManager::AnyBlockUnloaded() {
+bool CSVBufferManager::AnyBufferUnpinned() const {
 	for (auto &buffer : cached_buffers) {
-		if (buffer && buffer->IsUnloaded()) {
+		if (!buffer->Pinned()) {
 			return true;
 		}
 	}

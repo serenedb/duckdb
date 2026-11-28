@@ -1,0 +1,19 @@
+# name: test/sql/copy/csv/csv_write_quote_lengths.test
+# description: A field gets quotes when only its last byte needs them, at every length around the quoting scan's 64-byte block
+# group: [csv]
+
+statement ok
+CREATE TABLE fields AS SELECT i, repeat('x', i) || ',' AS a, repeat('y', i + 1) AS b, repeat('z', i) || '"' AS c FROM range(0, 140) t(i);
+
+statement ok
+COPY fields TO '{TEST_DIR}/quote_lengths.csv' (HEADER false);
+
+query I
+SELECT count(*) FROM read_csv('{TEST_DIR}/quote_lengths.csv', columns = {'i': 'BIGINT', 'a': 'VARCHAR', 'b': 'VARCHAR', 'c': 'VARCHAR'}, header = false) r JOIN fields f USING (i) WHERE r.a = f.a AND r.b = f.b AND r.c = f.c;
+----
+140
+
+query I
+SELECT (SELECT length(content) FROM read_text('{TEST_DIR}/quote_lengths.csv')) = (SELECT sum(length(i::VARCHAR) + 3 * i + 12) FROM range(0, 140) t(i));
+----
+true

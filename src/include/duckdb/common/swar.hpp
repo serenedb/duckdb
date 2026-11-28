@@ -39,6 +39,10 @@ struct SwarWord {
 		return (word - LSB) & ~word & MSB;
 	}
 
+	static inline uint64_t MaybeBelow(uint64_t word, uint8_t bound) {
+		return (word - Repeat(bound)) & ~word & MSB;
+	}
+
 	//! Whether no byte of `word` has its high bit set
 	static inline bool IsAscii(uint64_t word) {
 		return (word & MSB) == 0;

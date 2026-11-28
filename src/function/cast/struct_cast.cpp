@@ -167,9 +167,10 @@ static bool StructToVarcharCast(Vector &source, Vector &result, idx_t count, Cas
 			if (c > 0) {
 				string_length += SEP_LENGTH;
 			}
-			auto add_escapes = !base_children[c].GetType().IsNested();
-			auto string_length_func = add_escapes ? VectorCastHelpers::CalculateEscapedStringLength<false>
-			                                      : VectorCastHelpers::CalculateStringLength;
+			auto string_length_func =
+			    VectorCastHelpers::ChildText(base_children[c].GetType(),
+			                                 c < cast_data.own_text.size() && cast_data.own_text[c])
+			        .length;
 			auto &child_data = child_iterators[c];
 			auto &name = child_types[c].first;
 			string_length +=
@@ -195,9 +196,10 @@ static bool StructToVarcharCast(Vector &source, Vector &result, idx_t count, Cas
 				memcpy(dataptr + offset, ", ", SEP_LENGTH);
 				offset += SEP_LENGTH;
 			}
-			auto add_escapes = !base_children[c].GetType().IsNested();
 			auto write_string_func =
-			    add_escapes ? VectorCastHelpers::WriteEscapedString<false> : VectorCastHelpers::WriteString;
+			    VectorCastHelpers::ChildText(base_children[c].GetType(),
+			                                 c < cast_data.own_text.size() && cast_data.own_text[c])
+			        .write;
 
 			auto &name = child_types[c].first;
 			// "{<name>: <value>}"
@@ -348,9 +350,12 @@ BoundCastInfo DefaultCasts::StructCastSwitch(BindCastInput &input, const Logical
 			varchar_children.push_back(make_pair(child_entry.first, LogicalType::VARCHAR));
 		}
 		auto varchar_type = LogicalType::STRUCT(varchar_children);
-		return BoundCastInfo(StructToVarcharCast,
-		                     StructBoundCastData::BindStructToStructCast(input, source, varchar_type),
-		                     StructBoundCastData::InitStructCastLocalState);
+		auto data = StructBoundCastData::BindStructToStructCast(input, source, varchar_type);
+		auto &own_text = data->Cast<StructBoundCastData>().own_text;
+		for (auto &child_entry : struct_children) {
+			own_text.push_back(VectorCastHelpers::WritesOwnText(input, child_entry.second));
+		}
+		return BoundCastInfo(StructToVarcharCast, std::move(data), StructBoundCastData::InitStructCastLocalState);
 	}
 	case LogicalTypeId::MAP: {
 		return BoundCastInfo(StructToMapCast, StructToMapBoundCastData::BindStructToMapCast(input, source, target),

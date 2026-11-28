@@ -240,6 +240,9 @@ class CopyFunction : public Function { // NOLINT: work-around bug in clang-tidy
 public:
 	explicit CopyFunction(const Identifier &name);
 
+	DUCKDB_API static CopyFunctionExecutionMode ParallelUnlessOrdered(bool preserve_insertion_order,
+	                                                                  bool supports_batch_index);
+
 	//! Plan rewrite copy function
 	copy_to_plan_t plan;
 	copy_to_select_t copy_to_select;
@@ -267,6 +270,8 @@ public:
 	TableFunction copy_from_function;
 
 	string extension;
+	bool writes_typed_columns = false;
+	bool parallel_sink = false;
 
 	//! Additional function info, passed to the bind
 	shared_ptr<CopyFunctionInfo> function_info;

@@ -105,7 +105,6 @@ static bool OperatorSupportsSerialization(LogicalOperator &op, string &operator_
 
 static void JsonSerializePlanFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &local_state = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = local_state.json_allocator->GetYYAlc();
 	const auto &inputs = args.data[0];
 
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
@@ -116,17 +115,19 @@ static void JsonSerializePlanFunction(DataChunk &args, ExpressionState &state, V
 	}
 	auto &context = state.GetContext();
 
-	auto &heap = StringVector::GetStringHeap(result);
+	JSONBuilder builder(local_state.arena);
+	JSONStringWriter writer(info.format ? JSONCommon::WRITE_PRETTY_FLAG : JSONCommon::WRITE_FLAG);
 	UnaryExecutor::Execute<string_t, string_t>(inputs, result, [&](string_t input) {
-		auto doc = JSONCommon::CreateDocument(alc);
-		auto result_obj = yyjson_mut_obj(doc);
-		yyjson_mut_doc_set_root(doc, result_obj);
-
+		writer.Clear();
 		try {
 			Parser parser(state.GetContext());
 			parser.ParseQuery(input.GetString());
-			auto plans_arr = yyjson_mut_arr(doc);
 
+			writer.StartObject();
+			writer.Key("error");
+			writer.Boolean(false);
+			writer.Key("plans");
+			writer.StartArray();
 			for (auto &statement : parser.statements) {
 				auto stmt = std::move(statement);
 
@@ -150,45 +151,31 @@ static void JsonSerializePlanFunction(DataChunk &args, ExpressionState &state, V
 					throw InvalidInputException("Operator '%s' does not support serialization", operator_name);
 				}
 
-				auto plan_json =
-				    JsonSerializer::Serialize(*plan, doc, info.skip_if_null, info.skip_if_empty, info.skip_if_default);
-				yyjson_mut_arr_append(plans_arr, plan_json);
+				auto plan_json = JsonSerializer::Serialize(*plan, builder, info.skip_if_null, info.skip_if_empty,
+				                                           info.skip_if_default);
+				writer.Value(*plan_json);
 			}
-
-			yyjson_mut_obj_add_false(doc, result_obj, "error");
-			yyjson_mut_obj_add_val(doc, result_obj, "plans", plans_arr);
-
-			size_t len_size_t;
-			auto data = yyjson_mut_val_write_opts(result_obj,
-			                                      info.format ? JSONCommon::WRITE_PRETTY_FLAG : JSONCommon::WRITE_FLAG,
-			                                      alc, &len_size_t, nullptr);
-			idx_t len = len_size_t;
-			if (data == nullptr) {
-				throw SerializationException(
-				    "Failed to serialize json, perhaps the query contains invalid utf8 characters?");
-			}
-
-			return heap.AddString(data, len);
-
+			writer.EndArray();
+			writer.EndObject();
 		} catch (std::exception &ex) {
 			ErrorData error(ex);
-			yyjson_mut_obj_add_true(doc, result_obj, "error");
+			writer.Clear();
+			writer.StartObject();
+			writer.Key("error");
+			writer.Boolean(true);
 			// error type and message
-			yyjson_mut_obj_add_strcpy(doc, result_obj, "error_type",
-			                          StringUtil::Lower(Exception::ExceptionTypeToString(error.Type())).c_str());
-			yyjson_mut_obj_add_strcpy(doc, result_obj, "error_message", error.RawMessage().c_str());
+			writer.Key("error_type");
+			writer.String(StringUtil::Lower(Exception::ExceptionTypeToString(error.Type())));
+			writer.Key("error_message");
+			writer.String(error.RawMessage().c_str());
 			// add extra info
 			for (auto &entry : error.ExtraInfo()) {
-				yyjson_mut_obj_add_strcpy(doc, result_obj, entry.first.c_str(), entry.second.c_str());
+				writer.Key(entry.first.c_str());
+				writer.String(entry.second.c_str());
 			}
-
-			size_t len_size_t;
-			auto data = yyjson_mut_val_write_opts(result_obj,
-			                                      info.format ? JSONCommon::WRITE_PRETTY_FLAG : JSONCommon::WRITE_FLAG,
-			                                      alc, &len_size_t, nullptr);
-			idx_t len = len_size_t;
-			return heap.AddString(data, len);
+			writer.EndObject();
 		}
+		return StringVector::AddString(result, writer.View());
 	});
 }
 

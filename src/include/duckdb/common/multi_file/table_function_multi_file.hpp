@@ -11,6 +11,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/formats/copy_from.hpp"
 
 namespace duckdb {
 
@@ -44,6 +45,7 @@ struct TableFunctionFileBindInput {
 	//! (Optional) The bind data an earlier bind of this same file produced, when it was bound before to determine
 	//! the schema of the scan. The bind can take whatever it read from the file from there again
 	optional_ptr<const FunctionData> file_bind_data;
+	shared_ptr<const CopyFromRules> copy_rules;
 
 	bool HasExpectedSchema() const {
 		return expected_names && expected_types;
@@ -154,6 +156,7 @@ public:
 	shared_ptr<FunctionData> schema_bind_data;
 	//! Whether the scan reads several files
 	bool multi_file_scan = false;
+	shared_ptr<const CopyFromRules> copy_rules;
 };
 
 //! What the bind of a wrapped single-file table function reports about the file it binds, beyond its names and types
@@ -387,6 +390,11 @@ public:
 	                                                  vector<LogicalType> &return_types, vector<Identifier> &names,
 	                                                  TableFunction single_file_function,
 	                                                  TableFunctionMultiFileSettings settings);
+	static unique_ptr<FunctionData> MultiFileBindWith(ClientContext &context, TableFunctionBindInput &input,
+	                                                  vector<LogicalType> &return_types, vector<Identifier> &names,
+	                                                  TableFunction single_file_function,
+	                                                  TableFunctionMultiFileSettings settings,
+	                                                  vector<OpenFileInfo> expanded);
 
 	//! Binds a COPY ... FROM over the wrapped function - assign this to CopyFunction::copy_from_bind, together with
 	//! the wrapped multi-file function as CopyFunction::copy_from_function
@@ -401,6 +409,11 @@ public:
 	                                                      vector<LogicalType> &expected_types,
 	                                                      TableFunction single_file_function,
 	                                                      TableFunctionMultiFileSettings settings);
+
+	static unique_ptr<FunctionData> MultiFileBindCopyRules(ClientContext &context, CopyFromFunctionBindInput &input,
+	                                                       vector<Identifier> &expected_names,
+	                                                       vector<LogicalType> &expected_types,
+	                                                       shared_ptr<const CopyFromRules> rules);
 
 	//! The row groups of a scan that reads a single file, as the wrapped function describes them - the files of a
 	//! scan over several files have not been opened at this point, so their row groups are unknown
@@ -471,6 +484,7 @@ public:
 	vector<Identifier> combined_names;
 	vector<LogicalType> combined_types;
 	shared_ptr<FunctionData> combined_bind_data;
+	shared_ptr<const CopyFromRules> copy_rules;
 };
 
 } // namespace duckdb

@@ -1,0 +1,69 @@
+# name: test/sql/json/table/read_json_transform_error_lines.test
+# description: A transform error inside a list, a fixed-size array or a map names the line of the row that holds it, and the first failing row wins
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "l": [1, 2]}'), ('{"id": 2, "l": 5}')) t(line)) TO '{TEST_DIR}/list_shape.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_shape.ndjson', columns := {id: 'BIGINT', l: 'BIGINT[]'});
+----
+in line 2: Expected ARRAY, but got UBIGINT: 5
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "l": [1, 2]}'), ('{"id": 2, "l": [3, "x"]}')) t(line)) TO '{TEST_DIR}/list_element.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_element.ndjson', columns := {id: 'BIGINT', l: 'BIGINT[]'});
+----
+in line 2: Failed to cast value to numerical: "x"
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "l": 5}'), ('{"id": 2, "l": [3, "x"]}')) t(line)) TO '{TEST_DIR}/list_shape_first.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_shape_first.ndjson', columns := {id: 'BIGINT', l: 'BIGINT[]'});
+----
+in line 1: Expected ARRAY, but got UBIGINT: 5
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "l": [3, "x"]}'), ('{"id": 2, "l": 5}')) t(line)) TO '{TEST_DIR}/list_element_first.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/list_element_first.ndjson', columns := {id: 'BIGINT', l: 'BIGINT[]'});
+----
+in line 1: Failed to cast value to numerical: "x"
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "a": [1, 2]}'), ('{"id": 2, "a": [3, "x"]}'), ('{"id": 3, "a": [4]}')) t(line)) TO '{TEST_DIR}/array_element.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/array_element.ndjson', columns := {id: 'BIGINT', a: 'BIGINT[2]'});
+----
+in line 2: Failed to cast value to numerical: "x"
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "a": [1, 2]}'), ('{"id": 2, "a": [3]}')) t(line)) TO '{TEST_DIR}/array_size.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/array_size.ndjson', columns := {id: 'BIGINT', a: 'BIGINT[2]'});
+----
+in line 2: Expected array of size 2, but got '[3]' with size 1
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "m": {"a": 1, "b": 2}}'), ('{"id": 2, "m": {"c": "x"}}')) t(line)) TO '{TEST_DIR}/map_value.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/map_value.ndjson', columns := {id: 'BIGINT', m: 'MAP(VARCHAR, BIGINT)'});
+----
+in line 2: Failed to cast value to numerical: "x"
+
+statement ok
+COPY (SELECT * FROM (VALUES ('{"id": 1, "m": 5}'), ('{"id": 2, "m": {"c": "x"}}')) t(line)) TO '{TEST_DIR}/map_shape_first.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/map_shape_first.ndjson', columns := {id: 'BIGINT', m: 'MAP(VARCHAR, BIGINT)'});
+----
+in line 1: Expected OBJECT, but got UBIGINT: 5

@@ -1,0 +1,72 @@
+# name: test/sql/json/scalar/test_json_strict_paths.test
+# description: The path functions read only what leads to the value unless json_strict_paths is set
+# group: [scalar]
+
+require json
+
+statement ok
+CREATE TABLE t AS SELECT '{"x":[1,,2],"user":{"id":3,"tags":[4,5]}}' AS s
+
+# by default, an error outside the part a path function reads goes unnoticed
+query I
+SELECT s->>'$.user.id' FROM t
+----
+3
+
+query I
+SELECT json_extract(s, '$.user.tags[*]') FROM t
+----
+[4, 5]
+
+query I
+SELECT json_extract(s, ['$.user.id', '$.user.tags[1]']) FROM t
+----
+[3, 5]
+
+# an error in the keys on the way to the value, or in the value, is still reported
+statement error
+SELECT s->'$.y' FROM (SELECT '{"x" 1,"y":1}' AS s)
+----
+Malformed JSON
+
+statement error
+SELECT s->'$.user' FROM (SELECT '{"user":{"id":}}' AS s)
+----
+Malformed JSON
+
+statement error
+SELECT json_extract('[1, 2, 3', '$[1]')
+----
+Malformed JSON at byte 8 of input: unexpected end of data
+
+# the functions that read the whole document still reject it
+query I
+SELECT json_valid(s) FROM t
+----
+false
+
+statement ok
+SET json_strict_paths = true
+
+statement error
+SELECT s->>'$.user.id' FROM t
+----
+Malformed JSON
+
+statement error
+SELECT json_extract(s, '$.user.tags[*]') FROM t
+----
+Malformed JSON
+
+statement error
+SELECT json_extract(s, ['$.user.id', '$.user.tags[1]']) FROM t
+----
+Malformed JSON
+
+statement ok
+RESET json_strict_paths
+
+query I
+SELECT s->>'$.user.id' FROM t
+----
+3

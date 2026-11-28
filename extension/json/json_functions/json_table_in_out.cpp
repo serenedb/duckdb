@@ -123,9 +123,9 @@ static bool JSONPathKeyNeedsQuoting(const char *data, const idx_t len) {
 
 //! Appends ".key" to the path, quoting the key (as in "$.\"a.b\"") when needed so that the resulting path
 //! round-trips through JSON path extraction (issue #23148)
-static void AppendObjectPathElement(yyjson_val *vkey, string &path) {
-	const auto data = unsafe_yyjson_get_str(vkey);
-	const auto len = unsafe_yyjson_get_len(vkey);
+static void AppendObjectPathElement(const JSONNode &vkey, string &path) {
+	const auto data = vkey.str;
+	const idx_t len = vkey.size;
 	path += '.';
 	if (!JSONPathKeyNeedsQuoting(data, len)) {
 		path.append(data, len);
@@ -142,19 +142,20 @@ static void AppendObjectPathElement(yyjson_val *vkey, string &path) {
 }
 
 struct JSONTableInOutRecursionNode {
-	JSONTableInOutRecursionNode(string path_p, yyjson_val *parent_val_p)
-	    : path(std::move(path_p)), parent_val(parent_val_p), child_index(0) {
+	JSONTableInOutRecursionNode(string path_p, const JSONNode *parent_val_p)
+	    : path(std::move(path_p)), parent_val(parent_val_p), child(parent_val_p->First()), child_index(0) {
 	}
 
 	string path;
-	yyjson_val *parent_val;
+	const JSONNode *parent_val;
+	const JSONNode *child;
 	idx_t child_index;
 };
 
 struct JSONTableInOutLocalState : LocalTableFunctionState {
-	JSONTableInOutLocalState(ClientContext &context, JSONTableInOutGlobalState &gstate)
-	    : gstate(gstate), json_allocator(BufferAllocator::Get(context)), alc(json_allocator.GetYYAlc()),
-	      len(DConstants::INVALID_INDEX), doc(nullptr), initialized(false), total_count(0) {
+	JSONTableInOutLocalState(JSONTableInOutGlobalState &gstate, Allocator &allocator)
+	    : gstate(gstate), parser(JSONCommon::READ_FLAG, allocator), writer(JSONCommon::WRITE_FLAG),
+	      len(DConstants::INVALID_INDEX), doc_root(nullptr), initialized(false), total_count(0) {
 	}
 
 	string GetPath() const {
@@ -165,10 +166,10 @@ struct JSONTableInOutLocalState : LocalTableFunctionState {
 		return result;
 	}
 
-	void AddRecursionNode(yyjson_val *val, optional_ptr<yyjson_val> vkey, const optional_idx arr_index) {
+	void AddRecursionNode(const JSONNode *val, optional_ptr<const JSONNode> vkey, const optional_idx arr_index) {
 		string str;
 		if (vkey) {
-			AppendObjectPathElement(vkey.get(), str);
+			AppendObjectPathElement(*vkey, str);
 		} else if (arr_index.IsValid()) {
 			str = "[" + to_string(arr_index.GetIndex()) + "]";
 		}
@@ -176,15 +177,15 @@ struct JSONTableInOutLocalState : LocalTableFunctionState {
 	}
 
 	JSONTableInOutGlobalState &gstate;
-	JSONAllocator json_allocator;
-	yyjson_alc *alc;
+	JSONTreeParser parser;
+	JSONStringWriter writer;
 	//! The rows the current input row is estimated to produce, and the rows it produced so far
 	idx_t estimated_rows = 0;
 	idx_t produced_rows = 0;
 
 	string path;
 	idx_t len;
-	yyjson_doc *doc;
+	const JSONNode *doc_root;
 	bool initialized;
 
 	idx_t total_count;
@@ -193,7 +194,8 @@ struct JSONTableInOutLocalState : LocalTableFunctionState {
 
 static unique_ptr<LocalTableFunctionState> JSONTableInOutInitLocal(ExecutionContext &context, TableFunctionInitInput &,
                                                                    GlobalTableFunctionState *global_state) {
-	return make_uniq<JSONTableInOutLocalState>(context.client, global_state->Cast<JSONTableInOutGlobalState>());
+	return make_uniq<JSONTableInOutLocalState>(global_state->Cast<JSONTableInOutGlobalState>(),
+	                                           BufferAllocator::Get(context.client));
 }
 
 static double JSONTableInOutProgress(ClientContext &, const FunctionData *,
@@ -230,12 +232,12 @@ struct JSONTableInOutResult {
 	}
 
 	template <JSONTableInOutType TYPE>
-	void AddRow(JSONTableInOutLocalState &lstate, optional_ptr<yyjson_val> vkey, yyjson_val *val) {
+	void AddRow(JSONTableInOutLocalState &lstate, optional_ptr<const JSONNode> vkey, const JSONNode *val) {
 		const auto &recursion_nodes = lstate.recursion_nodes;
-		const auto arr_el = !recursion_nodes.empty() && unsafe_yyjson_is_arr(recursion_nodes.back().parent_val);
+		const auto arr_el = !recursion_nodes.empty() && recursion_nodes.back().parent_val->type == JSONValueType::ARRAY;
 		if (key.enabled) {
 			if (vkey) { // Object field
-				key.data[count] = string_t(unsafe_yyjson_get_str(vkey.get()), unsafe_yyjson_get_len(vkey.get()));
+				key.data[count] = string_t(vkey->str, vkey->size);
 			} else if (arr_el) { // Array element
 				key.data[count] = StringVector::AddString(key.vector, to_string(recursion_nodes.back().child_index));
 			} else { // Other
@@ -243,34 +245,33 @@ struct JSONTableInOutResult {
 			}
 		}
 		if (value.enabled) {
-			value.data[count] = JSONCommon::WriteVal(val, lstate.alc);
+			value.data[count] = JSONCommon::WriteVal(*val, lstate.writer, value.vector);
 		}
 		if (type.enabled) {
-			type.data[count] = JSONCommon::ValTypeToStringT(val);
+			type.data[count] = JSONCommon::ValTypeToStringT(*val);
 		}
 		if (atom.enabled) {
-			auto atom_result = JSONCommon::JSONValue(val, lstate.alc, atom.vector);
-			if (atom_result.has_value()) {
-				atom.data[count] = atom_result.value();
-			} else {
+			if (val->type == JSONValueType::JSON_NULL || val->IsContainer()) {
 				atom.validity.SetInvalid(count);
+			} else {
+				atom.data[count] = JSONCommon::WriteVal(*val, lstate.writer, atom.vector);
 			}
 		}
 		if (id.enabled) {
-			id.data[count] = NumericCast<idx_t>(val - lstate.doc->root);
+			id.data[count] = NumericCast<idx_t>(val - lstate.doc_root);
 		}
 		if (parent.enabled) {
 			if (TYPE == JSONTableInOutType::EACH || recursion_nodes.empty()) {
 				parent.validity.SetInvalid(count);
 			} else {
-				parent.data[count] = NumericCast<uint64_t>(recursion_nodes.back().parent_val - lstate.doc->root);
+				parent.data[count] = NumericCast<uint64_t>(recursion_nodes.back().parent_val - lstate.doc_root);
 			}
 		}
 		const auto path_str = lstate.GetPath();
 		if (fullkey.enabled) {
 			if (vkey) { // Object field
 				auto fullkey_str = path_str;
-				AppendObjectPathElement(vkey.get(), fullkey_str);
+				AppendObjectPathElement(*vkey, fullkey_str);
 				fullkey.data[count] = StringVector::AddString(fullkey.vector, fullkey_str);
 			} else if (arr_el) { // Array element
 				const auto arr_path = "[" + to_string(recursion_nodes.back().child_index) + "]";
@@ -328,19 +329,19 @@ static void InitializeLocalState(JSONTableInOutLocalState &lstate, DataChunk &in
 		return;
 	}
 	const auto &input_data = ConstantVector::GetData<string_t>(input_vector)[0];
-	lstate.doc = JSONCommon::ReadDocument(input_data, JSONCommon::READ_FLAG, lstate.alc);
-	const auto root = JSONCommon::GetUnsafe(lstate.doc->root, lstate.path.c_str(), lstate.len);
+	lstate.doc_root = &JSONCommon::ReadDocument(lstate.parser, input_data);
+	const auto root = JSONCommon::GetUnsafe(lstate.doc_root, lstate.path.c_str(), lstate.len);
 
 	if (!root) {
 		return;
 	}
 
-	const auto is_container = unsafe_yyjson_is_arr(root) || unsafe_yyjson_is_obj(root);
+	const auto is_container = root->IsContainer();
 	// json_each produces a row per element of the root, json_tree a row per value (the value count is an upper bound)
 	if (TYPE == JSONTableInOutType::TREE) {
-		lstate.estimated_rows = yyjson_doc_get_val_count(lstate.doc);
+		lstate.estimated_rows = lstate.parser.NodeCount();
 	} else {
-		lstate.estimated_rows = is_container ? unsafe_yyjson_get_len(root) : 1;
+		lstate.estimated_rows = is_container ? root->size : 1;
 	}
 	lstate.produced_rows = 0;
 	lstate.gstate.total_rows.fetch_add(lstate.estimated_rows, std::memory_order_relaxed);
@@ -350,24 +351,6 @@ static void InitializeLocalState(JSONTableInOutLocalState &lstate, DataChunk &in
 	if (is_container) {
 		lstate.AddRecursionNode(root, nullptr, optional_idx());
 	}
-}
-
-template <JSONTableInOutType TYPE>
-static bool JSONTableInOutHandleValue(JSONTableInOutLocalState &lstate, JSONTableInOutResult &result,
-                                      idx_t &child_index, size_t &idx, yyjson_val *child_key, yyjson_val *child_val) {
-	if (idx < child_index) {
-		return false; // Continue: Get back to where we left off
-	}
-	result.AddRow<TYPE>(lstate, child_key, child_val);
-	child_index++; // We finished processing the array element
-	if (TYPE == JSONTableInOutType::TREE && (unsafe_yyjson_is_arr(child_val) || unsafe_yyjson_is_obj(child_val))) {
-		lstate.AddRecursionNode(child_val, child_key, idx);
-		return true; // Break: We added a recursion node, go depth-first
-	}
-	if (result.count == STANDARD_VECTOR_SIZE) {
-		return true; // Break: Vector is full
-	}
-	return false; // Continue: Next element
 }
 
 template <JSONTableInOutType TYPE>
@@ -384,32 +367,19 @@ static OperatorResultType JSONTableInOutFunction(ExecutionContext &, TableFuncti
 
 	// Traverse the JSON (keeping a stack to avoid recursion and save progress across calls)
 	auto &recursion_nodes = lstate.recursion_nodes;
-	while (!lstate.recursion_nodes.empty() && result.count != STANDARD_VECTOR_SIZE) {
-		auto &parent_val = recursion_nodes.back().parent_val;
-		auto &child_index = recursion_nodes.back().child_index;
-
-		size_t idx, max;
-		yyjson_val *child_key, *child_val;
-		switch (yyjson_get_tag(parent_val)) {
-		case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
-			yyjson_arr_foreach(parent_val, idx, max, child_val) {
-				if (JSONTableInOutHandleValue<TYPE>(lstate, result, child_index, idx, nullptr, child_val)) {
-					break;
-				}
-			}
-			break;
-		case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE:
-			yyjson_obj_foreach(parent_val, idx, max, child_key, child_val) {
-				if (JSONTableInOutHandleValue<TYPE>(lstate, result, child_index, idx, child_key, child_val)) {
-					break;
-				}
-			}
-			break;
-		default:
-			throw InternalException("Non-object/array JSON added to recursion in json_each/json_tree");
+	while (!recursion_nodes.empty() && result.count != STANDARD_VECTOR_SIZE) {
+		auto &node = recursion_nodes.back();
+		if (node.child_index == node.parent_val->size) {
+			recursion_nodes.pop_back(); // Array/object is done, remove
+			continue;
 		}
-		if (idx == max) {
-			lstate.recursion_nodes.pop_back(); // Array/object is done, remove
+		const auto child_key = node.parent_val->type == JSONValueType::OBJECT ? node.child : nullptr;
+		const auto child_val = child_key ? child_key + 1 : node.child;
+		result.AddRow<TYPE>(lstate, child_key, child_val);
+		const auto child_index = node.child_index++; // We finished processing the array element
+		node.child = child_val->Next();
+		if (TYPE == JSONTableInOutType::TREE && child_val->IsContainer()) {
+			lstate.AddRecursionNode(child_val, child_key, child_index); // Go depth-first
 		}
 	}
 	output.SetChildCardinality(result.count);
@@ -442,7 +412,6 @@ static OperatorResultType JSONTableInOutFunction(ExecutionContext &, TableFuncti
 		}
 		lstate.estimated_rows = 0;
 		lstate.produced_rows = 0;
-		lstate.json_allocator.Reset();
 		lstate.initialized = false;
 		return OperatorResultType::NEED_MORE_INPUT;
 	}

@@ -455,7 +455,7 @@ posix_interval:
 }
 
 string Interval::ToString(const interval_t &interval) {
-	char buffer[70];
+	char buffer[IntervalToStringCast::MAX_LENGTH];
 	idx_t length = IntervalToStringCast::Format(interval, buffer);
 	return string(buffer, length);
 }

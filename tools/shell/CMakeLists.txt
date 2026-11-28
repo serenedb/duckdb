@@ -14,7 +14,9 @@ if(_DUCKDB_PREBUILT_SHELL_PATH)
 else()
   add_subdirectory(linenoise)
   set(SHELL_SOURCES
+      shell_backslash_command.cpp
       shell_command_line_option.cpp
+      shell_copy.cpp
       shell_extension.cpp
       shell.cpp
       shell_helpers.cpp
@@ -22,6 +24,7 @@ else()
       shell_manual.cpp
       shell_metadata_command.cpp
       shell_prompt.cpp
+      shell_psql_renderer.cpp
       shell_renderer.cpp
       shell_highlight.cpp
       shell_profiler_renderer.cpp

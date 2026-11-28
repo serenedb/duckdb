@@ -551,3 +551,28 @@ statement error
 SELECT * FROM read_json('{DATA_DIR}/json/simple_timestamp.json', timestampformat='%Q')
 ----
 Unrecognized format for strftime/strptime: %Q
+
+# ISO dates read with the format '%Y-%m-%d', and values only the format reads, such as unpadded fields
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '{"d": "2024-01-05"}'), (2, '{"d": "2024-1-5"}'), (3, '{"d": "0001-12-31"}'),
+	                         (4, '{"d": "2000-02-29"}'), (5, '{"d": null}')) t(i, line)
+	ORDER BY i
+) TO '{TEMP_DIR}/iso_dates.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT d FROM read_ndjson('{TEMP_DIR}/iso_dates.ndjson', columns := {d: 'DATE'}, dateformat := '%Y-%m-%d');
+----
+2024-01-05
+2024-01-05
+0001-12-31
+2000-02-29
+NULL
+
+statement ok
+COPY (SELECT '{"d": "2023-02-29"}' AS line) TO '{TEMP_DIR}/bad_iso_date.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT d FROM read_ndjson('{TEMP_DIR}/bad_iso_date.ndjson', columns := {d: 'DATE'}, dateformat := '%Y-%m-%d');
+----
+<REGEX>:.*2023-02-29.*

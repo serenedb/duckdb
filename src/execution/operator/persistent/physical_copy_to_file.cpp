@@ -19,6 +19,7 @@
 #include "duckdb/parallel/base_pipeline_event.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/execution/operator/persistent/batch_memory_manager.hpp"
 #include "duckdb/execution/operator/persistent/copy_batch_slicer.hpp"
 #include "duckdb/execution/operator/persistent/copy_output_gate.hpp"
 #include "duckdb/execution/operator/persistent/copy_output_lifecycle.hpp"
@@ -101,6 +102,7 @@ public:
 	unique_ptr<GlobalFunctionData> data;
 	const string path;
 	idx_t num_batches DUCKDB_GUARDED_BY(lock);
+	unique_ptr<LocalFunctionData> legacy_local DUCKDB_GUARDED_BY(lock);
 };
 
 //===--------------------------------------------------------------------===//
@@ -543,6 +545,13 @@ public:
 	//! Counters
 	atomic<idx_t> rows_copied;
 	atomic<idx_t> last_file_offset;
+
+	BatchMemoryManager memory_manager;
+
+	idx_t MaxThreads(idx_t source_max_threads) override {
+		return memory_manager.MaxThreads(source_max_threads, BatchMemoryManager::MINIMUM_MEMORY_PER_COLUMN_PER_THREAD *
+		                                                         op.children[0].get().GetTypes().size());
+	}
 };
 
 //===--------------------------------------------------------------------===//
@@ -1622,15 +1631,25 @@ CreateColumnStatistics(const case_insensitive_map_t<case_insensitive_map_t<Value
 //===--------------------------------------------------------------------===//
 // Copy File Lifecycle
 //===--------------------------------------------------------------------===//
-static void FinalizeLifecycleFileState(ClientContext &context, copy_to_finalize_t finalize, FunctionData &bind_data,
+static void FinalizeLifecycleFileState(ClientContext &context, const CopyFunction &function, FunctionData &bind_data,
                                        unique_ptr<GlobalFileState> state) {
-	if (!finalize) {
+	if (!function.copy_to_finalize) {
 		throw InternalException("COPY file lifecycle finalize requires a finalize callback");
 	}
 	if (!state || !state->data) {
 		throw InternalException("COPY file lifecycle finalize reached an empty file state");
 	}
-	finalize(context, bind_data, *state->data);
+	unique_ptr<LocalFunctionData> legacy_local;
+	{
+		annotated_lock_guard<annotated_mutex> guard(state->lock);
+		legacy_local = std::move(state->legacy_local);
+	}
+	if (legacy_local) {
+		ThreadContext thread_context(context);
+		ExecutionContext execution_context(context, thread_context, nullptr);
+		function.copy_to_combine(execution_context, bind_data, *state->data, *legacy_local);
+	}
+	function.copy_to_finalize(context, bind_data, *state->data);
 }
 void CopyFileLifecycleExecutor::WaitForJob(CopyFileLifecycleJob &job, CopyFileLifecycleWaitMode mode) {
 	while (!job.IsFinished()) {
@@ -3515,7 +3534,8 @@ void PartitionedCopy::FinalizeFileStates(vector<FileStateHandle> files_to_finali
 CopyToFileGlobalState::CopyToFileGlobalState(const PhysicalCopyToFile &op_p, ClientContext &context_p)
     : op(op_p), context(context_p), output_lifecycle(context_p), initialized(false), prepare_global_state(nullptr),
       create_file_state_fun([&](FileStateHandle &file_state) DUCKDB_EXCLUDES(lock) { RequestFileState(file_state); }),
-      lifecycle_executor(context_p), output_files(op_p), rows_copied(0), last_file_offset(0) {
+      lifecycle_executor(context_p), output_files(op_p), rows_copied(0), last_file_offset(0),
+      memory_manager(context_p, 0) {
 }
 
 CopyToFileGlobalState::~CopyToFileGlobalState() {
@@ -3770,19 +3790,19 @@ void CopyToFileGlobalState::FinalizeFileState(FileStateHandle file_state) {
 		auto finalize_job = make_shared_ptr<CopyFileLifecycleJob>();
 		auto state = file_state.TakeFileState();
 		auto state_holder = make_shared_ptr<unique_ptr<GlobalFileState>>(std::move(state));
-		auto finalize = op.function.copy_to_finalize;
+		auto &function = op.function;
 		auto &context_ref = context;
 		auto &bind_data = *op.bind_data;
 		try {
 			lifecycle_executor.Schedule(finalize_job, CopyFileLifecycleWaitMode::DRAIN,
-			                            [finalize, &context_ref, &bind_data, state_holder]() mutable {
-				                            FinalizeLifecycleFileState(context_ref, finalize, bind_data,
+			                            [&function, &context_ref, &bind_data, state_holder]() mutable {
+				                            FinalizeLifecycleFileState(context_ref, function, bind_data,
 				                                                       std::move(*state_holder));
 			                            });
 		} catch (...) {
 			if (!finalize_job->IsFinished() && state_holder && *state_holder) {
 				try {
-					FinalizeLifecycleFileState(context_ref, finalize, bind_data, std::move(*state_holder));
+					FinalizeLifecycleFileState(context_ref, function, bind_data, std::move(*state_holder));
 				} catch (...) {
 				}
 			}
@@ -3932,6 +3952,21 @@ bool PhysicalCopyToFile::Rotate() const {
 	return file_size_bytes.IsValid() || batches_per_file.IsValid();
 }
 
+bool PhysicalCopyToFile::DirectSink() const {
+	return function.parallel_sink && !partition_output && !per_thread_output && !Rotate();
+}
+
+static GlobalFunctionData &SinkFileData(CopyToFileGlobalState &gstate, FileStateHandle &file_state,
+                                        const std::function<void(FileStateHandle &)> &create_file_state_fun) {
+	auto prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
+	if (!prepare_global_state) {
+		gstate.EnsureFileStateReady(file_state, create_file_state_fun);
+		prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
+		D_ASSERT(prepare_global_state);
+	}
+	return *prepare_global_state->data;
+}
+
 static bool PhysicalCopyRotateNow(const PhysicalCopyToFile &op, GlobalFileState &global_state)
     DUCKDB_REQUIRES(global_state.lock) {
 	if (op.file_size_bytes.IsValid()) {
@@ -4013,6 +4048,15 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 	}
 	auto &file_state = per_thread_output ? lstate.global_file_state : gstate.global_state;
 
+	if (DirectSink()) {
+		auto &data = SinkFileData(gstate, file_state, gstate.create_file_state_fun);
+		if (!lstate.local_file_state) {
+			lstate.local_file_state = function.copy_to_initialize_local(context, *bind_data);
+		}
+		function.copy_to_sink(context, *bind_data, data, *lstate.local_file_state, chunk);
+		return SinkResultType::NEED_MORE_INPUT;
+	}
+
 	idx_t offset = 0;
 	while (offset < chunk.size()) {
 		if (!lstate.batch) {
@@ -4076,6 +4120,12 @@ SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, Ope
 		return SinkCombineResultType::FINISHED;
 	}
 	gstate.rows_copied += lstate.total_rows_copied;
+
+	if (lstate.local_file_state) {
+		auto &data = SinkFileData(gstate, gstate.global_state, gstate.create_file_state_fun);
+		function.copy_to_combine(context, *bind_data, data, *lstate.local_file_state);
+		return SinkCombineResultType::FINISHED;
+	}
 
 	if (per_thread_output) {
 		if (lstate.batch) {
@@ -4203,7 +4253,8 @@ static unique_ptr<PreparedBatchData> PrepareLegacyCopyBatch(unique_ptr<ColumnDat
 }
 
 static void FlushLegacyCopyBatch(ClientContext &context, const CopyFunction &function, FunctionData &bind_data,
-                                 GlobalFunctionData &gstate, PreparedBatchData &prepared_batch) {
+                                 GlobalFileState &file_state, PreparedBatchData &prepared_batch)
+    DUCKDB_REQUIRES(file_state.lock) {
 	if (!function.copy_to_initialize_local || !function.copy_to_sink || !function.copy_to_combine) {
 		throw InternalException("Legacy copy function is missing required sink/combine callbacks");
 	}
@@ -4211,11 +4262,12 @@ static void FlushLegacyCopyBatch(ClientContext &context, const CopyFunction &fun
 	auto &legacy_batch = prepared_batch.Cast<LegacyCopyPreparedBatch>();
 	ThreadContext thread_context(context);
 	ExecutionContext execution_context(context, thread_context, nullptr);
-	auto local_state = function.copy_to_initialize_local(execution_context, bind_data);
-	for (auto &chunk : legacy_batch.collection->Chunks()) {
-		function.copy_to_sink(execution_context, bind_data, gstate, *local_state, chunk);
+	if (!file_state.legacy_local) {
+		file_state.legacy_local = function.copy_to_initialize_local(execution_context, bind_data);
 	}
-	function.copy_to_combine(execution_context, bind_data, gstate, *local_state);
+	for (auto &chunk : legacy_batch.collection->Chunks()) {
+		function.copy_to_sink(execution_context, bind_data, *file_state.data, *file_state.legacy_local, chunk);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -4232,16 +4284,8 @@ PhysicalCopyToFile::PrepareBatch(ClientContext &context, GlobalSinkState &gstate
 		return {batch_analyzer, PrepareLegacyCopyBatch(std::move(batch))};
 	}
 
-	// Ensure we have a global state for prepares
-	auto prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
-	if (!prepare_global_state) {
-		gstate.EnsureFileStateReady(file_state, create_file_state_fun);
-		prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
-		D_ASSERT(prepare_global_state);
-	}
-
-	// Prepare the batch
-	return {batch_analyzer, function.prepare_batch(context, *bind_data, *prepare_global_state->data, std::move(batch))};
+	auto &data = SinkFileData(gstate, file_state, create_file_state_fun);
+	return {batch_analyzer, function.prepare_batch(context, *bind_data, data, std::move(batch))};
 }
 
 void PhysicalCopyToFile::FlushBatch(ClientContext &context, GlobalSinkState &gstate_p, FileStateHandle &file_state,
@@ -4294,7 +4338,7 @@ void PhysicalCopyToFile::FlushBatch(ClientContext &context, GlobalSinkState &gst
 			            {"size", to_string(batch_analyzer.current_batch_size_bytes)},
 			            {"reason", EnumUtil::ToString(batch_analyzer.ToReason())}});
 			if (UsesLegacyCopyBatchAPI(function)) {
-				FlushLegacyCopyBatch(context, function, *bind_data, *ready_file_state->data, *prepared_batch);
+				FlushLegacyCopyBatch(context, function, *bind_data, *ready_file_state, *prepared_batch);
 			} else {
 				function.flush_batch(context, *bind_data, *ready_file_state->data, *prepared_batch);
 			}

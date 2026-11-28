@@ -99,7 +99,3 @@ The **loaded database files** under `TEMP_DIR` have their own disposition, `--te
 
 The tests located in `test/parallel_csv/test_parallel_csv.cpp` run the parallel CSV reader over multiple configurations of threads
 and buffer sizes.
-
-### ADBC
-
-The ADBC tests are in `test/api/adbc/test_adbc.cpp`. To run them the DuckDB library path must be provided in the `DUCKDB_INSTALL_LIB` variable.

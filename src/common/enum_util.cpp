@@ -143,6 +143,12 @@
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/execution/physical_table_scan_enum.hpp"
 #include "duckdb/execution/reservoir_sample.hpp"
+#include "duckdb/formats/copy_fields.hpp"
+#include "duckdb/formats/copy_options.hpp"
+#include "duckdb/formats/json_ranges.hpp"
+#include "duckdb/formats/row_lexer.hpp"
+#include "duckdb/formats/row_ranges.hpp"
+#include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/aggregate_state.hpp"
 #include "duckdb/function/aggregate_state_serialization.hpp"
@@ -1643,6 +1649,44 @@ CoordinateReferenceSystemType EnumUtil::FromString<CoordinateReferenceSystemType
 	return static_cast<CoordinateReferenceSystemType>(StringUtil::StringToEnum(GetCoordinateReferenceSystemTypeValues(), 5, "CoordinateReferenceSystemType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetCopyFieldKindValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(CopyFieldKind::VALUE), "VALUE" },
+		{ static_cast<uint32_t>(CopyFieldKind::NULL_VALUE), "NULL_VALUE" },
+		{ static_cast<uint32_t>(CopyFieldKind::DEFAULT_VALUE), "DEFAULT_VALUE" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<CopyFieldKind>(CopyFieldKind value) {
+	return StringUtil::EnumToString(GetCopyFieldKindValues(), 3, "CopyFieldKind", static_cast<uint32_t>(value));
+}
+
+template<>
+CopyFieldKind EnumUtil::FromString<CopyFieldKind>(std::string_view value) {
+	return static_cast<CopyFieldKind>(StringUtil::StringToEnum(GetCopyFieldKindValues(), 3, "CopyFieldKind", value));
+}
+
+const StringUtil::EnumStringLiteral *GetCopyFormatValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(CopyFormat::TEXT), "TEXT" },
+		{ static_cast<uint32_t>(CopyFormat::CSV), "CSV" },
+		{ static_cast<uint32_t>(CopyFormat::BINARY), "BINARY" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<CopyFormat>(CopyFormat value) {
+	return StringUtil::EnumToString(GetCopyFormatValues(), 3, "CopyFormat", static_cast<uint32_t>(value));
+}
+
+template<>
+CopyFormat EnumUtil::FromString<CopyFormat>(std::string_view value) {
+	return static_cast<CopyFormat>(StringUtil::StringToEnum(GetCopyFormatValues(), 3, "CopyFormat", value));
+}
+
 const StringUtil::EnumStringLiteral *GetCopyFunctionFlushBatchReasonValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(CopyFunctionFlushBatchReason::BATCH_SIZE), "BATCH_SIZE" },
@@ -1679,6 +1723,25 @@ const char* EnumUtil::ToChars<CopyFunctionReturnType>(CopyFunctionReturnType val
 template<>
 CopyFunctionReturnType EnumUtil::FromString<CopyFunctionReturnType>(std::string_view value) {
 	return static_cast<CopyFunctionReturnType>(StringUtil::StringToEnum(GetCopyFunctionReturnTypeValues(), 3, "CopyFunctionReturnType", value));
+}
+
+const StringUtil::EnumStringLiteral *GetCopyLogVerbosityValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(CopyLogVerbosity::DEFAULT), "DEFAULT" },
+		{ static_cast<uint32_t>(CopyLogVerbosity::VERBOSE), "VERBOSE" },
+		{ static_cast<uint32_t>(CopyLogVerbosity::SILENT), "SILENT" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<CopyLogVerbosity>(CopyLogVerbosity value) {
+	return StringUtil::EnumToString(GetCopyLogVerbosityValues(), 3, "CopyLogVerbosity", static_cast<uint32_t>(value));
+}
+
+template<>
+CopyLogVerbosity EnumUtil::FromString<CopyLogVerbosity>(std::string_view value) {
+	return static_cast<CopyLogVerbosity>(StringUtil::StringToEnum(GetCopyLogVerbosityValues(), 3, "CopyLogVerbosity", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCopyOverwriteModeValues() {
@@ -3552,6 +3615,26 @@ const char* EnumUtil::ToChars<JoinType>(JoinType value) {
 template<>
 JoinType EnumUtil::FromString<JoinType>(std::string_view value) {
 	return static_cast<JoinType>(StringUtil::StringToEnum(GetJoinTypeValues(), 11, "JoinType", value));
+}
+
+const StringUtil::EnumStringLiteral *GetJsonRangeOriginValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(JsonRangeOrigin::BEFORE_ARRAY), "BEFORE_ARRAY" },
+		{ static_cast<uint32_t>(JsonRangeOrigin::OUTSIDE), "OUTSIDE" },
+		{ static_cast<uint32_t>(JsonRangeOrigin::STRING), "STRING" },
+		{ static_cast<uint32_t>(JsonRangeOrigin::ESCAPED), "ESCAPED" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<JsonRangeOrigin>(JsonRangeOrigin value) {
+	return StringUtil::EnumToString(GetJsonRangeOriginValues(), 4, "JsonRangeOrigin", static_cast<uint32_t>(value));
+}
+
+template<>
+JsonRangeOrigin EnumUtil::FromString<JsonRangeOrigin>(std::string_view value) {
+	return static_cast<JsonRangeOrigin>(StringUtil::StringToEnum(GetJsonRangeOriginValues(), 4, "JsonRangeOrigin", value));
 }
 
 const StringUtil::EnumStringLiteral *GetKeywordCaseValues() {
@@ -5946,6 +6029,45 @@ RowIdHandling EnumUtil::FromString<RowIdHandling>(std::string_view value) {
 	return static_cast<RowIdHandling>(StringUtil::StringToEnum(GetRowIdHandlingValues(), 2, "RowIdHandling", value));
 }
 
+const StringUtil::EnumStringLiteral *GetRowQuotingValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(RowQuoting::NONE), "NONE" },
+		{ static_cast<uint32_t>(RowQuoting::FIELD_START), "FIELD_START" },
+		{ static_cast<uint32_t>(RowQuoting::ANYWHERE), "ANYWHERE" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<RowQuoting>(RowQuoting value) {
+	return StringUtil::EnumToString(GetRowQuotingValues(), 3, "RowQuoting", static_cast<uint32_t>(value));
+}
+
+template<>
+RowQuoting EnumUtil::FromString<RowQuoting>(std::string_view value) {
+	return static_cast<RowQuoting>(StringUtil::StringToEnum(GetRowQuotingValues(), 3, "RowQuoting", value));
+}
+
+const StringUtil::EnumStringLiteral *GetRowReadResultValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(RowReadResult::ROWS), "ROWS" },
+		{ static_cast<uint32_t>(RowReadResult::FLUSH), "FLUSH" },
+		{ static_cast<uint32_t>(RowReadResult::COUNTED), "COUNTED" },
+		{ static_cast<uint32_t>(RowReadResult::DONE), "DONE" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<RowReadResult>(RowReadResult value) {
+	return StringUtil::EnumToString(GetRowReadResultValues(), 4, "RowReadResult", static_cast<uint32_t>(value));
+}
+
+template<>
+RowReadResult EnumUtil::FromString<RowReadResult>(std::string_view value) {
+	return static_cast<RowReadResult>(StringUtil::StringToEnum(GetRowReadResultValues(), 4, "RowReadResult", value));
+}
+
 const StringUtil::EnumStringLiteral *GetSampleMethodValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(SampleMethod::SYSTEM_SAMPLE), "System" },
@@ -7370,6 +7492,24 @@ const char* EnumUtil::ToChars<VacuumIndexStrategy>(VacuumIndexStrategy value) {
 template<>
 VacuumIndexStrategy EnumUtil::FromString<VacuumIndexStrategy>(std::string_view value) {
 	return static_cast<VacuumIndexStrategy>(StringUtil::StringToEnum(GetVacuumIndexStrategyValues(), 4, "VacuumIndexStrategy", value));
+}
+
+const StringUtil::EnumStringLiteral *GetValueRenderingValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(ValueRendering::NATIVE), "NATIVE" },
+		{ static_cast<uint32_t>(ValueRendering::POSTGRES), "POSTGRES" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<ValueRendering>(ValueRendering value) {
+	return StringUtil::EnumToString(GetValueRenderingValues(), 2, "ValueRendering", static_cast<uint32_t>(value));
+}
+
+template<>
+ValueRendering EnumUtil::FromString<ValueRendering>(std::string_view value) {
+	return static_cast<ValueRendering>(StringUtil::StringToEnum(GetValueRenderingValues(), 2, "ValueRendering", value));
 }
 
 const StringUtil::EnumStringLiteral *GetVariantChildLookupModeValues() {

@@ -1,0 +1,212 @@
+# name: test/sql/json/scalar/test_json_document_errors.test
+# description: JSON documents: a malformed document is refused with what is wrong and where it is
+# group: [scalar]
+
+require json
+
+query IIIIIIIIIIII
+SELECT json_valid('1 2'), json_valid('-1 2'), json_valid('true 1'), json_valid('false 1'), json_valid('null 1'),
+       json_valid('"a" 1'), json_valid('truex'), json_valid('[1 2]'), json_valid('{"a\q": 1}'),
+       json_valid('"a' || chr(1) || '"'), json_valid('+1'), json_valid(' {"a": [1, 2]} ');
+----
+false	false	false	false	false	false	false	false	false	false	false	true
+
+statement error
+SELECT '1 2'::JSON;
+----
+Malformed JSON at byte 2 of input: unexpected content after document
+
+statement error
+SELECT '-1 2'::JSON;
+----
+Malformed JSON at byte 3 of input: unexpected content after document
+
+statement error
+SELECT 'true 1'::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT 'false 1'::JSON;
+----
+Malformed JSON at byte 6 of input: unexpected content after document
+
+statement error
+SELECT 'null 1'::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT '"a" 1'::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT '[1] 2'::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT 'truex'::JSON;
+----
+Malformed JSON at byte 0 of input: invalid literal, expected 'true'
+
+statement error
+SELECT 'trux'::JSON;
+----
+Malformed JSON at byte 0 of input: invalid literal, expected 'true'
+
+statement error
+SELECT ' falsey'::JSON;
+----
+Malformed JSON at byte 1 of input: invalid literal, expected 'false'
+
+statement error
+SELECT '[1 2]'::JSON;
+----
+Malformed JSON at byte 3 of input: unexpected character
+
+statement error
+SELECT '[1, 2, 3'::JSON;
+----
+Malformed JSON at byte 8 of input: unexpected end of data
+
+statement error
+SELECT '{"a": "abc'::JSON;
+----
+Malformed JSON at byte 10 of input: unexpected end of data
+
+statement error
+SELECT '  {"a": [1, 2  '::JSON;
+----
+Malformed JSON at byte 15 of input: unexpected end of data
+
+statement error
+SELECT '[[[[[[[[[[1]]]]]]]]]'::JSON;
+----
+Malformed JSON at byte 20 of input: unexpected end of data
+
+statement error
+SELECT '{"padding": "0123456789abcdef", "a": "unclosed}'::JSON;
+----
+Malformed JSON at byte 47 of input: unexpected end of data
+
+statement error
+SELECT '["ok", "\u12"]'::JSON;
+----
+Malformed JSON at byte 8 of input: invalid escaped sequence in string
+
+statement error
+SELECT '["ok\n", "\uD800"]'::JSON;
+----
+Malformed JSON at byte 10 of input: no low surrogate in string
+
+statement error
+SELECT ('["ok\n", "' || chr(92) || 'uD800' || chr(92) || 'u0041"]')::JSON;
+----
+Malformed JSON at byte 10 of input: no low surrogate in string
+
+statement error
+SELECT ('["ok\n", "' || chr(92) || 'uD800A"]')::JSON;
+----
+Malformed JSON at byte 10 of input: no low surrogate in string
+
+statement error
+SELECT '"\uDC00"'::JSON;
+----
+Malformed JSON at byte 1 of input: invalid high surrogate in string
+
+statement error
+SELECT replace('["a~"b", "~b~f~r~t", "~u0041~uE000", "~x"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 38 of input: invalid escaped sequence in string
+
+statement error
+SELECT replace('["~uZZZZ"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 2 of input: invalid escaped sequence in string
+
+statement error
+SELECT replace('["~uD800~uE000"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 2 of input: no low surrogate in string
+
+statement error
+SELECT replace('["~uDBFF~uDFFF", "~q"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 18 of input: invalid escaped sequence in string
+
+statement error
+SELECT ('["\\", "\/", "' || chr(92) || 'uD83D' || chr(92) || 'uDE00", "\z"]')::JSON;
+----
+Malformed JSON at byte 30 of input: invalid escaped sequence in string
+
+statement error
+SELECT ('{"key": "ab' || chr(10) || 'c"}')::JSON;
+----
+Malformed JSON at byte 11 of input: unexpected control character in string
+
+statement error
+SELECT '{"a\q": 1}'::JSON;
+----
+Malformed JSON at byte 3 of input: invalid escaped sequence in string
+
+statement error
+SELECT ('"a' || chr(1) || '"')::JSON;
+----
+Malformed JSON at byte 2 of input: unexpected control character in string
+
+statement error
+SELECT '+1'::JSON;
+----
+Malformed JSON at byte 0 of input: unexpected character
+
+statement error
+SELECT 'tru'::JSON;
+----
+Malformed JSON at byte 0 of input: invalid literal, expected 'true'
+
+statement error
+SELECT ' [1] 2'::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT (chr(9) || '[1] 2')::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT (chr(10) || '[1] 2')::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT (chr(13) || '[1] 2')::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT ('[1]' || chr(9) || '2')::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT ('[1]' || chr(10) || '2')::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT ('[1]' || chr(13) || '2')::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT '{"a":1]'::JSON;
+----
+<REGEX>:.*Malformed JSON at byte \d+ of input: unexpected end of data.*
+
+statement error
+SELECT '{"a" 1} 2'::JSON;
+----
+<REGEX>:.*Malformed JSON at byte \d+ of input: unexpected character.*

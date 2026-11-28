@@ -1,0 +1,65 @@
+# name: test/sql/copy/csv/test_sniff_candidate_groups.test
+# description: Dialect candidates the sniffer counts alike part as soon as the bytes they read tell them apart
+# group: [csv]
+
+# a quote first appears past the first MiB, in rows the sniffer still refines
+statement ok
+COPY (SELECT i AS a, 'word ' || i AS b, i * 3 AS c, repeat('x', 30) AS d,
+             CASE WHEN i = 19000 THEN 'say "hi", twice' ELSE 'plain' END AS e
+      FROM range(20000) t(i)) TO '{TEMP_DIR}/late_quote.csv' (HEADER false);
+
+query III
+SELECT Delimiter, Quote, Escape FROM sniff_csv('{TEMP_DIR}/late_quote.csv');
+----
+,	"	"
+
+query III
+SELECT Delimiter, Quote, Escape FROM sniff_csv('{TEMP_DIR}/late_quote.csv', strict_mode=false);
+----
+,	"	"
+
+query III
+SELECT count(*), sum(column0), max(column4) FROM read_csv('{TEMP_DIR}/late_quote.csv');
+----
+20000	199990000	say "hi", twice
+
+# with 64 KiB buffers the candidates read past the first buffer, whose bytes are all that was checked
+query III
+SELECT Delimiter, Quote, Escape FROM sniff_csv('{TEMP_DIR}/late_quote.csv', buffer_size=65536);
+----
+,	"	"
+
+query II
+SELECT count(*), sum(column0) FROM read_csv('{TEMP_DIR}/late_quote.csv', buffer_size=65536);
+----
+20000	199990000
+
+# an empty file has an empty first buffer, so every candidate takes its group's empty counts
+statement ok
+COPY (SELECT 1 WHERE false) TO '{TEMP_DIR}/empty_candidates.csv' (HEADER false);
+
+query IIII
+SELECT Delimiter, Quote, Escape, HasHeader FROM sniff_csv('{TEMP_DIR}/empty_candidates.csv');
+----
+,	(empty)	(empty)	false
+
+# a delimiter candidate first appears past the first MiB
+statement ok
+COPY (SELECT i AS a, 'word ' || i AS b, i * 3 AS c, repeat('x', 30) AS d,
+             CASE WHEN i = 19000 THEN 'semi;colon' ELSE 'plain' END AS e
+      FROM range(20000) t(i)) TO '{TEMP_DIR}/late_semicolon.csv' (HEADER false);
+
+query IIII
+SELECT Delimiter, Quote, Escape, Columns FROM sniff_csv('{TEMP_DIR}/late_semicolon.csv');
+----
+,	(empty)	(empty)	[{'name': column0, 'type': BIGINT}, {'name': column1, 'type': VARCHAR}, {'name': column2, 'type': BIGINT}, {'name': column3, 'type': VARCHAR}, {'name': column4, 'type': VARCHAR}]
+
+# every candidate reports a line that is too long, so none of them takes another's counts
+statement ok
+COPY (SELECT i AS a, CASE WHEN i = 100 THEN repeat('y', 200) ELSE 'short' END AS b
+      FROM range(3000) t(i)) TO '{TEMP_DIR}/long_line.csv' (HEADER false);
+
+statement error
+SELECT * FROM sniff_csv('{TEMP_DIR}/long_line.csv', max_line_size=100);
+----
+Maximum line size of 100 bytes exceeded. Actual Size:205 bytes.

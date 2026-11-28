@@ -70,6 +70,12 @@ void AllocatedData::Reset() {
 	pointer = nullptr;
 }
 
+void AllocatedData::Reallocate(idx_t size) {
+	D_ASSERT(allocator && pointer);
+	pointer = allocator->ReallocateData(pointer, allocated_size, size);
+	allocated_size = size;
+}
+
 //===--------------------------------------------------------------------===//
 // Debug Info
 //===--------------------------------------------------------------------===//

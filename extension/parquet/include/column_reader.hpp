@@ -245,6 +245,13 @@ protected:
 	virtual bool SupportsDirectSelect() const {
 		return false;
 	}
+	virtual bool PlainFilters(const TableFilter &filter) {
+		return false;
+	}
+	virtual void PlainFilter(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
+	                         Vector &result, SelectionVector &sel, idx_t &approved_tuple_count) {
+		throw InternalException("PlainFilter called on a column reader that does not filter plain pages");
+	}
 	void DirectFilter(ColumnReaderInput &input, Vector &result, const TableFilter &filter,
 	                  TableFilterState &filter_state, SelectionVector &sel, idx_t &approved_tuple_count);
 	void DirectSelect(ColumnReaderInput &input, Vector &result, const SelectionVector &sel, idx_t approved_tuple_count);
@@ -378,6 +385,8 @@ protected:
 	bool page_is_filtered_out = false;
 
 	virtual void ResetPage();
+	virtual void PlainPage(const ByteBuffer &values) {
+	}
 
 private:
 	void AllocateBlock(idx_t size);

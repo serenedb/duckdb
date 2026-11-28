@@ -1,7 +1,3 @@
-if(NOT CLANG_TIDY)
-  add_subdirectory(adbc)
-endif()
-
 if(${DISABLE_THREADS})
   add_definitions(-DDUCKDB_NO_THREADS)
 endif()
@@ -32,6 +28,8 @@ set(TEST_API_OBJECTS
     test_connection_secrets.cpp
     test_copy_output_lifecycle.cpp
     test_custom_allocator.cpp
+    test_json_document.cpp
+    test_json_document_allocator.cpp
     test_tuple_data_collection.cpp
     test_extension_repositories.cpp
     test_external_extension_provider.cpp
@@ -65,6 +63,7 @@ set(TEST_API_OBJECTS
     test_read_ahead_abandon.cpp
     test_read_ahead_progress.cpp
     test_read_ahead_failure.cpp
+    test_csv_sniffer_failure.cpp
     test_row_id_deduplicator.cpp
     test_dbdir.cpp
     test_pending_with_parameters.cpp

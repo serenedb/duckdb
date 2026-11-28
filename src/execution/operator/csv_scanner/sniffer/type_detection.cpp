@@ -8,6 +8,7 @@
 #include "duckdb/common/types/bignum.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 
 namespace duckdb {
 struct TryCastFloatingOperator {
@@ -91,11 +92,23 @@ string GenerateDateFormat(const string &separator, const char *format_template) 
 	return result;
 }
 
+const StrpTimeFormat &CSVSniffer::ParsedDateFormat(const string &format_specifier) {
+	auto entry = parsed_date_formats.find(format_specifier);
+	if (entry == parsed_date_formats.end()) {
+		StrpTimeFormat format;
+		StrTimeFormat::ParseFormatSpecifier(format_specifier, format);
+		entry = parsed_date_formats.emplace(format_specifier, std::move(format)).first;
+	}
+	return entry->second;
+}
+
 void CSVSniffer::SetDateFormat(CSVStateMachine &candidate, const string &format_specifier,
                                const LogicalTypeId &sql_type) {
-	StrpTimeFormat strpformat;
-	StrTimeFormat::ParseFormatSpecifier(format_specifier, strpformat);
-	candidate.dialect_options.date_format[sql_type].Set(strpformat, false);
+	auto &date_format = candidate.dialect_options.date_format[sql_type];
+	if (date_format.GetValue().format_specifier == format_specifier) {
+		return;
+	}
+	date_format.Set(ParsedDateFormat(format_specifier), false);
 }
 
 idx_t CSVSniffer::LinesSniffed() const {
@@ -156,155 +169,23 @@ bool CSVSniffer::CanYouCastIt(ClientContext &context, const string_t value, cons
 	string strip_thousands;
 	if ((type.IsNumeric() || type.id() == LogicalTypeId::BIGNUM) && thousands_separator != '\0') {
 		// If we have a thousands separator we should try to use that
-		strip_thousands = BaseScanner::RemoveSeparator(value_ptr, value_size, thousands_separator);
+		strip_thousands = CsvStripSeparator(value_ptr, value_size, thousands_separator);
 		value_ptr = strip_thousands.c_str();
 		value_size = strip_thousands.size();
 	}
-	switch (type.id()) {
-	case LogicalTypeId::BOOLEAN: {
-		bool dummy_value;
-		return TryCastStringBool(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::TINYINT: {
-		int8_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, false);
-	}
-	case LogicalTypeId::SMALLINT: {
-		int16_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::INTEGER: {
-		int32_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::BIGINT: {
-		int64_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::HUGEINT: {
-		hugeint_t dummy_value;
-		return TryCast::Operation<string_t, hugeint_t>(string_t(value_ptr, NumericCast<uint32_t>(value_size)),
-		                                               dummy_value, true);
-	}
-	case LogicalTypeId::UTINYINT: {
-		uint8_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::USMALLINT: {
-		uint16_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::UINTEGER: {
-		uint32_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::UBIGINT: {
-		uint64_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::UHUGEINT: {
-		uhugeint_t dummy_value;
-		return TryCast::Operation<string_t, uhugeint_t>(string_t(value_ptr, NumericCast<uint32_t>(value_size)),
-		                                                dummy_value, true);
-	}
-	case LogicalTypeId::BIGNUM:
-		return CanYouCastBignum(value_ptr, value_size);
-	case LogicalTypeId::DOUBLE: {
-		double dummy_value;
-		return TryDoubleCast<double>(value_ptr, value_size, dummy_value, true, decimal_separator);
-	}
-	case LogicalTypeId::FLOAT: {
-		float dummy_value;
-		return TryDoubleCast<float>(value_ptr, value_size, dummy_value, true, decimal_separator);
-	}
-	case LogicalTypeId::DATE: {
-		if (!dialect_options.date_format.find(LogicalTypeId::DATE)->second.GetValue().Empty()) {
-			date_t result;
-			string error_message;
-			return dialect_options.date_format.find(LogicalTypeId::DATE)
-			    ->second.GetValue()
-			    .TryParseDate(value, result, error_message);
-		}
-		idx_t pos;
-		bool special;
-		date_t dummy_value;
-		return Date::TryConvertDate(value_ptr, value_size, pos, dummy_value, special, true) == DateCastResult::SUCCESS;
-	}
-	case LogicalTypeId::TIMESTAMP: {
-		timestamp_t dummy_value;
-		if (!dialect_options.date_format.find(LogicalTypeId::TIMESTAMP)->second.GetValue().Empty()) {
-			string error_message;
-			return dialect_options.date_format.find(LogicalTypeId::TIMESTAMP)
-			    ->second.GetValue()
-			    .TryParseTimestamp(value, dummy_value, error_message);
-		}
-		return Timestamp::TryConvertTimestamp(value_ptr, value_size, dummy_value, false, nullptr, true) ==
-		       TimestampCastResult::SUCCESS;
-	}
-	case LogicalTypeId::TIME: {
-		idx_t pos;
-		dtime_t dummy_value;
-		return Time::TryConvertTime(value_ptr, value_size, pos, dummy_value, true);
-	}
-	case LogicalTypeId::DECIMAL: {
-		uint8_t width, scale;
-		type.GetDecimalProperties(width, scale);
-		if (decimal_separator == ',') {
-			switch (type.InternalType()) {
-			case PhysicalType::INT16: {
-				int16_t dummy_value;
-				return TryDecimalStringCast<int16_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT32: {
-				int32_t dummy_value;
-				return TryDecimalStringCast<int32_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT64: {
-				int64_t dummy_value;
-				return TryDecimalStringCast<int64_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT128: {
-				hugeint_t dummy_value;
-				return TryDecimalStringCast<hugeint_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			default:
-				throw InternalException("Invalid Physical Type for Decimal Value. Physical Type: " +
-				                        TypeIdToString(type.InternalType()));
-			}
-
-		} else if (decimal_separator == '.') {
-			switch (type.InternalType()) {
-			case PhysicalType::INT16: {
-				int16_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT32: {
-				int32_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT64: {
-				int64_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT128: {
-				hugeint_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			default:
-				throw InternalException("Invalid Physical Type for Decimal Value. Physical Type: " +
-				                        TypeIdToString(type.InternalType()));
-			}
-		}
+	if (type.id() == LogicalTypeId::DECIMAL && decimal_separator != ',' && decimal_separator != '.') {
 		throw InvalidInputException("Decimals can only have ',' and '.' as decimal separators");
 	}
+	if (type.id() != LogicalTypeId::TIMESTAMP_TZ && HasValueParser(type)) {
+		const ValueParseContext parse_context {
+		    &dialect_options.date_format.find(LogicalTypeId::DATE)->second.GetValue(),
+		    &dialect_options.date_format.find(LogicalTypeId::TIMESTAMP)->second.GetValue(), value_ptr + value_size,
+		    decimal_separator, true};
+		return ValueParses(type, value_ptr, value_size, parse_context);
+	}
+	switch (type.id()) {
+	case LogicalTypeId::BIGNUM:
+		return CanYouCastBignum(value_ptr, value_size);
 	case LogicalTypeId::VARCHAR:
 		return true;
 	default: {
@@ -317,34 +198,62 @@ bool CSVSniffer::CanYouCastIt(ClientContext &context, const string_t value, cons
 	}
 }
 
-void CSVSniffer::InitializeDateAndTimeStampDetection(CSVStateMachine &candidate, const string &separator,
-                                                     const LogicalType &sql_type) {
-	auto &format_candidate = format_candidates[sql_type.id()];
-	if (!format_candidate.initialized) {
-		format_candidate.initialized = true;
-		// if user set a format, we add that as well
-		auto user_format = options.dialect_options.date_format.find(sql_type.id());
-		if (user_format->second.IsSetByUser()) {
-			format_candidate.format.emplace_back(user_format->second.GetValue().format_specifier);
-		} else {
-			auto entry = format_template_candidates.find(sql_type.id());
-			if (entry != format_template_candidates.end()) {
-				const auto &format_template_list = entry->second;
-				for (const auto &t : format_template_list) {
-					const auto format_string = GenerateDateFormat(separator, t);
-					// don't parse ISO 8601
-					if (format_string.find("%Y-%m-%d") == string::npos) {
-						format_candidate.format.emplace_back(format_string);
-					}
-				}
-			}
-		}
-		// order by preference
-		original_format_candidates = format_candidates;
+void CSVSniffer::GenerateDateFormats(DateTimestampSniffing &format_candidate, const string &separator,
+                                     LogicalTypeId sql_type) {
+	if (!format_candidate.generated.empty() && format_candidate.generated_separator == separator) {
+		return;
 	}
-	//	initialise the first candidate
-	//	all formats are constructed to be valid
-	SetDateFormat(candidate, format_candidate.format.back(), sql_type.id());
+	format_candidate.generated.clear();
+	format_candidate.generated_formats.clear();
+	format_candidate.generated_separator = separator;
+	auto entry = format_template_candidates.find(sql_type);
+	D_ASSERT(entry != format_template_candidates.end());
+	for (const auto &t : entry->second) {
+		auto format_string = GenerateDateFormat(separator, t);
+		// don't parse ISO 8601
+		if (format_string.find("%Y-%m-%d") == string::npos) {
+			format_candidate.generated_formats.push_back(&ParsedDateFormat(format_string));
+			format_candidate.generated.push_back(std::move(format_string));
+		}
+	}
+}
+
+void CSVSniffer::InitializeDateAndTimeStampDetection(const string &separator, const LogicalType &sql_type) {
+	auto &format_candidate = format_candidates[sql_type.id()];
+	if (format_candidate.initialized) {
+		return;
+	}
+	format_candidate.initialized = true;
+	// if user set a format, we add that as well
+	auto user_format = options.dialect_options.date_format.find(sql_type.id());
+	if (user_format->second.IsSetByUser()) {
+		format_candidate.format.emplace_back(user_format->second.GetValue().format_specifier);
+	} else {
+		GenerateDateFormats(format_candidate, separator, sql_type.id());
+		format_candidate.format.insert(format_candidate.format.end(), format_candidate.generated.begin(),
+		                               format_candidate.generated.end());
+	}
+}
+
+static bool ParsesWithoutDetection(const LogicalType &type, const HasType &has_type, char thousands_separator) {
+	const auto id = type.id();
+	if ((id == LogicalTypeId::DATE && !has_type.date) || (id == LogicalTypeId::TIMESTAMP && !has_type.timestamp)) {
+		return false;
+	}
+	if (type.IsNumeric() && thousands_separator != '\0') {
+		return false;
+	}
+	return id != LogicalTypeId::TIMESTAMP_TZ && HasValueParser(type);
+}
+
+static idx_t FirstUnparsedValue(const LogicalType &type, const string_t *values, const ValidityMask &validity,
+                                idx_t row, idx_t end, const ValueParseContext &context) {
+	for (; row < end; row++) {
+		if (validity.RowIsValid(row) && !ValueParses(type, values[row].GetData(), values[row].GetSize(), context)) {
+			break;
+		}
+	}
+	return row;
 }
 
 bool ValidSeparator(const string &separator) {
@@ -356,46 +265,47 @@ void CSVSniffer::DetectDateAndTimeStampFormats(CSVStateMachine &candidate, const
 	if (!ValidSeparator(separator)) {
 		return;
 	}
-	// If it is the first time running date/timestamp detection we must initialize the format variables
-	InitializeDateAndTimeStampDetection(candidate, separator, sql_type);
-	// generate date format candidates the first time through
-	auto &type_format_candidates = format_candidates[sql_type.id()].format;
-	// check all formats and keep the first one that works
-	StrpTimeFormat::ParseResult result;
-	auto save_format_candidates = type_format_candidates;
-	const bool had_format_candidates = !save_format_candidates.empty();
-	const bool initial_format_candidates =
-	    save_format_candidates.size() == original_format_candidates.at(sql_type.id()).format.size();
+	auto &format_candidate = format_candidates[sql_type.id()];
 	const bool is_set_by_user = options.dialect_options.date_format.find(sql_type.id())->second.IsSetByUser();
+	StrpTimeFormat::ParseResult result;
+	if (!format_candidate.initialized && !is_set_by_user) {
+		D_ASSERT(format_candidate.format.empty() && !format_candidate.had_match);
+		GenerateDateFormats(format_candidate, separator, sql_type.id());
+		bool parsed = false;
+		for (auto format : format_candidate.generated_formats) {
+			if (format->Parse(dummy_val, result, true)) {
+				parsed = true;
+				break;
+			}
+		}
+		if (!parsed) {
+			SetDateFormat(candidate, "", sql_type.id());
+			return;
+		}
+	}
+	// If it is the first time running date/timestamp detection we must initialize the format variables
+	InitializeDateAndTimeStampDetection(separator, sql_type);
+	auto &type_format_candidates = format_candidate.format;
+	// check all formats and keep the first one that works
+	vector<string> popped_format_candidates;
 	while (!type_format_candidates.empty() && !is_set_by_user) {
 		//	avoid using exceptions for flow control...
-		auto &current_format = candidate.dialect_options.date_format[sql_type.id()].GetValue();
-		if (current_format.Parse(dummy_val, result, true)) {
-			format_candidates[sql_type.id()].had_match = true;
+		if (ParsedDateFormat(type_format_candidates.back()).Parse(dummy_val, result, true)) {
+			format_candidate.had_match = true;
 			break;
 		}
 		//	doesn't work - move to the next one
+		popped_format_candidates.push_back(std::move(type_format_candidates.back()));
 		type_format_candidates.pop_back();
-		if (!type_format_candidates.empty()) {
-			SetDateFormat(candidate, type_format_candidates.back(), sql_type.id());
-		}
 	}
 	//	if none match, then this is not a value of type sql_type,
 	if (type_format_candidates.empty()) {
 		//	so restore the candidates that did work.
-		//	or throw them out if they were generated by this value.
-		if (had_format_candidates) {
-			if (initial_format_candidates && !format_candidates[sql_type.id()].had_match) {
-				// we reset the whole thing because we tried to sniff the wrong type.
-				format_candidates[sql_type.id()].initialized = false;
-				format_candidates[sql_type.id()].format.clear();
-				SetDateFormat(candidate, "", sql_type.id());
-				return;
-			}
-			type_format_candidates.swap(save_format_candidates);
-			SetDateFormat(candidate, type_format_candidates.back(), sql_type.id());
-		}
+		D_ASSERT(format_candidate.had_match);
+		type_format_candidates.assign(std::make_move_iterator(popped_format_candidates.rbegin()),
+		                              std::make_move_iterator(popped_format_candidates.rend()));
 	}
+	SetDateFormat(candidate, type_format_candidates.back(), sql_type.id());
 }
 
 void CSVSniffer::SniffTypes(DataChunk &data_chunk, CSVStateMachine &state_machine,
@@ -403,6 +313,12 @@ void CSVSniffer::SniffTypes(DataChunk &data_chunk, CSVStateMachine &state_machin
                             idx_t start_idx_detection) {
 	const idx_t chunk_size = data_chunk.size();
 	HasType has_type;
+	const char decimal_separator = state_machine.options.decimal_separator[0];
+	const char thousands_separator = state_machine.options.thousands_separator;
+	const auto &date_formats = state_machine.dialect_options.date_format;
+	const ValueParseContext context {&date_formats.find(LogicalTypeId::DATE)->second.GetValue(),
+	                                 &date_formats.find(LogicalTypeId::TIMESTAMP)->second.GetValue(), nullptr,
+	                                 decimal_separator, true};
 	for (idx_t col_idx = 0; col_idx < data_chunk.ColumnCount(); col_idx++) {
 		auto &cur_vector = data_chunk.data[col_idx];
 		D_ASSERT(cur_vector.GetVectorType() == VectorType::FLAT_VECTOR);
@@ -410,7 +326,14 @@ void CSVSniffer::SniffTypes(DataChunk &data_chunk, CSVStateMachine &state_machin
 		auto vector_data = FlatVector::GetData<string_t>(cur_vector);
 		auto null_mask = FlatVector::ValidityMutable(cur_vector);
 		auto &col_type_candidates = info_sql_types_candidates[col_idx];
-		for (idx_t row_idx = start_idx_detection; row_idx < chunk_size; row_idx++) {
+		for (idx_t row_idx = start_idx_detection; row_idx < chunk_size && col_type_candidates.size() > 1; row_idx++) {
+			const auto &top = col_type_candidates.back();
+			if (ParsesWithoutDetection(top, has_type, thousands_separator)) {
+				row_idx = FirstUnparsedValue(top, vector_data, null_mask, row_idx, chunk_size, context);
+				if (row_idx == chunk_size) {
+					break;
+				}
+			}
 			// col_type_candidates can't be empty since anything in a CSV file should at least be a string
 			// and we validate utf-8 compatibility when creating the type
 			D_ASSERT(!col_type_candidates.empty());
@@ -465,7 +388,7 @@ void CSVSniffer::SniffTypes(DataChunk &data_chunk, CSVStateMachine &state_machin
 }
 
 // If we have a predefined date/timestamp format we set it
-void CSVSniffer::SetUserDefinedDateTimeFormat(CSVStateMachine &candidate) const {
+void CSVSniffer::SetUserDefinedDateTimeFormat(CSVStateMachine &candidate) {
 	const vector<LogicalTypeId> data_time_formats {LogicalTypeId::DATE, LogicalTypeId::TIMESTAMP};
 	for (auto &date_time_format : data_time_formats) {
 		auto &user_option = options.dialect_options.date_format.at(date_time_format);

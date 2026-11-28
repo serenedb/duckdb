@@ -15,6 +15,7 @@
 namespace duckdb {
 class CSVBuffer;
 class CSVStateMachine;
+class MappedRowSource;
 
 //! Residency of a buffer
 enum class CSVBufferResidency : uint8_t {
@@ -46,11 +47,19 @@ public:
 	//! If this buffer manager is done. In the context of a buffer manager it means that it read all buffers at least
 	//! once.
 	virtual bool Done() const = 0;
+	virtual optional_idx KnownEnd() {
+		return optional_idx();
+	}
+	idx_t ReadBuffered(char *data, idx_t count, idx_t offset);
+	virtual idx_t ReadInOrder(char *data, idx_t count, idx_t offset) {
+		return ReadBuffered(data, count, offset);
+	}
 	//! Resets the buffer manager so the file can be scanned again from the top (e.g., a recursive CTE rescan)
 	virtual void ResetBufferManager() = 0;
 
 	//! unique_ptr to the file handle, gets stolen after sniffing
 	unique_ptr<CSVFileHandle> file_handle;
+	shared_ptr<MappedRowSource> mapped;
 
 	//! Whether buffer byte ranges follow deterministically from the file size
 	bool HasKnownBufferRanges() const;
@@ -66,7 +75,7 @@ public:
 
 	string GetFilePath() const;
 
-	bool AnyBlockUnloaded();
+	bool AnyBufferUnpinned() const;
 
 	ClientContext &context;
 	bool sniffing = false;

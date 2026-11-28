@@ -6,6 +6,7 @@
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/arrow/arrow_type_extension.hpp"
 #include "duckdb/common/arrow/schema_metadata.hpp"
+#include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
 #include "duckdb/function/table/arrow/arrow_type_info.hpp"
 #include "duckdb/common/identifier.hpp"
@@ -143,6 +144,14 @@ TEST_CASE("Test Export Large", "[arrow]") {
 	TestArrowRoundtrip("SELECT 'bla'::BLOB FROM range(10000)", true);
 
 	TestArrowRoundtrip("SELECT '3d038406-6275-4aae-bec1-1235ccdeaade'::UUID FROM range(10000) tbl(i)", true, true);
+}
+
+TEST_CASE("Test Arrow strings of every length roundtrip", "[arrow]") {
+	const string query = "SELECT s, s::BLOB AS b FROM (SELECT CASE WHEN i % 7 = 3 THEN NULL ELSE "
+	                     "left(repeat(md5(i::VARCHAR), 10), i % 300) END AS s FROM range(5000) tbl(i))";
+	TestArrowRoundtrip(query);
+	TestArrowRoundtrip(query, true);
+	TestArrowRoundtripStringView(query);
 }
 
 TEST_CASE("Test arrow roundtrip", "[arrow]") {
@@ -675,6 +684,34 @@ TEST_CASE("Test Arrow extension type with nested storage", "[arrow]") {
 	REQUIRE(pair_duck_to_arrow_calls.load() > 0);
 	REQUIRE(pair_get_type_calls.load() > 0);
 	REQUIRE(pair_arrow_to_duck_calls.load() > 0);
+}
+
+TEST_CASE("Test Arrow GEOMETRY roundtrip keeps its coordinate system", "[arrow]") {
+	DuckDB db;
+	Connection con(db);
+	const string custom = R"({"type":"GeographicCRS","name":"custom","id":{"authority":"X","code":7},)"
+	                      R"("bbox":{"south_latitude":-90.5,"west_longitude":-180,"north_latitude":90},)"
+	                      R"("axis":[{"name":"lon"},{"name":"lat"}],"deprecated":false,"remarks":null})";
+	for (auto &crs : vector<string> {"OGC:CRS84", custom}) {
+		auto query = "SELECT 'POINT(1 2)'::GEOMETRY('" + crs + "') AS g";
+		auto expected = con.Query(query);
+		REQUIRE_NO_FAIL(*expected);
+
+		auto exported = con.context->Query(query, make_shared_ptr<ArrowFormat>(10000));
+		REQUIRE_NO_FAIL(*exported);
+		auto types = exported->GetTypes();
+		auto names = IdentifiersToStrings(exported->GetNames());
+		ArrowTestFactory factory(std::move(types), std::move(names), std::move(exported),
+		                         con.context->GetClientProperties(), *con.context);
+		auto imported =
+		    con.TableFunction("arrow_scan", {}, {}, ArrowTestHelper::ConstructArrowScan(factory))->Execute();
+		REQUIRE_NO_FAIL(*imported);
+		REQUIRE(GeoType::HasCRS(imported->GetTypes()[0]));
+		REQUIRE(GeoType::GetCRS(imported->GetTypes()[0]).GetDefinition() ==
+		        GeoType::GetCRS(expected->GetTypes()[0]).GetDefinition());
+
+		REQUIRE(ArrowTestHelper::RunArrowComparison(con, query));
+	}
 }
 
 TEST_CASE("Test Arrow VARIANT roundtrip", "[arrow]") {

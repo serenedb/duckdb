@@ -1,0 +1,28 @@
+# name: test/sql/json/scalar/test_json_document_values.test
+# description: JSON documents: signed and unsigned integers compare by value, an overlong root number is read, signed and raw numbers are copied as written
+# group: [scalar]
+
+require json
+
+query IIIIIIIIII
+SELECT json_contains('-0', '0'), json_contains('[0]', '-0'), json_contains('-0', '1'),
+       json_contains('-1', '18446744073709551615'), json_contains('18446744073709551615', '-1'),
+       json_contains('[1.0]', '1'), json_contains('1', '1.0'), json_contains('[-1, 1.5, 1e400]', '-1'),
+       json_contains('[-1, 1.5, 1e400]', '1.5'), json_contains('[-1, 1.5, 1e400]', '1e400');
+----
+true	true	false	false	false	false	false	true	true	true
+
+query II
+SELECT json('0.' || repeat('1', 1100)), json('[0.' || repeat('1', 1100) || ']');
+----
+0.1111111111111111	[0.1111111111111111]
+
+query I
+SELECT json_object('k', '[-1, 1e400, 18446744073709551616]'::JSON);
+----
+{"k":[-1,1e400,18446744073709551616]}
+
+query I
+SELECT ST_AsText(ST_GeomFromGeoJSON('{"type": "LineString", "coordinates": [[-1, -2], [3, -4.5]]}'));
+----
+LINESTRING (-1 -2, 3 -4.5)
