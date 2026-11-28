@@ -17,9 +17,9 @@
 
 namespace duckdb {
 
-enum class JsonDirectKind : uint8_t { VALUE, STRING, TREE, STRUCT, LIST };
+enum class JsonDirectKind : uint8_t { VALUE, STRING, TREE, STRUCT, LIST, MAP };
 
-enum class JsonDirectFast : uint8_t { NONE, BIGINT, DOUBLE, STRING };
+enum class JsonDirectFast : uint8_t { NONE, BIGINT, DOUBLE, STRING, INTEGER };
 
 struct JsonKeyHint {
 	string key;
@@ -63,6 +63,7 @@ struct JsonDirectNodeState {
 	Vector *target = nullptr;
 	data_ptr_t data = nullptr;
 	ValidityMask *validity = nullptr;
+	string_t *keys = nullptr;
 	unique_ptr<Vector> strings;
 	vector<std::string_view> raw;
 	idx_t list_size = 0;
@@ -112,7 +113,9 @@ private:
 	void Refresh(idx_t id, idx_t from, idx_t capacity);
 	bool Struct(idx_t id, simdjson::ondemand::value &value, idx_t row);
 	bool List(idx_t id, simdjson::ondemand::value &value, idx_t row);
+	bool Map(idx_t id, simdjson::ondemand::value &value, idx_t row);
 	bool Leaf(idx_t id, simdjson::ondemand::value &value, idx_t row);
+	void Grow(idx_t id);
 
 private:
 	const vector<JsonDirectNode> &nodes;

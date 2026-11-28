@@ -7,6 +7,7 @@
 #include "duckdb/common/swar.hpp"
 #include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 
@@ -152,6 +153,9 @@ JsonDirectFast DirectFast(JsonDirectKind kind, LogicalTypeId id) {
 	if (kind == JsonDirectKind::VALUE && id == LogicalTypeId::BIGINT) {
 		return JsonDirectFast::BIGINT;
 	}
+	if (kind == JsonDirectKind::VALUE && id == LogicalTypeId::INTEGER) {
+		return JsonDirectFast::INTEGER;
+	}
 	if (kind == JsonDirectKind::VALUE && id == LogicalTypeId::DOUBLE) {
 		return JsonDirectFast::DOUBLE;
 	}
@@ -249,6 +253,10 @@ idx_t PlanJsonNode(vector<JsonDirectNode> &nodes, const LogicalType &type, optio
 	} else if (type.id() == LogicalTypeId::LIST) {
 		node.kind = JsonDirectKind::LIST;
 		node.child = PlanJsonNode(nodes, ListType::GetChildType(type), nullptr);
+	} else if (type.id() == LogicalTypeId::MAP && MapType::KeyType(type).id() == LogicalTypeId::VARCHAR &&
+	           !MapType::KeyType(type).HasAlias()) {
+		node.kind = JsonDirectKind::MAP;
+		node.child = PlanJsonNode(nodes, MapType::ValueType(type), nullptr);
 	} else {
 		node.kind = DirectKind(type);
 		node.fast = DirectFast(node.kind, type.id());
@@ -289,10 +297,28 @@ void JsonDirectDecoder::Bind(idx_t id, Vector &vector, idx_t capacity) {
 		state.list_capacity = ListVector::GetListCapacity(vector);
 		Bind(node.child, ListVector::GetChildMutable(vector), state.list_capacity);
 		break;
+	case JsonDirectKind::MAP:
+		state.list_size = 0;
+		state.list_capacity = ListVector::GetListCapacity(vector);
+		Bind(node.child, MapVector::GetValues(vector), state.list_capacity);
+		state.keys = FlatVector::GetDataMutable<string_t>(MapVector::GetKeys(vector));
+		break;
 	default:
 		break;
 	}
 	Refresh(id, 0, capacity);
+}
+
+void JsonDirectDecoder::Grow(idx_t id) {
+	auto &node = nodes[id];
+	auto &state = states[id];
+	ListVector::Reserve(*state.target, MaxValue<idx_t>(2 * state.list_capacity, STANDARD_VECTOR_SIZE));
+	const idx_t from = state.list_capacity;
+	state.list_capacity = ListVector::GetListCapacity(*state.target);
+	Refresh(node.child, from, state.list_capacity);
+	if (node.kind == JsonDirectKind::MAP) {
+		state.keys = FlatVector::GetDataMutable<string_t>(MapVector::GetKeys(*state.target));
+	}
 }
 
 void JsonDirectDecoder::Refresh(idx_t id, idx_t from, idx_t capacity) {
@@ -329,6 +355,8 @@ bool JsonDirectDecoder::Decode(idx_t id, simdjson::ondemand::value &value, idx_t
 		return Struct(id, value, row);
 	case JsonDirectKind::LIST:
 		return List(id, value, row);
+	case JsonDirectKind::MAP:
+		return Map(id, value, row);
 	default:
 		return Leaf(id, value, row);
 	}
@@ -448,12 +476,66 @@ bool JsonDirectDecoder::List(idx_t id, simdjson::ondemand::value &value, idx_t r
 			return false;
 		}
 		if (state.list_size == state.list_capacity) {
-			ListVector::Reserve(*state.target, MaxValue<idx_t>(2 * state.list_capacity, STANDARD_VECTOR_SIZE));
-			const idx_t from = state.list_capacity;
-			state.list_capacity = ListVector::GetListCapacity(*state.target);
-			Refresh(node.child, from, state.list_capacity);
+			Grow(id);
 		}
 		if (!Decode(node.child, element, state.list_size)) {
+			return false;
+		}
+		state.list_size++;
+	}
+	auto &entry = reinterpret_cast<list_entry_t *>(state.data)[row];
+	entry.offset = offset;
+	entry.length = state.list_size - offset;
+	return true;
+}
+
+bool JsonDirectDecoder::Map(idx_t id, simdjson::ondemand::value &value, idx_t row) {
+	namespace ondemand = simdjson::ondemand;
+	auto &node = nodes[id];
+	auto &state = states[id];
+	ondemand::json_type type;
+	if (value.type().get(type)) {
+		return false;
+	}
+	if (type == ondemand::json_type::null) {
+		bool is_null = false;
+		if (value.is_null().get(is_null) || !is_null) {
+			return false;
+		}
+		state.validity->SetInvalid(row);
+		return true;
+	}
+	if (type != ondemand::json_type::object) {
+		if (options.strict_cast) {
+			return false;
+		}
+		state.validity->SetInvalid(row);
+		return true;
+	}
+	ondemand::object object;
+	if (value.get_object().get(object)) {
+		return false;
+	}
+	state.validity->SetValid(row);
+	const idx_t offset = state.list_size;
+	auto &keys = MapVector::GetKeys(*state.target);
+	for (auto field_result : object) {
+		ondemand::field field;
+		if (std::move(field_result).get(field)) {
+			return false;
+		}
+		std::string_view key = field.escaped_key();
+		if (!PlainString(key) && field.unescaped_key().get(key)) {
+			return false;
+		}
+		if (state.list_size == state.list_capacity) {
+			Grow(id);
+		}
+		state.keys[state.list_size] = key.size() <= string_t::INLINE_LENGTH
+		                                  ? string_t(key.data(), UnsafeNumericCast<uint32_t>(key.size()))
+		                                  : StringVector::AddString(keys, key);
+		auto child = std::move(field).value();
+		if (!Decode(node.child, child, state.list_size)) {
 			return false;
 		}
 		state.list_size++;
@@ -482,6 +564,15 @@ bool JsonDirectDecoder::Leaf(idx_t id, simdjson::ondemand::value &value, idx_t r
 			return true;
 		}
 		break;
+	case JsonDirectFast::INTEGER: {
+		int64_t integer;
+		if (!value.get_int64().get(integer) && integer >= NumericLimits<int32_t>::Minimum() &&
+		    integer <= NumericLimits<int32_t>::Maximum()) {
+			reinterpret_cast<int32_t *>(state.data)[row] = static_cast<int32_t>(integer);
+			return true;
+		}
+		break;
+	}
 	case JsonDirectFast::DOUBLE: {
 		const auto token = value.raw_json_token();
 		auto &result = reinterpret_cast<double *>(state.data)[row];
@@ -576,6 +667,7 @@ bool JsonDirectDecoder::Finish(idx_t id, idx_t count, JSONTransformScratch &scra
 		return true;
 	}
 	case JsonDirectKind::LIST:
+	case JsonDirectKind::MAP:
 		ListVector::SetListSize(*state.target, state.list_size);
 		return Finish(node.child, state.list_size, scratch, readable_end);
 	default:

@@ -601,12 +601,15 @@ void JsonScanGlobal::PlanDirect() {
 		const auto &type = columns.types[i];
 		const auto id = type.id();
 		if (kinds[i] != JsonDirectKind::TREE || walked[i] || type.HasAlias() ||
-		    (id != LogicalTypeId::STRUCT && id != LogicalTypeId::LIST)) {
+		    (id != LogicalTypeId::STRUCT && id != LogicalTypeId::LIST && id != LogicalTypeId::MAP)) {
 			continue;
 		}
-		column_nodes[i] =
+		const auto node =
 		    PlanJsonNode(nodes, type, columns.column_indices.empty() ? nullptr : &columns.column_indices[i]);
-		kinds[i] = nodes[column_nodes[i]].kind;
+		if (nodes[node].kind != JsonDirectKind::TREE) {
+			column_nodes[i] = node;
+			kinds[i] = nodes[node].kind;
+		}
 	}
 }
 
@@ -1587,7 +1590,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			continue;
 		}
 		const auto kind = global.kinds[column];
-		if (kind == JsonDirectKind::STRUCT || kind == JsonDirectKind::LIST) {
+		if (kind == JsonDirectKind::STRUCT || kind == JsonDirectKind::LIST || kind == JsonDirectKind::MAP) {
 			if (!decoder.Decode(global.column_nodes[column], value, row)) {
 				return FALLBACK;
 			}
@@ -1608,6 +1611,15 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 				continue;
 			}
 			break;
+		case JsonDirectFast::INTEGER: {
+			int64_t integer;
+			if (!value.get_int64().get(integer) && integer >= NumericLimits<int32_t>::Minimum() &&
+			    integer <= NumericLimits<int32_t>::Maximum()) {
+				reinterpret_cast<int32_t *>(direct_data[column])[row] = static_cast<int32_t>(integer);
+				continue;
+			}
+			break;
+		}
 		case JsonDirectFast::DOUBLE: {
 			const auto token = value.raw_json_token();
 			auto &result = reinterpret_cast<double *>(direct_data[column])[row];
@@ -1710,6 +1722,7 @@ bool JsonScan::FinishDirect(idx_t rows, JsonDirectPass pass, const vector<Vector
 		}
 		case JsonDirectKind::STRUCT:
 		case JsonDirectKind::LIST:
+		case JsonDirectKind::MAP:
 			if (!decoder.Finish(global.column_nodes[column], rows, scratch, data + size + JSON_PADDING)) {
 				return false;
 			}

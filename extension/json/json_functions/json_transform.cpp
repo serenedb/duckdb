@@ -1320,7 +1320,9 @@ bool DecodesDirectly(const LogicalType &type) {
 		return false;
 	}
 	return (type.id() == LogicalTypeId::STRUCT && StructType::GetChildCount(type) != 0) ||
-	       type.id() == LogicalTypeId::LIST;
+	       type.id() == LogicalTypeId::LIST ||
+	       (type.id() == LogicalTypeId::MAP && MapType::KeyType(type).id() == LogicalTypeId::VARCHAR &&
+	        !MapType::KeyType(type).HasAlias());
 }
 
 bool TransformDirect(const UnifiedVectorFormat &input_data, const string_t *inputs, const idx_t count, Vector &result,
