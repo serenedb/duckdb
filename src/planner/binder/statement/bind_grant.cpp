@@ -128,6 +128,22 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	}
 }
 
+static optional_ptr<CatalogEntry> OwnedRelationOfOtherKind(Binder &binder, CatalogType declared,
+                                                           const QualifiedName &name, AclMode use) {
+	if (declared == CatalogType::TABLE_ENTRY) {
+		return binder.GetCatalogEntry(EntryLookupInfo(CatalogType::SEQUENCE_ENTRY, name, use),
+		                              OnEntryNotFound::RETURN_NULL);
+	}
+	for (const auto kind : RELATION_KINDS) {
+		if (kind != declared && binder.GetCatalogEntry(EntryLookupInfo(kind, name), OnEntryNotFound::RETURN_NULL)) {
+			throw CatalogException(
+			    Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx()),
+			    StringUtil::Format("\"%s\" is not a %s", name.Name().GetIdentifierName(), ObjectKindOf(declared).noun));
+		}
+	}
+	return nullptr;
+}
+
 static optional_ptr<CatalogEntry> ResolvePermissionsTarget(Binder &binder, const AlterPermissionsInfo &info,
                                                            ObjectReference &object, AclMode relation_use) {
 	auto &context = binder.context;
@@ -159,8 +175,12 @@ static optional_ptr<CatalogEntry> ResolvePermissionsTarget(Binder &binder, const
 			object.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
 		}
 	} else {
-		const auto use = Catalog::InRelationNamespace(object.type) ? relation_use : AclMode::NoRights;
+		const bool relation = Catalog::InRelationNamespace(object.type);
+		const auto use = relation ? relation_use : AclMode::NoRights;
 		entry = binder.GetCatalogEntry(EntryLookupInfo(object.type, name, use), OnEntryNotFound::RETURN_NULL);
+		if (!entry && relation && !info.new_owner.empty()) {
+			entry = OwnedRelationOfOtherKind(binder, object.type, name, use);
+		}
 	}
 	if (!entry) {
 		if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
