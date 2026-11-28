@@ -117,6 +117,26 @@ SELECT '"\uDC00"'::JSON;
 Malformed JSON at byte 1 of input: invalid high surrogate in string
 
 statement error
+SELECT replace('["a~"b", "~b~f~r~t", "~u0041~uE000", "~x"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 38 of input: invalid escaped sequence in string
+
+statement error
+SELECT replace('["~uZZZZ"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 2 of input: invalid escaped sequence in string
+
+statement error
+SELECT replace('["~uD800~uE000"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 2 of input: no low surrogate in string
+
+statement error
+SELECT replace('["~uDBFF~uDFFF", "~q"]', '~', chr(92))::JSON;
+----
+Malformed JSON at byte 18 of input: invalid escaped sequence in string
+
+statement error
 SELECT ('["\\", "\/", "' || chr(92) || 'uD83D' || chr(92) || 'uDE00", "\z"]')::JSON;
 ----
 Malformed JSON at byte 30 of input: invalid escaped sequence in string
