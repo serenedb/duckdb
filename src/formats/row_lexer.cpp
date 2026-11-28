@@ -258,6 +258,8 @@ RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_
 	              (dialect.new_line == NewLineIdentifier::NOT_SET || dialect.new_line == NewLineIdentifier::SINGLE_N) &&
 	              max_line_size >= CSV_BLOCK_BYTES;
 	lean = lean_shapes && !dialect.comment && !dialect.escape_in_quotes && !dialect.unquoted_escape;
+	plain_lean = lean || (!dialect.duckdb && dialect.delimiter_size == 1 && !dialect.comment && !dialect.carry_on &&
+	                      dialect.line_break == '\n' && max_line_size >= CSV_BLOCK_BYTES);
 	patterns.resize(columns);
 	for (idx_t phase = 0; phase < columns; phase++) {
 		patterns[phase] = ExpectedPattern(columns, phase);
@@ -285,7 +287,8 @@ template <bool EXTRACT, bool SHAPE>
 bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, uint32_t *&rows_out,
                           uint32_t *&ends_out, RowShapes *shapes) const {
 	const auto &d = dialect;
-	if (cursor.maybe || cursor.in_comment || cursor.escape_carry || cursor.pos + CSV_BLOCK_BYTES > end) {
+	if (cursor.maybe || cursor.in_comment || cursor.escape_carry || cursor.pos + CSV_BLOCK_BYTES > end ||
+	    (!d.duckdb && (cursor.after_cr | cursor.escaped_cr | cursor.after_plain_cr | cursor.after_event))) {
 		return false;
 	}
 	const char escape = d.escape != d.quote ? d.escape : '\0';
@@ -330,8 +333,13 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 	while (pos + CSV_BLOCK_BYTES <= end) {
 		if constexpr (!SHAPE) {
 			if (!(in_quotes | after_closer | after_opener | pending_flag)) {
-				D_ASSERT(!d.comment && !escape);
-				const char quote_byte = d.quote ? d.quote : '\r';
+				D_ASSERT(!d.comment && (!escape || !d.duckdb));
+				const char quote_byte = d.quote ? d.quote : d.backslash ? d.escape : '\r';
+				const bool distinct_escape = !d.duckdb && d.quote && d.escape && d.escape != d.quote;
+				const auto special = [&]<bool STRICT_ROWS> [[gnu::always_inline]] (const CsvVector &vector) {
+					return !STRICT_ROWS && distinct_escape ? vector.ContainsAny('\r', quote_byte, d.escape)
+					                                       : vector.ContainsAny('\r', quote_byte);
+				};
 				const idx_t run_start = pos;
 				bool need_first_term = cursor.first_term == DConstants::INVALID_INDEX;
 				idx_t last_term = DConstants::INVALID_INDEX;
@@ -437,7 +445,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					const CsvVector vector(block);
 					const bool high = vector.HasNonAscii();
 					running =
-					    !vector.ContainsAny('\r', quote_byte) &&
+					    !special.template operator()<false>(vector) &&
 					    plain_block.template operator()<false, false>(vector.Equal('\n'), vector.Equal(d.delimiter));
 					non_ascii |= running && high;
 				}
@@ -452,7 +460,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 							const char *block = data + (pos + classified * CSV_BLOCK_BYTES - base);
 							__builtin_prefetch(block + PREFETCH_BYTES);
 							const CsvVector vector(block);
-							if (vector.ContainsAny('\r', quote_byte)) {
+							if (special.template operator()<STRICT_ROWS>(vector)) {
 								running = false;
 								break;
 							}
@@ -519,7 +527,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 						running = running && consumed == classified;
 					}
 				};
-				if (check_arity && track_fields && merge_lines) {
+				if (check_arity && track_fields && merge_lines && !distinct_escape) {
 					steady_run.template operator()<true>();
 				} else {
 					steady_run.template operator()<false>();
@@ -527,8 +535,8 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				if (pos != run_start) {
 					const char *last_block = data + (pos - CSV_BLOCK_BYTES - base);
 					const char before_last = last_block[CSV_BLOCK_BYTES - 2];
-					start_space =
-					    (before_last == '\n' || before_last == d.delimiter) && last_block[CSV_BLOCK_BYTES - 1] == ' ';
+					start_space = d.duckdb && (before_last == '\n' || before_last == d.delimiter) &&
+					              last_block[CSV_BLOCK_BYTES - 1] == ' ';
 					if (last_term != DConstants::INVALID_INDEX) {
 						cursor.last_term = last_term;
 						cursor.last_term_cr = false;
@@ -538,6 +546,9 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					break;
 				}
 			}
+		}
+		if (!d.duckdb) {
+			break;
 		}
 		const char *block = data + (pos - base);
 		__builtin_prefetch(block + PREFETCH_BYTES);
@@ -801,7 +812,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 	char padded[CSV_BLOCK_BYTES];
 	char lookahead[CSV_BLOCK_BYTES];
 	while (c.pos < end) {
-		if (SHAPE ? lean_shapes && !shapes->skip : lean) {
+		if (SHAPE ? lean_shapes && !shapes->skip : plain_lean) {
 			if (LeanBlocks<EXTRACT, SHAPE>(c, data, base, end, rows_out, ends_out, shapes)) {
 				cursor = c;
 				return true;

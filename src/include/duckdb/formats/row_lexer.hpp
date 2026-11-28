@@ -224,6 +224,7 @@ private:
 	bool settle_strict;
 	bool settle_length;
 	bool lean;
+	bool plain_lean;
 	bool lean_shapes;
 	vector<uint64_t> patterns;
 };
