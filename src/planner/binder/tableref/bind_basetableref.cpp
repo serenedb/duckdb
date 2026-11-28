@@ -140,7 +140,11 @@ void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema) {
 }
 
 void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings) {
-	entry_retriever.SetSearchPath(GetSearchPath(catalog, schema, true), catalog.GetName(), bindings);
+	auto search_path = GetSearchPath(catalog, schema, true);
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		search_path.emplace(search_path.begin(), catalog.GetName(), "pg_catalog");
+	}
+	entry_retriever.SetSearchPath(std::move(search_path), catalog.GetName(), bindings);
 }
 
 BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) {
