@@ -179,7 +179,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 	auto at_clause = BindAtClause(ref.at_clause);
 	auto entry_at_clause = at_clause ? at_clause.get() : entry_retriever.GetAtClause();
 	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(ref.Table()), entry_at_clause, error_context,
-	                             BoundRole(), use == TableRefUse::UTILITY_TARGET ? target : AclMode::NoRights);
+	                             use == TableRefUse::UTILITY_TARGET ? target : AclMode::NoRights);
 	// resolve the catalog/schema qualification for the lookup only - the reference itself keeps the name as written,
 	// which is what name extraction and replacement scans report
 	auto bound_name = BindTableName(entry_retriever, ref.GetQualifiedName());
@@ -296,6 +296,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use, AclMode target) 
 		if (entry_at_clause) {
 			logical_get->at_clause = make_uniq<BoundAtClause>(entry_at_clause->Unit(), entry_at_clause->GetValue());
 		}
+		logical_get->bound_role = BoundRole();
 		auto &col_ids = logical_get->GetMutableColumnIds();
 		// The binding carries this entry, and column binding reads the table's
 		// column model from it (star-expansion, generated-column expansion,

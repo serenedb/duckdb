@@ -8,9 +8,9 @@ EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_
 
 EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_p,
                                  optional_ptr<BoundAtClause> at_clause_p, QueryErrorContext error_context_p,
-                                 optional_idx caller_role_p, AclMode use_p)
+                                 AclMode use_p)
     : catalog_type(catalog_type_p), name(std::move(name_p)), at_clause(at_clause_p), error_context(error_context_p),
-      use(use_p), caller_role(caller_role_p) {
+      use(use_p) {
 }
 
 EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_p, AclMode use_p)
@@ -32,13 +32,12 @@ EntryLookupInfo::EntryLookupInfo(const EntryLookupInfo &parent, QualifiedName na
 
 EntryLookupInfo::EntryLookupInfo(const EntryLookupInfo &parent, QualifiedName name_p, idx_t argument_count_p)
     : catalog_type(parent.catalog_type), name(std::move(name_p)), at_clause(parent.at_clause),
-      error_context(parent.error_context), argument_count(argument_count_p), use(parent.use),
-      caller_role(parent.caller_role) {
+      error_context(parent.error_context), argument_count(argument_count_p), use(parent.use) {
 }
 
 EntryLookupInfo::EntryLookupInfo(const EntryLookupInfo &parent, optional_ptr<BoundAtClause> at_clause)
     : EntryLookupInfo(parent.catalog_type, parent.name, parent.at_clause ? parent.at_clause : at_clause,
-                      parent.error_context, parent.caller_role) {
+                      parent.error_context) {
 	argument_count = parent.argument_count;
 	use = parent.use;
 }
@@ -86,10 +85,6 @@ idx_t EntryLookupInfo::GetArgumentCount() const {
 
 AclMode EntryLookupInfo::GetUse() const {
 	return use;
-}
-
-optional_idx EntryLookupInfo::GetCallerRole() const {
-	return caller_role;
 }
 
 } // namespace duckdb

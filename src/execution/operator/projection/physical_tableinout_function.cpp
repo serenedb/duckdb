@@ -49,6 +49,7 @@ unique_ptr<OperatorState> PhysicalTableInOutFunction::GetOperatorState(Execution
 	auto result = make_uniq<TableInOutLocalState>();
 	if (function.init_local) {
 		TableFunctionInitInput input(bind_data.get(), column_ids, projection_ids, table_filters.get());
+		input.bound_role = bound_role;
 		result->local_state = function.init_local(context, input, gstate.global_state.get());
 	}
 	if (!projected_input.empty()) {
@@ -70,6 +71,7 @@ unique_ptr<GlobalOperatorState> PhysicalTableInOutFunction::GetGlobalOperatorSta
 	auto result = make_uniq<TableInOutGlobalState>();
 	if (function.init_global) {
 		TableFunctionInitInput input(bind_data.get(), column_ids, projection_ids, table_filters.get());
+		input.bound_role = bound_role;
 		result->global_state = function.init_global(context, input);
 	}
 	return std::move(result);

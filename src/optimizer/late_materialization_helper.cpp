@@ -14,6 +14,7 @@ unique_ptr<LogicalGet> LateMaterializationHelper::CreateLHSGet(const LogicalGet 
 	new_get->named_parameters = rhs.named_parameters;
 	new_get->input_table_types = rhs.input_table_types;
 	new_get->input_table_names = rhs.input_table_names;
+	new_get->bound_role = rhs.bound_role;
 	auto &column_ids = rhs.GetColumnIds();
 	for (auto &filter_entry : rhs.table_filters) {
 		auto &expr_filter = filter_entry.Filter().Cast<ExpressionFilter>();

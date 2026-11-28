@@ -368,6 +368,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	auto get = make_uniq<LogicalGet>(bind_index, table_function, std::move(bind_data), return_types, return_names,
 	                                 virtual_columns);
 	get->bind_info = ref.bind_info;
+	get->bound_role = BoundRole();
 	get->parameters = parameters;
 	get->named_parameters = named_parameters;
 	get->source_ordinality = ref.with_ordinality;

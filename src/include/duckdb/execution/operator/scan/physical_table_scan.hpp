@@ -55,6 +55,7 @@ public:
 	vector<Value> parameters;
 	//! Contains a reference to dynamically generated table filters (through e.g. a join up in the tree)
 	shared_ptr<DynamicTableFilterSet> dynamic_filters;
+	optional_idx bound_role;
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
 

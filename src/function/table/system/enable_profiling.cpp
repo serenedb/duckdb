@@ -5,7 +5,7 @@
 #include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "duckdb/main/profiler/gathered_metrics.hpp"
 #include "duckdb/function/function_set.hpp"
-#include "duckdb/planner/binder.hpp"
+#include "duckdb/catalog/permissions.hpp"
 
 namespace duckdb {
 
@@ -19,12 +19,22 @@ public:
 	Value save_location;
 	Value mode;
 	Value metrics;
-	optional_idx caller_role;
 };
+
+struct EnableProfilingState : public GlobalTableFunctionState {
+	explicit EnableProfilingState(optional_idx bound_role_p) : bound_role(bound_role_p) {
+	}
+
+	optional_idx bound_role;
+};
+
+static unique_ptr<GlobalTableFunctionState> EnableProfilingInit(ClientContext &context, TableFunctionInitInput &input) {
+	return make_uniq<EnableProfilingState>(input.bound_role);
+}
 
 static void EnableProfiling(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto bind_data = data.bind_data->Cast<EnableProfilingBindData>();
-	const auto &role = Role(context, bind_data.caller_role);
+	const auto &role = Role(context, data.global_state->Cast<EnableProfilingState>().bound_role);
 
 	auto &client_config = ClientConfig::GetConfig(context);
 	client_config.enable_profiler = true;
@@ -97,9 +107,6 @@ static unique_ptr<FunctionData> BindEnableProfiling(ClientContext &context, Tabl
 
 	// The metrics are placed by position however they were passed; the overload settled pattern or list of names
 	bind_data->metrics = input.inputs[0];
-	if (input.binder) {
-		bind_data->caller_role = input.BoundRole();
-	}
 
 	return_types.emplace_back(LogicalType::BOOLEAN);
 	names.emplace_back("Success");
@@ -131,7 +138,7 @@ void EnableProfilingFun::RegisterFunction(BuiltinFunctions &set) {
 	                                                                        .Add("coverage", LogicalType::VARCHAR)
 	                                                                        .Add("save_location", LogicalType::VARCHAR)
 	                                                                        .Add("mode", LogicalType::VARCHAR)),
-	                                     EnableProfiling, BindEnableProfiling));
+	                                     EnableProfiling, BindEnableProfiling, EnableProfilingInit));
 
 	enable_set.AddFunction(TableFunction(FunctionSignature()
 	                                         .AddParameter("metrics", LogicalType::LIST(LogicalType::VARCHAR))
@@ -140,7 +147,7 @@ void EnableProfilingFun::RegisterFunction(BuiltinFunctions &set) {
 	                                                                        .Add("coverage", LogicalType::VARCHAR)
 	                                                                        .Add("save_location", LogicalType::VARCHAR)
 	                                                                        .Add("mode", LogicalType::VARCHAR)),
-	                                     EnableProfiling, BindEnableProfiling));
+	                                     EnableProfiling, BindEnableProfiling, EnableProfilingInit));
 
 	set.AddFunction(std::move(enable_set));
 

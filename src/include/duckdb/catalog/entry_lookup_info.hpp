@@ -24,8 +24,7 @@ public:
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name,
 	                QueryErrorContext error_context = QueryErrorContext());
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, optional_ptr<BoundAtClause> at_clause,
-	                QueryErrorContext error_context, optional_idx caller_role = optional_idx(),
-	                AclMode use = AclMode::NoRights);
+	                QueryErrorContext error_context, AclMode use = AclMode::NoRights);
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, AclMode use);
 	//! Deprecated: pass a QualifiedName instead (use QualifiedName(name) for an unqualified lookup)
 	[[deprecated("Pass a QualifiedName instead, e.g. QualifiedName(name)")]] EntryLookupInfo(
@@ -54,7 +53,6 @@ public:
 	const optional_ptr<BoundAtClause> GetAtClause() const;
 	idx_t GetArgumentCount() const;
 	AclMode GetUse() const;
-	optional_idx GetCallerRole() const;
 
 	//! Build a schema lookup from a (possibly nested) schema path ([outermost..innermost]); the innermost component is
 	//! the schema name and the preceding components are its parent schemas
@@ -67,7 +65,6 @@ private:
 	QueryErrorContext error_context;
 	idx_t argument_count = DConstants::INVALID_INDEX;
 	AclMode use = AclMode::NoRights;
-	optional_idx caller_role;
 };
 
 //! Return value of Catalog::LookupEntry
