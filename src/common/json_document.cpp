@@ -1254,8 +1254,6 @@ static simdjson::error_code VisitJSON(JSONTreeParserState &st, const char *input
 	return code;
 }
 
-//! Checks a padded document without building its values: simdjson reads documents of at most 32 bytes in one pass,
-//! without stage 1, and walks the tokens of the others
 static simdjson::error_code ValidateJSON(JSONTreeParserState &st, const char *input, idx_t len) {
 	if (len <= ondemand::parser::MAX_ONE_PASS_VISIT) {
 		JSONCheckVisitor checker;
