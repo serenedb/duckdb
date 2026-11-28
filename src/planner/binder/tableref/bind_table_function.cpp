@@ -2,7 +2,6 @@
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
-#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
@@ -390,8 +389,6 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	                              std::move(row_id_columns));
 	if (table) {
 		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
-		auto &schema = table->ParentSchema(context);
-		Check(context, CheckAs(), schema, AclMode::Usage).Require();
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 
